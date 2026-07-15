@@ -15,6 +15,21 @@ clean and idiomatic. **All High/Medium findings are in server-side related
 components (shell helpers + sudoers), most of them orphaned by the deletion of
 `mailadmin-web`.** Remediation is mostly *removal* of dead privileged surface.
 
+### Remediation status — all findings resolved (2026-07-15)
+
+- **H-1, M-1, L-1..L-5** — fixed on the server: `/etc/sudoers.d/mailadmin` and the
+  five orphaned helpers (`mailadmin-app-passwd`, `-app-sync`, `-user-dedupe`,
+  `-snappymail-domain`, `-rspamd-learn`) removed (backup in
+  `/root/mailadmin-audit-backup-20260715`; `visudo -c` clean). Only the three
+  CLI-used helpers (`-dkim-gen`, `-fw-port`, `-mta-sts-sync`) remain.
+- **L-6, L-7, I-1, I-3, I-4** — fixed in code (release **1.14.0**): errcheck +
+  ineffassign cleared (golangci-lint 0), deSEC typed `*apiError` + `errors.As`,
+  five dead functions + the queue-summary cluster removed, stale `db.go` comment
+  dropped, `DESEC_TOKEN` added to `config init`/`config check`.
+- **I-2 (cross-package DNS-exchange/MTA-STS DRY)** — accepted/deferred: small,
+  well-tested duplication; a shared package carries more DNS-validation
+  regression risk than the duplication warrants.
+
 ## Gates (run 2026-07-15, verified — not from memory)
 
 | Gate | Tool | Result |
