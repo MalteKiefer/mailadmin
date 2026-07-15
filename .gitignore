@@ -1,0 +1,18 @@
+# Build output
+/dist/
+/mailadmin
+/mailadmin-*
+*.exe
+
+# Test / tool artifacts
+*.out
+*.test
+coverage.*
+
+# Local secrets / config (never commit)
+secrets.env
+*.pg_service.conf
+
+# Editor / OS
+.DS_Store
+*.swp
