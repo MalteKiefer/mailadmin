@@ -24,8 +24,9 @@ over SSH; there is no HTTP server and no web UI.
   **app passwords**.
 - **Aliases** — including catch-all.
 - **DNS** — verify (`SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT/rDNS/autoconfig`), publish
-  and zone takeover through a registrar API (**Njalla** or **deSEC**), with a
-  full-zone snapshot taken before any destructive change and a `restore`.
+  and zone takeover through a provider API (**Njalla, deSEC, Cloudflare, INWX,
+  Servercow, servfail.network/PowerDNS**), with a full-zone snapshot taken before
+  any destructive change and a `restore`.
 - **Security** — CrowdSec ban list, IP allowlist, and nftables firewall
   open/close with a protected-port guard.
 - **Queue** — list/show/flush/hold/release/delete Postfix queue entries.
@@ -46,7 +47,7 @@ over SSH; there is no HTTP server and no web UI.
 
 ```
 mailadmin
-  domain     list | show <d> | add <d> [--selector] [--dns njalla|desec|manual]
+  domain     list | show <d> | add <d> [--selector] [--dns manual|njalla|desec|cloudflare|inwx|servercow|servfail]
              | remove <d> | enable <d> | disable <d>
              | set-dkim <d> <sel> | regen-dkim <d>
   mailbox    list [--domain d] | show <a> | add <a> [--quota] | remove <a> [--purge]
@@ -180,12 +181,21 @@ units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "postgresql"]
 ### `secrets.env` (mode 0600, root only)
 
 ```sh
+# DNS provider credentials — set only the one you use.
 NJALLA_TOKEN=
 DESEC_TOKEN=
+CLOUDFLARE_API_TOKEN=
+INWX_USER=
+INWX_PASSWORD=
+INWX_SHARED_SECRET=        # base32 TOTP seed; only if the INWX account has 2FA
+SERVERCOW_USERNAME=
+SERVERCOW_PASSWORD=
+SERVFAIL_API_KEY=
+SERVFAIL_SERVER=           # primary-NS server id incl. trailing dot (from the zone SOA)
 RSPAMD_CONTROLLER_PW=
 ```
 
-Set the token for whichever DNS provider you use. Secrets are loaded into memory
+Set the credentials for whichever DNS provider you use. Secrets are loaded into memory
 only; they are **never** logged, echoed, printed in errors, or included in
 `-o json` output. `MAILADMIN_*` environment variables override config keys.
 
@@ -200,10 +210,18 @@ mailadmin config check     # validates paths, permissions, configured secrets
 
 ## DNS providers & takeover
 
-`mailadmin dns` can drive a registrar/DNS API to publish the desired record set:
+`mailadmin dns` can drive a provider API to publish the desired record set:
 
 - **Njalla** (`--dns njalla`, `NJALLA_TOKEN`)
 - **deSEC** (`--dns desec`, `DESEC_TOKEN`)
+- **Cloudflare** (`--dns cloudflare`, `CLOUDFLARE_API_TOKEN` — an API Token with
+  Zone:DNS:Edit on the zone)
+- **INWX** (`--dns inwx`, `INWX_USER` + `INWX_PASSWORD`, plus `INWX_SHARED_SECRET`
+  if the account uses 2FA)
+- **Servercow** (`--dns servercow`, `SERVERCOW_USERNAME` + `SERVERCOW_PASSWORD` —
+  the DNS-API credentials, not the panel login)
+- **servfail.network** (`--dns servfail`, `SERVFAIL_API_KEY` + `SERVFAIL_SERVER` —
+  a hosted PowerDNS; the server id is the primary-NS FQDN incl. trailing dot)
 - **manual** (`--dns manual`) — records are only displayed for you to publish.
 
 Takeover is safe by construction: `dns takeover <d>` snapshots the entire zone to

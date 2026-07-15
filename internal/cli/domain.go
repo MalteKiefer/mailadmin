@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
@@ -36,14 +37,14 @@ func newDomainCmd(app *App) *cobra.Command {
 	var addNoDNS bool
 	add := &cobra.Command{
 		Use:   "add <domain>",
-		Short: "Add a domain (creates DKIM key; auto-sets DNS for automated (njalla|desec) domains)",
+		Short: "Add a domain (creates DKIM key; auto-sets DNS for automated-provider domains)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			return runDomainAdd(app, c, args[0], addSelector, addDNS, addNoDNS)
 		},
 	}
 	add.Flags().StringVar(&addSelector, "selector", "", "DKIM selector (default from config)")
-	add.Flags().StringVar(&addDNS, "dns", "manual", "DNS backend: manual|njalla|desec")
+	add.Flags().StringVar(&addDNS, "dns", "manual", "DNS backend: manual|njalla|desec|cloudflare|inwx|servercow|servfail")
 	add.Flags().BoolVar(&addNoDNS, "no-dns", false, "skip automatic DNS publishing for automated domains")
 
 	remove := &cobra.Command{
@@ -270,8 +271,7 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 	// a missing token is a soft skip, not a failure (the domain is already added).
 	if automatedDNS(provider) && !noDNS {
 		_, secrets, cerr := app.Config()
-		configured := (provider == dnsProviderNjalla && secrets.HasNjalla()) ||
-			(provider == dnsProviderDeSEC && secrets.HasDeSEC())
+		configured := cerr == nil && providerConfigured(provider, secrets)
 		switch {
 		case cerr != nil:
 			return cerr
@@ -492,10 +492,8 @@ func runDomainRegenDKIM(app *App, c *cobra.Command, rawDomain string) error {
 
 // validDNSProvider validates the --dns backend flag against the supported set.
 func validDNSProvider(s string) (string, error) {
-	switch s {
-	case "manual", dnsProviderNjalla, dnsProviderDeSEC:
+	if s == "manual" || automatedDNS(s) {
 		return s, nil
-	default:
-		return "", fmt.Errorf("%w: --dns must be manual|njalla|desec, got %q", ErrUsage, s)
 	}
+	return "", fmt.Errorf("%w: --dns must be manual|%s, got %q", ErrUsage, strings.Join(automatedProviders, "|"), s)
 }

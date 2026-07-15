@@ -84,6 +84,10 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 
 	add("njalla_token", s.HasNjalla(), configuredDetail(s.HasNjalla()))
 	add("desec_token", s.HasDeSEC(), configuredDetail(s.HasDeSEC()))
+	add("cloudflare_api_token", s.HasCloudflare(), configuredDetail(s.HasCloudflare()))
+	add("inwx", s.HasINWX(), configuredDetail(s.HasINWX()))
+	add("servercow", s.HasServercow(), configuredDetail(s.HasServercow()))
+	add("servfail", s.HasServfail(), configuredDetail(s.HasServfail()))
 	add("rspamd_controller_pw", s.RspamdControllerPW() != "", configuredDetail(s.RspamdControllerPW() != ""))
 
 	return results, nil
@@ -155,9 +159,17 @@ units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "postgresql"]
 
 // starterSecrets is the template written by Init (values left blank; 0600).
 const starterSecrets = `# mailadmin secrets — mode 0600, root only. Never commit or share.
-# Set the token for whichever DNS registrar/provider you use (Njalla or deSEC).
+# Set the credentials for whichever DNS provider you use (only one is needed).
 NJALLA_TOKEN=
 DESEC_TOKEN=
+CLOUDFLARE_API_TOKEN=
+INWX_USER=
+INWX_PASSWORD=
+INWX_SHARED_SECRET=
+SERVERCOW_USERNAME=
+SERVERCOW_PASSWORD=
+SERVFAIL_API_KEY=
+SERVFAIL_SERVER=
 RSPAMD_CONTROLLER_PW=
 ` // #nosec G101 -- template with empty values, not a hardcoded credential
 

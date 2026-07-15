@@ -252,21 +252,9 @@ func desecURLSub(sub string) string {
 	return sub
 }
 
-// desecFormat renders a Record as a deSEC RRset value (inline priority, quoted TXT).
-func desecFormat(r Record) string {
-	switch strings.ToUpper(r.Type) {
-	case "MX":
-		return fmt.Sprintf("%d %s", r.Prio, fqdn(r.Content))
-	case "SRV":
-		return fmt.Sprintf("%d %d %d %s", r.Prio, r.Weight, r.Port, fqdn(r.Content))
-	case "CNAME", "NS", "PTR":
-		return fqdn(r.Content)
-	case "TXT":
-		return quoteTXT(r.Content)
-	default:
-		return r.Content
-	}
-}
+// desecFormat renders a Record as a deSEC RRset value (inline priority, quoted
+// TXT). deSEC and PowerDNS share this presentation format (see rrsetValue).
+func desecFormat(r Record) string { return rrsetValue(r) }
 
 // desecToRecord parses one RRset value into a Record, tagged with an ID that
 // encodes its slot + raw value.

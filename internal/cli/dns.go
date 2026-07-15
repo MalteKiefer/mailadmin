@@ -30,9 +30,20 @@ import (
 
 // dns_provider values that enable registrar automation.
 const (
-	dnsProviderNjalla = "njalla"
-	dnsProviderDeSEC  = "desec"
+	dnsProviderNjalla     = "njalla"
+	dnsProviderDeSEC      = "desec"
+	dnsProviderCloudflare = "cloudflare"
+	dnsProviderINWX       = "inwx"
+	dnsProviderServercow  = "servercow"
+	dnsProviderServfail   = "servfail"
 )
+
+// automatedProviders lists every dns_provider value with registrar automation,
+// in a stable order for help text and validation messages.
+var automatedProviders = []string{
+	dnsProviderNjalla, dnsProviderDeSEC, dnsProviderCloudflare,
+	dnsProviderINWX, dnsProviderServercow, dnsProviderServfail,
+}
 
 // errManualDNS explains that a domain is not wired to an automated registrar.
 var errManualDNS = errors.New("domain is not managed by an automated DNS provider")
@@ -830,17 +841,59 @@ func newProvider(dnsProvider string, secrets *config.Secrets) (dnsprovider.Provi
 			return nil, fmt.Errorf("%w: DESEC_TOKEN is not configured in secrets.env", ErrUsage)
 		}
 		return dnsprovider.NewDeSEC(secrets.DeSECToken()), nil
+	case dnsProviderCloudflare:
+		if !secrets.HasCloudflare() {
+			return nil, fmt.Errorf("%w: CLOUDFLARE_API_TOKEN is not configured in secrets.env", ErrUsage)
+		}
+		return dnsprovider.NewCloudflare(secrets.CloudflareToken()), nil
+	case dnsProviderINWX:
+		if !secrets.HasINWX() {
+			return nil, fmt.Errorf("%w: INWX_USER/INWX_PASSWORD are not configured in secrets.env", ErrUsage)
+		}
+		return dnsprovider.NewINWX(secrets.INWXUser(), secrets.INWXPassword(), secrets.INWXSharedSecret()), nil
+	case dnsProviderServercow:
+		if !secrets.HasServercow() {
+			return nil, fmt.Errorf("%w: SERVERCOW_USERNAME/SERVERCOW_PASSWORD are not configured in secrets.env", ErrUsage)
+		}
+		return dnsprovider.NewServercow(secrets.ServercowUser(), secrets.ServercowPassword()), nil
+	case dnsProviderServfail:
+		if !secrets.HasServfail() {
+			return nil, fmt.Errorf("%w: SERVFAIL_API_KEY/SERVFAIL_SERVER are not configured in secrets.env", ErrUsage)
+		}
+		return dnsprovider.NewServfail(secrets.ServfailAPIKey(), secrets.ServfailServer()), nil
 	default:
-		return nil, fmt.Errorf("%w (dns_provider=%q); manage its zone manually or set it to %q or %q",
-			errManualDNS, dnsProvider, dnsProviderNjalla, dnsProviderDeSEC)
+		return nil, fmt.Errorf("%w (dns_provider=%q); manage its zone manually or set it to one of: %s",
+			errManualDNS, dnsProvider, strings.Join(automatedProviders, ", "))
 	}
+}
+
+// providerConfigured reports whether the credentials for an automated provider
+// are present in secrets.env.
+func providerConfigured(provider string, secrets *config.Secrets) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case dnsProviderNjalla:
+		return secrets.HasNjalla()
+	case dnsProviderDeSEC:
+		return secrets.HasDeSEC()
+	case dnsProviderCloudflare:
+		return secrets.HasCloudflare()
+	case dnsProviderINWX:
+		return secrets.HasINWX()
+	case dnsProviderServercow:
+		return secrets.HasServercow()
+	case dnsProviderServfail:
+		return secrets.HasServfail()
+	}
+	return false
 }
 
 // automatedDNS reports whether a dns_provider value has registrar automation.
 func automatedDNS(p string) bool {
-	switch strings.ToLower(strings.TrimSpace(p)) {
-	case dnsProviderNjalla, dnsProviderDeSEC:
-		return true
+	want := strings.ToLower(strings.TrimSpace(p))
+	for _, a := range automatedProviders {
+		if want == a {
+			return true
+		}
 	}
 	return false
 }

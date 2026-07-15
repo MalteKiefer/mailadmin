@@ -29,9 +29,17 @@ const SecretsFile = "secrets.env"
 
 // Secret env-var keys understood in secrets.env.
 const (
-	keyNjallaToken = "NJALLA_TOKEN"         // #nosec G101 -- env-var name, not a credential value
-	keyDeSECToken  = "DESEC_TOKEN"          // #nosec G101 -- env-var name, not a credential value
-	keyRspamdPW    = "RSPAMD_CONTROLLER_PW" // #nosec G101 -- env-var name, not a credential value
+	keyNjallaToken      = "NJALLA_TOKEN"         // #nosec G101 -- env-var name, not a credential value
+	keyDeSECToken       = "DESEC_TOKEN"          // #nosec G101 -- env-var name, not a credential value
+	keyCloudflareToken  = "CLOUDFLARE_API_TOKEN" // #nosec G101 -- env-var name, not a credential value
+	keyINWXUser         = "INWX_USER"            // #nosec G101 -- env-var name, not a credential value
+	keyINWXPassword     = "INWX_PASSWORD"        // #nosec G101 -- env-var name, not a credential value
+	keyINWXSharedSecret = "INWX_SHARED_SECRET"   // #nosec G101 -- env-var name, not a credential value
+	keyServercowUser    = "SERVERCOW_USERNAME"   // #nosec G101 -- env-var name, not a credential value
+	keyServercowPass    = "SERVERCOW_PASSWORD"   // #nosec G101 -- env-var name, not a credential value
+	keyServfailAPIKey   = "SERVFAIL_API_KEY"     // #nosec G101 -- env-var name, not a credential value
+	keyServfailServer   = "SERVFAIL_SERVER"      // #nosec G101 -- env-var name, not a credential value
+	keyRspamdPW         = "RSPAMD_CONTROLLER_PW" // #nosec G101 -- env-var name, not a credential value
 )
 
 // ErrInvalidConfig is wrapped by all validation failures.
@@ -92,6 +100,14 @@ type Config struct {
 type Secrets struct {
 	njallaToken      string
 	desecToken       string
+	cloudflareToken  string
+	inwxUser         string
+	inwxPassword     string
+	inwxSharedSecret string
+	servercowUser    string
+	servercowPass    string
+	servfailAPIKey   string
+	servfailServer   string
 	rspamdControllPW string
 }
 
@@ -103,6 +119,38 @@ func (s *Secrets) DeSECToken() string { return s.desecToken }
 
 // HasDeSEC reports whether a non-empty deSEC token is configured.
 func (s *Secrets) HasDeSEC() bool { return s.desecToken != "" }
+
+// CloudflareToken returns the Cloudflare API token (empty if unset).
+func (s *Secrets) CloudflareToken() string { return s.cloudflareToken }
+
+// HasCloudflare reports whether a Cloudflare API token is configured.
+func (s *Secrets) HasCloudflare() bool { return s.cloudflareToken != "" }
+
+// INWXUser / INWXPassword / INWXSharedSecret return the INWX credentials. The
+// shared secret is the base32 TOTP seed and is only needed when the account has
+// two-factor authentication enabled.
+func (s *Secrets) INWXUser() string         { return s.inwxUser }
+func (s *Secrets) INWXPassword() string     { return s.inwxPassword }
+func (s *Secrets) INWXSharedSecret() string { return s.inwxSharedSecret }
+
+// HasINWX reports whether INWX username and password are both configured.
+func (s *Secrets) HasINWX() bool { return s.inwxUser != "" && s.inwxPassword != "" }
+
+// ServercowUser / ServercowPassword return the Servercow DNS-API credentials.
+func (s *Secrets) ServercowUser() string     { return s.servercowUser }
+func (s *Secrets) ServercowPassword() string { return s.servercowPass }
+
+// HasServercow reports whether Servercow username and password are both set.
+func (s *Secrets) HasServercow() bool { return s.servercowUser != "" && s.servercowPass != "" }
+
+// ServfailAPIKey / ServfailServer return the servfail.network PowerDNS API key
+// and the primary-nameserver server id (the FQDN, including trailing dot, shown
+// in the zone's SOA / account dashboard).
+func (s *Secrets) ServfailAPIKey() string { return s.servfailAPIKey }
+func (s *Secrets) ServfailServer() string { return s.servfailServer }
+
+// HasServfail reports whether the servfail.network API key and server id are set.
+func (s *Secrets) HasServfail() bool { return s.servfailAPIKey != "" && s.servfailServer != "" }
 
 // RspamdControllerPW returns the rspamd controller password (empty if unset).
 func (s *Secrets) RspamdControllerPW() string { return s.rspamdControllPW }
@@ -331,6 +379,22 @@ func LoadSecrets(path string) (*Secrets, error) {
 			s.njallaToken = val
 		case keyDeSECToken:
 			s.desecToken = val
+		case keyCloudflareToken:
+			s.cloudflareToken = val
+		case keyINWXUser:
+			s.inwxUser = val
+		case keyINWXPassword:
+			s.inwxPassword = val
+		case keyINWXSharedSecret:
+			s.inwxSharedSecret = val
+		case keyServercowUser:
+			s.servercowUser = val
+		case keyServercowPass:
+			s.servercowPass = val
+		case keyServfailAPIKey:
+			s.servfailAPIKey = val
+		case keyServfailServer:
+			s.servfailServer = val
 		case keyRspamdPW:
 			s.rspamdControllPW = val
 		default:
