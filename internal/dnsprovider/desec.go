@@ -60,8 +60,22 @@ func isStatus(err error, code int) bool {
 }
 
 // do performs an API call. body may be nil. Into decodes the response when non-nil.
-// desecMaxAttempts bounds the retries on a throttled (429) write.
+// desecMaxAttempts bounds the retries on a throttled (429) or transient 5xx write.
 const desecMaxAttempts = 5
+
+// retryableStatus reports whether an HTTP status warrants a retry: throttling
+// (429) or a transient upstream/gateway failure (502/503/504).
+func retryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
 
 func (d *DeSEC) do(ctx context.Context, method, url string, body, into any) error {
 	var b []byte
@@ -81,9 +95,10 @@ func (d *DeSEC) do(ctx context.Context, method, url string, body, into any) erro
 		if err != nil {
 			return err
 		}
-		// deSEC throttles writes (HTTP 429). Honour Retry-After and retry.
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < desecMaxAttempts {
-			wait := retryAfter(resp.Header.Get("Retry-After"))
+		// Retry throttled (429) and transient gateway (502/503/504) responses.
+		// Honour Retry-After when present, else back off exponentially.
+		if retryableStatus(resp.StatusCode) && attempt < desecMaxAttempts {
+			wait := backoff(attempt, resp.Header.Get("Retry-After"))
 			_ = resp.Body.Close()
 			if werr := sleepCtx(ctx, wait); werr != nil {
 				return werr
@@ -106,17 +121,31 @@ func (d *DeSEC) do(ctx context.Context, method, url string, body, into any) erro
 	}
 }
 
-// retryAfter parses a Retry-After header (seconds) into a wait duration,
-// defaulting to 1s and capping at 60s.
-func retryAfter(h string) time.Duration {
-	secs, err := strconv.Atoi(strings.TrimSpace(h))
-	if err != nil || secs <= 0 {
-		secs = 1
+// backoff returns how long to wait before retry `attempt` (1-based). A valid
+// Retry-After header (seconds) wins; otherwise it grows exponentially
+// (1s, 2s, 4s, 8s ...). Capped at 60s.
+func backoff(attempt int, retryAfterHdr string) time.Duration {
+	if d, ok := retryAfter(retryAfterHdr); ok {
+		return d
 	}
+	secs := 1 << (attempt - 1) // 1, 2, 4, 8, ...
 	if secs > 60 {
 		secs = 60
 	}
 	return time.Duration(secs) * time.Second
+}
+
+// retryAfter parses a Retry-After header (seconds) into a wait duration, capped
+// at 60s. ok is false when the header is absent or unparseable.
+func retryAfter(h string) (time.Duration, bool) {
+	secs, err := strconv.Atoi(strings.TrimSpace(h))
+	if err != nil || secs <= 0 {
+		return 0, false
+	}
+	if secs > 60 {
+		secs = 60
+	}
+	return time.Duration(secs) * time.Second, true
 }
 
 // sleepCtx waits for d, or aborts early if ctx is cancelled.

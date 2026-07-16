@@ -69,16 +69,36 @@ func TestMigrateFailureCarriesReason(t *testing.T) {
 }
 
 func TestRetryAfter(t *testing.T) {
-	cases := map[string]time.Duration{
-		"":     time.Second,
-		"0":    time.Second,
-		"bad":  time.Second,
-		"3":    3 * time.Second,
-		"9999": 60 * time.Second,
+	if d, ok := retryAfter("3"); !ok || d != 3*time.Second {
+		t.Errorf(`retryAfter("3") = %v,%v want 3s,true`, d, ok)
 	}
-	for in, want := range cases {
-		if got := retryAfter(in); got != want {
-			t.Errorf("retryAfter(%q) = %v, want %v", in, got, want)
+	if d, ok := retryAfter("9999"); !ok || d != 60*time.Second {
+		t.Errorf(`retryAfter("9999") = %v,%v want 60s,true (capped)`, d, ok)
+	}
+	for _, in := range []string{"", "0", "bad", "-1"} {
+		if d, ok := retryAfter(in); ok {
+			t.Errorf("retryAfter(%q) = %v,true want ok=false", in, d)
 		}
+	}
+}
+
+func TestBackoff(t *testing.T) {
+	// Header wins when valid.
+	if got := backoff(1, "5"); got != 5*time.Second {
+		t.Errorf("backoff with header = %v, want 5s", got)
+	}
+	// No header → exponential 1,2,4,8, capped at 60.
+	want := map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 4: 8 * time.Second, 10: 60 * time.Second}
+	for attempt, w := range want {
+		if got := backoff(attempt, ""); got != w {
+			t.Errorf("backoff(%d, \"\") = %v, want %v", attempt, got, w)
+		}
+	}
+
+	if !retryableStatus(http.StatusBadGateway) || !retryableStatus(http.StatusTooManyRequests) {
+		t.Error("502/429 must be retryable")
+	}
+	if retryableStatus(http.StatusUnprocessableEntity) || retryableStatus(http.StatusNotFound) {
+		t.Error("422/404 must not be retryable")
 	}
 }
