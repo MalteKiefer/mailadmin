@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // DeSEC implements Provider against the deSEC REST API (https://desec.io/api/v1).
@@ -59,36 +60,75 @@ func isStatus(err error, code int) bool {
 }
 
 // do performs an API call. body may be nil. Into decodes the response when non-nil.
+// desecMaxAttempts bounds the retries on a throttled (429) write.
+const desecMaxAttempts = 5
+
 func (d *DeSEC) do(ctx context.Context, method, url string, body, into any) error {
-	var rdr *bytes.Reader
+	var b []byte
 	if body != nil {
-		b, _ := json.Marshal(body)
-		rdr = bytes.NewReader(b)
-	} else {
-		rdr = bytes.NewReader(nil)
+		b, _ = json.Marshal(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
-	if err != nil {
-		return err
+	for attempt := 1; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(b))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Token "+d.token)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := d.client.Do(req)
+		if err != nil {
+			return err
+		}
+		// deSEC throttles writes (HTTP 429). Honour Retry-After and retry.
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < desecMaxAttempts {
+			wait := retryAfter(resp.Header.Get("Retry-After"))
+			_ = resp.Body.Close()
+			if werr := sleepCtx(ctx, wait); werr != nil {
+				return werr
+			}
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			var buf bytes.Buffer
+			_, _ = buf.ReadFrom(resp.Body)
+			_ = resp.Body.Close()
+			return &apiError{StatusCode: resp.StatusCode, Method: method, URL: url, Body: strings.TrimSpace(buf.String())}
+		}
+		if into != nil && resp.StatusCode != http.StatusNoContent {
+			err = json.NewDecoder(resp.Body).Decode(into)
+			_ = resp.Body.Close()
+			return err
+		}
+		_ = resp.Body.Close()
+		return nil
 	}
-	req.Header.Set("Authorization", "Token "+d.token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+}
+
+// retryAfter parses a Retry-After header (seconds) into a wait duration,
+// defaulting to 1s and capping at 60s.
+func retryAfter(h string) time.Duration {
+	secs, err := strconv.Atoi(strings.TrimSpace(h))
+	if err != nil || secs <= 0 {
+		secs = 1
 	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return err
+	if secs > 60 {
+		secs = 60
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		var buf bytes.Buffer
-		_, _ = buf.ReadFrom(resp.Body)
-		return &apiError{StatusCode: resp.StatusCode, Method: method, URL: url, Body: strings.TrimSpace(buf.String())}
+	return time.Duration(secs) * time.Second
+}
+
+// sleepCtx waits for d, or aborts early if ctx is cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
-	if into != nil && resp.StatusCode != http.StatusNoContent {
-		return json.NewDecoder(resp.Body).Decode(into)
-	}
-	return nil
 }
 
 // desecNameservers are deSEC's fixed authoritative nameservers for delegation.

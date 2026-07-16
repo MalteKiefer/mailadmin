@@ -2,8 +2,10 @@ package dnsprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -143,15 +145,22 @@ func cutSuffixFold(s, suffix string) (string, bool) {
 	return "", false
 }
 
+// FailedRecord is a record whose creation at the target failed, with the reason.
+type FailedRecord struct {
+	Record
+	Reason string `json:"reason"`
+}
+
 // MigrateResult reports the outcome of copying a zone to a target provider.
 type MigrateResult struct {
-	Created []Record `json:"created"`
-	Skipped []Record `json:"skipped"` // already present at the target
-	Failed  []Record `json:"failed"`
+	Created []Record       `json:"created"`
+	Skipped []Record       `json:"skipped"` // already present at the target
+	Failed  []FailedRecord `json:"failed"`
 }
 
 // Migrate creates every record from `records` at the target provider, skipping
-// any that already exist there. It never deletes. Returns per-record outcomes.
+// any that already exist there. NS/SOA are never copied — delegation belongs to
+// the target zone. It never deletes. Returns per-record outcomes.
 func Migrate(ctx context.Context, target Provider, domain string, records []Record) (MigrateResult, error) {
 	live, err := target.ListRecords(ctx, domain)
 	if err != nil {
@@ -163,17 +172,37 @@ func Migrate(ctx context.Context, target Provider, domain string, records []Reco
 	}
 	var res MigrateResult
 	for _, r := range records {
+		if r.Type == "NS" || r.Type == "SOA" {
+			continue
+		}
 		k := r.identity() + "\x00" + strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.Content), "."))
 		if _, ok := present[k]; ok {
 			res.Skipped = append(res.Skipped, r)
 			continue
 		}
 		if err := target.AddRecord(ctx, domain, r); err != nil {
-			res.Failed = append(res.Failed, r)
+			res.Failed = append(res.Failed, FailedRecord{Record: r, Reason: migrateFailReason(err)})
 			continue
 		}
 		res.Created = append(res.Created, r)
 		present[k] = struct{}{}
 	}
 	return res, nil
+}
+
+// migrateFailReason turns a provider error into a short, human-readable reason
+// for the migrate result table (the raw error is verbose and hides the status).
+func migrateFailReason(err error) string {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		switch ae.StatusCode {
+		case http.StatusTooManyRequests:
+			return "rate limited (HTTP 429) — retried and still throttled"
+		case http.StatusUnprocessableEntity:
+			return "rejected (HTTP 422)"
+		default:
+			return fmt.Sprintf("HTTP %d", ae.StatusCode)
+		}
+	}
+	return err.Error()
 }

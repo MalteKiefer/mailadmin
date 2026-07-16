@@ -108,29 +108,34 @@ func newDNSCmd(app *App) *cobra.Command {
 	}
 
 	var migTo, migAXFR, migZonefile, migFrom string
-	var migCreate, migProbe bool
+	var migCreate, migProbe, migClean bool
 	migrate := &cobra.Command{
 		Use:   "migrate <domain>",
-		Short: "Copy an existing zone into njalla/desec to support a registrar move",
+		Short: "Copy an existing zone into an automated provider to support a registrar move",
 		Long: "Pull every record of a zone and create it at the target provider\n" +
 			"(the domain's dns_provider, or --to). Choose one source:\n" +
 			"  --axfr <ns>        zone transfer from a nameserver (works for any host that allows it)\n" +
 			"  --zonefile <file>  a BIND-format zone export\n" +
-			"  --from njalla|desec  read via that provider's API\n" +
+			"  --from <provider>  read via that provider's API\n" +
+			"Providers (--from/--to): njalla|desec|cloudflare|inwx|servercow|servfail.\n" +
+			"NS and SOA records are never copied — delegation belongs to the target zone.\n" +
 			"With --create the zone is created at the target first (deSEC), and the\n" +
 			"nameservers + DNSSEC DS records to set at your registrar are printed.\n" +
-			"Existing target records are left untouched; nothing is deleted.",
+			"By default existing target records are left untouched; nothing is deleted.\n" +
+			"With --clean the target is wiped first (all records except NS/SOA) after a\n" +
+			"confirmation, for a clean 1:1 replacement.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			return app.dnsMigrate(c, args[0], migTo, migFrom, migAXFR, migZonefile, migCreate, migProbe)
+			return app.dnsMigrate(c, args[0], migTo, migFrom, migAXFR, migZonefile, migCreate, migProbe, migClean)
 		},
 	}
-	migrate.Flags().StringVar(&migTo, "to", "", "target provider: njalla|desec (default: the domain's dns_provider)")
+	migrate.Flags().StringVar(&migTo, "to", "", "target provider: njalla|desec|cloudflare|inwx|servercow|servfail (default: the domain's dns_provider)")
 	migrate.Flags().StringVar(&migAXFR, "axfr", "", "source: pull the zone from this nameserver via AXFR")
 	migrate.Flags().StringVar(&migZonefile, "zonefile", "", "source: import records from a BIND zone file")
-	migrate.Flags().StringVar(&migFrom, "from", "", "source: read via this provider's API (njalla|desec)")
+	migrate.Flags().StringVar(&migFrom, "from", "", "source: read via this provider's API (njalla|desec|cloudflare|inwx|servercow|servfail)")
 	migrate.Flags().BoolVar(&migProbe, "probe", false, "source: best-effort discovery via public DNS (fallback when AXFR/zonefile are unavailable)")
 	migrate.Flags().BoolVar(&migCreate, "create", false, "create the zone at the target first (deSEC) and print delegation info")
+	migrate.Flags().BoolVar(&migClean, "clean", false, "delete existing target records (except NS/SOA) before copying, after confirmation")
 
 	var auditSelectors []string
 	audit := &cobra.Command{
@@ -317,7 +322,7 @@ func zoneInfoView(domain string, info dnsprovider.ZoneInfo) map[string]any {
 // dnsMigrate copies a whole zone into an automated provider (njalla/desec) from
 // one of three sources (AXFR / zonefile / provider API), to support moving a
 // domain's DNS. It never deletes at the target and skips records already there.
-func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile string, create, probe bool) error {
+func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile string, create, probe, clean bool) error {
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -373,8 +378,20 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		return fmt.Errorf("dns migrate %s: source returned no records", domain)
 	}
 
+	// Never migrate delegation records: NS/SOA belong to the target zone.
+	records, droppedNS := splitDelegation(records)
+	if len(droppedNS) > 0 {
+		r.Message("skipping %d NS/SOA record(s) — delegation is managed by the target", len(droppedNS))
+	}
+	if len(records) == 0 {
+		return fmt.Errorf("dns migrate %s: source returned only NS/SOA records", domain)
+	}
+
 	if a.flags.dryRun {
 		r.Message("dry-run: %d record(s) found; would be copied to the target", len(records))
+		if clean {
+			r.Message("dry-run: --clean would delete existing target records (except NS/SOA) first")
+		}
 		return r.TypeTable(recordsTable(records), 0)
 	}
 
@@ -414,6 +431,17 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		}
 	}
 
+	if clean {
+		if err := a.confirm(fmt.Sprintf("Delete existing records (except NS/SOA) at %s for %s first?", to, domain)); err != nil {
+			return err
+		}
+		n, cerr := dnsMigrateClean(ctx(cmd), target, domain)
+		if cerr != nil {
+			return fmt.Errorf("dns migrate %s: clean target: %w", domain, cerr)
+		}
+		r.Message("cleaned %d record(s) at %s", n, to)
+	}
+
 	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
 		return err
 	}
@@ -441,18 +469,53 @@ func readZonefile(domain, path string) ([]dnsprovider.Record, error) {
 	return dnsprovider.ParseZonefile(f, domain)
 }
 
+// splitDelegation partitions records into those safe to migrate and the NS/SOA
+// delegation records that must never be copied to a target zone.
+func splitDelegation(recs []dnsprovider.Record) (keep, dropped []dnsprovider.Record) {
+	for _, rec := range recs {
+		if rec.Type == "NS" || rec.Type == "SOA" {
+			dropped = append(dropped, rec)
+			continue
+		}
+		keep = append(keep, rec)
+	}
+	return keep, dropped
+}
+
+// dnsMigrateClean deletes every record at the target except NS/SOA, so a zone
+// can be replaced 1:1. Destructive: the caller confirms first.
+func dnsMigrateClean(ctx context.Context, target dnsprovider.Provider, domain string) (int, error) {
+	live, err := target.ListRecords(ctx, domain)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, rec := range live {
+		if rec.Type == "NS" || rec.Type == "SOA" {
+			continue
+		}
+		if err := target.RemoveRecord(ctx, domain, rec.ID); err != nil {
+			return n, fmt.Errorf("delete %s %s: %w", rec.Type, rec.Name, err)
+		}
+		n++
+	}
+	return n, nil
+}
+
 // migrateTable renders the per-record migration outcome.
 func migrateTable(res dnsprovider.MigrateResult) output.Table {
 	rows := make([][]string, 0, len(res.Created)+len(res.Skipped)+len(res.Failed))
 	add := func(status string, recs []dnsprovider.Record) {
 		for _, rec := range recs {
-			rows = append(rows, []string{status, rec.Type, rec.Name, recordContent(rec)})
+			rows = append(rows, []string{status, rec.Type, rec.Name, recordContent(rec), ""})
 		}
 	}
 	add("created", res.Created)
 	add("present", res.Skipped)
-	add("failed", res.Failed)
-	return output.Table{Columns: []string{"STATUS", "TYPE", "NAME", "CONTENT"}, Rows: rows}
+	for _, f := range res.Failed {
+		rows = append(rows, []string{"failed", f.Type, f.Name, recordContent(f.Record), f.Reason})
+	}
+	return output.Table{Columns: []string{"STATUS", "TYPE", "NAME", "CONTENT", "REASON"}, Rows: rows}
 }
 
 // dnsBackends bundles everything the dns handlers need, opened once per command.
