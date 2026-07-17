@@ -232,23 +232,29 @@ func quoteEmpty(s string) string {
 	return s
 }
 
-// daneOutboundCheck reads the two postconf keys (one value per line, in argument
-// order) and classifies them.
+// daneOutboundCheck reads the two postconf keys separately (one call per key)
+// and classifies them. Querying each key individually avoids the positional
+// collapse that occurs when splitNonEmptyLines drops a blank line emitted by
+// postconf for an unset key.
 func daneOutboundCheck(ctx context.Context, runner *sys.Runner) checkResult {
-	out, err := runner.Output(ctx, binPostconf, "-h",
-		"smtp_tls_security_level", "smtp_dns_support_level")
+	level, err := postconfValue(ctx, runner, "smtp_tls_security_level")
 	if err != nil {
 		return checkResult{Name: "dane-outbound", Status: statusError, Detail: "postconf: " + firstNonEmptyLine(err.Error())}
 	}
-	lines := splitNonEmptyLines(out)
-	var level, support string
-	if len(lines) > 0 {
-		level = lines[0]
-	}
-	if len(lines) > 1 {
-		support = lines[1]
+	support, err := postconfValue(ctx, runner, "smtp_dns_support_level")
+	if err != nil {
+		return checkResult{Name: "dane-outbound", Status: statusError, Detail: "postconf: " + firstNonEmptyLine(err.Error())}
 	}
 	return classifyDANEOutbound(level, support)
+}
+
+// postconfValue reads a single postconf parameter's value (empty string when unset).
+func postconfValue(ctx context.Context, runner *sys.Runner, key string) (string, error) {
+	out, err := runner.Output(ctx, binPostconf, "-h", key)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(firstNonEmptyLine(out)), nil
 }
 
 // daneCertCheck reports whether the cert Postfix's smtpd serves is the same file
