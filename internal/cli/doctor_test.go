@@ -2,6 +2,25 @@ package cli
 
 import "testing"
 
+func TestClassifyResolver(t *testing.T) {
+	cases := []struct {
+		name, conf string
+		want       checkStatus
+	}{
+		{"loopback v4", "nameserver 127.0.0.1\n", statusOK},
+		{"loopback v6", "nameserver ::1\n", statusOK},
+		{"remote", "nameserver 8.8.8.8\n", statusWarn},
+		{"none", "# comment only\n", statusWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyResolver(tc.conf); got.Status != tc.want {
+				t.Fatalf("status=%s want %s (detail %q)", got.Status, tc.want, got.Detail)
+			}
+		})
+	}
+}
+
 func TestClassifyDANEOutbound(t *testing.T) {
 	cases := []struct {
 		name, level, support string
