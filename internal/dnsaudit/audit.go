@@ -310,6 +310,19 @@ func classifyDANE(mxCount, tlsaCount int, authenticated bool) Finding {
 	return f
 }
 
+// daneMatch reports whether the live-cert TLSA value equals any published value.
+// Comparison is case-insensitive and whitespace-trimmed; a rollover overlap
+// (old + new published together) still matches the live cert.
+func daneMatch(published []string, live string) bool {
+	want := strings.TrimSpace(live)
+	for _, p := range published {
+		if strings.EqualFold(strings.TrimSpace(p), want) {
+			return true
+		}
+	}
+	return false
+}
+
 // liveConn is the network-backed resolverConn.
 type liveConn struct {
 	resolver string
