@@ -1,6 +1,10 @@
 package dnsaudit
 
-import "testing"
+import (
+	"context"
+	"fmt"
+	"testing"
+)
 
 func TestEvalSPF(t *testing.T) {
 	cases := []struct {
@@ -157,6 +161,59 @@ func TestDaneMatch(t *testing.T) {
 				t.Fatalf("daneMatch(%v,%q)=%v want %v", tc.published, live, got, tc.want)
 			}
 		})
+	}
+}
+
+type daneFakeConn struct {
+	hosts    []string
+	tlsaVals []string
+	ad       bool
+}
+
+func (f daneFakeConn) txt(context.Context, string) ([]string, error) { return nil, nil }
+func (f daneFakeConn) dnssec(context.Context, string) (bool, bool, bool, error) {
+	return false, false, false, nil
+}
+func (f daneFakeConn) mx(context.Context, string) ([]string, error) { return f.hosts, nil }
+func (f daneFakeConn) tlsa(context.Context, string) ([]string, bool, error) {
+	return f.tlsaVals, f.ad, nil
+}
+
+func TestEvalDANEMatch(t *testing.T) {
+	base := daneFakeConn{hosts: []string{"mx.example."}, tlsaVals: []string{"3 1 1 abc"}, ad: true}
+	cases := []struct {
+		name       string
+		probe      func(context.Context, string) (string, error)
+		wantStatus Status
+	}{
+		{"match", func(context.Context, string) (string, error) { return "3 1 1 abc", nil }, Pass},
+		{"mismatch", func(context.Context, string) (string, error) { return "3 1 1 zzz", nil }, Fail},
+		{"unreachable", func(context.Context, string) (string, error) { return "", fmt.Errorf("dial timeout") }, Warn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Auditor{conn: base, probeCert: tc.probe}
+			f := a.evalDANE(context.Background(), "example.com")
+			if f.Status != tc.wantStatus {
+				t.Fatalf("status=%s want %s (detail %q)", f.Status, tc.wantStatus, f.Detail)
+			}
+		})
+	}
+}
+
+func TestEvalDANENon311SkipsMatch(t *testing.T) {
+	conn := daneFakeConn{hosts: []string{"mx.example."}, tlsaVals: []string{"2 0 1 abc"}, ad: true}
+	probed := false
+	a := &Auditor{conn: conn, probeCert: func(context.Context, string) (string, error) {
+		probed = true
+		return "3 1 1 abc", nil
+	}}
+	f := a.evalDANE(context.Background(), "example.com")
+	if f.Status != Pass {
+		t.Fatalf("status=%s want Pass", f.Status)
+	}
+	if probed {
+		t.Fatal("probeCert should not be called for non-3-1-1 TLSA")
 	}
 }
 
