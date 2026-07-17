@@ -20,6 +20,7 @@ const (
 	binSS       = "/usr/bin/ss"
 	binRspamadm = "/usr/bin/rspamadm"
 	binOpenSSL  = "/usr/bin/openssl"
+	binPostconf = "/usr/sbin/postconf"
 )
 
 // tlsCertPath is the fullchain certificate the mail listeners serve, as laid
@@ -84,6 +85,7 @@ func runDoctor(app *App, c *cobra.Command) error {
 	results = append(results, portCheck(ctx, runner))
 	results = append(results, rspamdCheck(ctx, runner))
 	results = append(results, tlsCheck(ctx, runner))
+	results = append(results, daneOutboundCheck(ctx, runner))
 
 	if err := renderChecks(r, results); err != nil {
 		return err
@@ -188,6 +190,62 @@ func tlsCheck(ctx context.Context, runner *sys.Runner) checkResult {
 	res.Status = statusOK
 	res.Detail = strings.Join(splitNonEmptyLines(out), "; ")
 	return res
+}
+
+// classifyDANEOutbound grades Postfix outbound DANE from smtp_tls_security_level
+// and smtp_dns_support_level. DANE requires dnssec support to function at all; a
+// dane level without it is silently inactive (FAIL). The detail names the
+// fallback behaviour: "dane" is opportunistic (falls back to plaintext),
+// "dane-only" has no fallback.
+func classifyDANEOutbound(level, support string) checkResult {
+	res := checkResult{Name: "dane-outbound"}
+	level = strings.TrimSpace(level)
+	support = strings.TrimSpace(support)
+	isDane := level == "dane" || level == "dane-only"
+	switch {
+	case !isDane:
+		res.Status = statusWarn
+		res.Detail = "smtp_tls_security_level=" + quoteEmpty(level) + " — outbound DANE not enabled"
+	case support != "dnssec":
+		res.Status = statusFail
+		res.Detail = "smtp_tls_security_level=" + level + " but smtp_dns_support_level=" +
+			quoteEmpty(support) + " — DANE inactive without dnssec"
+	default:
+		fallback := "opportunistic, falls back to plaintext"
+		if level == "dane-only" {
+			fallback = "no fallback"
+		}
+		res.Status = statusOK
+		res.Detail = level + " + dnssec (" + fallback + ")"
+	}
+	return res
+}
+
+// quoteEmpty renders an empty value as (unset) so blank postconf output is clear.
+func quoteEmpty(s string) string {
+	if s == "" {
+		return "(unset)"
+	}
+	return s
+}
+
+// daneOutboundCheck reads the two postconf keys (one value per line, in argument
+// order) and classifies them.
+func daneOutboundCheck(ctx context.Context, runner *sys.Runner) checkResult {
+	out, err := runner.Output(ctx, binPostconf, "-h",
+		"smtp_tls_security_level", "smtp_dns_support_level")
+	if err != nil {
+		return checkResult{Name: "dane-outbound", Status: statusError, Detail: "postconf: " + firstNonEmptyLine(err.Error())}
+	}
+	lines := splitNonEmptyLines(out)
+	var level, support string
+	if len(lines) > 0 {
+		level = lines[0]
+	}
+	if len(lines) > 1 {
+		support = lines[1]
+	}
+	return classifyDANEOutbound(level, support)
 }
 
 // renderChecks emits the report through the shared renderer, respecting -o. It
