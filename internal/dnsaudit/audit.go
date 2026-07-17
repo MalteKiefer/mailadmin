@@ -10,6 +10,7 @@ package dnsaudit
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/miekg/dns"
 
+	"mailadmin/internal/dane"
 	"mailadmin/internal/valid"
 )
 
@@ -88,9 +90,10 @@ type resolverConn interface {
 	dnssec(ctx context.Context, domain string) (dnskey, ds, ad bool, err error)
 	// mx returns the domain's MX hostnames (lowercased, trailing dot stripped).
 	mx(ctx context.Context, domain string) ([]string, error)
-	// tlsa counts TLSA records at name and reports whether the answer was
+	// tlsa returns the raw TLSA record values ("usage selector match hex",
+	// lowercase hex) at name and reports whether the answer was
 	// DNSSEC-authenticated (AD flag) — DANE requires signed TLSA (RFC 7672).
-	tlsa(ctx context.Context, name string) (count int, ad bool, err error)
+	tlsa(ctx context.Context, name string) (values []string, ad bool, err error)
 }
 
 // Auditor runs the checks against a fixed resolver and HTTP client.
@@ -99,6 +102,9 @@ type Auditor struct {
 	http        *http.Client
 	selectors   []string
 	speculative bool
+	// probeCert reads the live cert for host and returns its "3 1 1" TLSA value.
+	// Defaults to a live STARTTLS read; overridden in tests to avoid the network.
+	probeCert func(ctx context.Context, host string) (string, error)
 }
 
 // New builds an Auditor. resolver is "host:port"; selectors are DKIM selectors
@@ -106,7 +112,7 @@ type Auditor struct {
 // provider set, not the domain's known selector), so selectors with no record
 // are silently skipped rather than reported as warnings.
 func New(resolver string, selectors []string, speculative bool) *Auditor {
-	return &Auditor{
+	a := &Auditor{
 		conn:        &liveConn{resolver: resolver, c: &dns.Client{Net: "udp", Timeout: 4 * time.Second}},
 		selectors:   selectors,
 		speculative: speculative,
@@ -123,6 +129,11 @@ func New(resolver string, selectors []string, speculative bool) *Auditor {
 			},
 		},
 	}
+	a.probeCert = func(ctx context.Context, host string) (string, error) {
+		res, err := dane.Value(ctx, "", host)
+		return res.Value, err
+	}
+	return a
 }
 
 // Audit runs every check for domain and returns the ordered report.
@@ -278,17 +289,62 @@ func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
 		return Finding{Check: "DANE", Status: Warn, Detail: "MX lookup failed: " + err.Error()}
 	}
 	total, authed := 0, true
+	var published, tlsaHosts []string
 	for _, h := range hosts {
-		n, ad, terr := a.conn.tlsa(ctx, "_25._tcp."+h)
-		if terr != nil {
+		vals, ad, terr := a.conn.tlsa(ctx, "_25._tcp."+h)
+		if terr != nil || len(vals) == 0 {
 			continue
 		}
-		total += n
-		if n > 0 && !ad {
+		total += len(vals)
+		tlsaHosts = append(tlsaHosts, h)
+		published = append(published, vals...)
+		if !ad {
 			authed = false
 		}
 	}
-	return classifyDANE(len(hosts), total, authed)
+	base := classifyDANE(len(hosts), total, authed)
+	if base.Status != Pass {
+		return base // not deployed / unsigned / no MX — nothing to match
+	}
+	return a.verifyDANEMatch(ctx, tlsaHosts, published, base)
+}
+
+// verifyDANEMatch confirms the DNSSEC-authenticated TLSA actually matches the
+// live certificate. Only "3 1 1" values are derivable; other usages leave the
+// presence verdict intact. A reachable non-match is a hard Fail (senders bounce);
+// an unreachable host downgrades only to Warn.
+func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string, base Finding) Finding {
+	has311 := false
+	for _, v := range published {
+		if strings.HasPrefix(v, "3 1 1 ") {
+			has311 = true
+			break
+		}
+	}
+	if !has311 {
+		base.Detail += "; TLSA is not 3 1 1 — live-cert match not checked"
+		return base
+	}
+	var lastErr error
+	for _, h := range hosts {
+		live, err := a.probeCert(ctx, h)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if !daneMatch(published, live) {
+			return Finding{Check: "DANE", Status: Fail, Value: "cert mismatch",
+				Detail: "published TLSA does not match live certificate (" + h +
+					") — stale after key rotation, DANE senders will reject mail"}
+		}
+		return Finding{Check: "DANE", Status: Pass, Value: base.Value,
+			Detail: base.Detail + "; matches live certificate"}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no mail host could be probed")
+	}
+	return Finding{Check: "DANE", Status: Warn, Value: base.Value,
+		Detail: "TLSA authenticated but live cert unreachable to confirm match: " + lastErr.Error()}
 }
 
 // classifyDANE turns the gathered MX/TLSA counts into a finding.
@@ -307,6 +363,19 @@ func classifyDANE(mxCount, tlsaCount int, authenticated bool) Finding {
 			"TLSA published at _25._tcp.<MX> and DNSSEC-validated"
 	}
 	return f
+}
+
+// daneMatch reports whether the live-cert TLSA value equals any published value.
+// Comparison is case-insensitive and whitespace-trimmed; a rollover overlap
+// (old + new published together) still matches the live cert.
+func daneMatch(published []string, live string) bool {
+	want := strings.TrimSpace(live)
+	for _, p := range published {
+		if strings.EqualFold(strings.TrimSpace(p), want) {
+			return true
+		}
+	}
+	return false
 }
 
 // liveConn is the network-backed resolverConn.
@@ -368,17 +437,18 @@ func (l *liveConn) mx(ctx context.Context, domain string) ([]string, error) {
 	return out, nil
 }
 
-func (l *liveConn) tlsa(ctx context.Context, name string) (count int, ad bool, err error) {
+func (l *liveConn) tlsa(ctx context.Context, name string) (values []string, ad bool, err error) {
 	msg, err := l.exchange(ctx, name, dns.TypeTLSA, true)
 	if err != nil {
-		return 0, false, err
+		return nil, false, err
 	}
 	for _, rr := range msg.Answer {
-		if _, ok := rr.(*dns.TLSA); ok {
-			count++
+		if t, ok := rr.(*dns.TLSA); ok {
+			values = append(values, fmt.Sprintf("%d %d %d %s",
+				t.Usage, t.Selector, t.MatchingType, strings.ToLower(t.Certificate)))
 		}
 	}
-	return count, msg.AuthenticatedData, nil
+	return values, msg.AuthenticatedData, nil
 }
 
 func (l *liveConn) dnssec(ctx context.Context, domain string) (dnskey, ds, ad bool, err error) {
