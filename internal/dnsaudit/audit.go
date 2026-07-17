@@ -88,9 +88,10 @@ type resolverConn interface {
 	dnssec(ctx context.Context, domain string) (dnskey, ds, ad bool, err error)
 	// mx returns the domain's MX hostnames (lowercased, trailing dot stripped).
 	mx(ctx context.Context, domain string) ([]string, error)
-	// tlsa counts TLSA records at name and reports whether the answer was
+	// tlsa returns the raw TLSA record values ("usage selector match hex",
+	// lowercase hex) at name and reports whether the answer was
 	// DNSSEC-authenticated (AD flag) — DANE requires signed TLSA (RFC 7672).
-	tlsa(ctx context.Context, name string) (count int, ad bool, err error)
+	tlsa(ctx context.Context, name string) (values []string, ad bool, err error)
 }
 
 // Auditor runs the checks against a fixed resolver and HTTP client.
@@ -279,12 +280,12 @@ func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
 	}
 	total, authed := 0, true
 	for _, h := range hosts {
-		n, ad, terr := a.conn.tlsa(ctx, "_25._tcp."+h)
+		vals, ad, terr := a.conn.tlsa(ctx, "_25._tcp."+h)
 		if terr != nil {
 			continue
 		}
-		total += n
-		if n > 0 && !ad {
+		total += len(vals)
+		if len(vals) > 0 && !ad {
 			authed = false
 		}
 	}
@@ -368,17 +369,18 @@ func (l *liveConn) mx(ctx context.Context, domain string) ([]string, error) {
 	return out, nil
 }
 
-func (l *liveConn) tlsa(ctx context.Context, name string) (count int, ad bool, err error) {
+func (l *liveConn) tlsa(ctx context.Context, name string) (values []string, ad bool, err error) {
 	msg, err := l.exchange(ctx, name, dns.TypeTLSA, true)
 	if err != nil {
-		return 0, false, err
+		return nil, false, err
 	}
 	for _, rr := range msg.Answer {
-		if _, ok := rr.(*dns.TLSA); ok {
-			count++
+		if t, ok := rr.(*dns.TLSA); ok {
+			values = append(values, fmt.Sprintf("%d %d %d %s",
+				t.Usage, t.Selector, t.MatchingType, strings.ToLower(t.Certificate)))
 		}
 	}
-	return count, msg.AuthenticatedData, nil
+	return values, msg.AuthenticatedData, nil
 }
 
 func (l *liveConn) dnssec(ctx context.Context, domain string) (dnskey, ds, ad bool, err error) {
