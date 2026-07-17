@@ -1,5 +1,5 @@
 // Package dnsaudit evaluates a domain's mail-security posture from live public
-// DNS (SPF, DKIM, DMARC, DNSSEC, MTA-STS, TLS-RPT, BIMI). Unlike dnscheck (which
+// DNS (SPF, DKIM, DMARC, DNSSEC, DANE, MTA-STS, TLS-RPT, BIMI). Unlike dnscheck (which
 // compares live DNS against a desired record-set), it grades correctness and
 // policy strength per RFC. It uses a fixed configured resolver — no
 // user-controlled resolver, so no SSRF — and one outbound HTTPS GET to the
@@ -86,6 +86,11 @@ type resolverConn interface {
 	// publishes a DS (chain of trust delegated at the registrar), and whether a
 	// validating resolver set the AD (Authenticated Data) flag.
 	dnssec(ctx context.Context, domain string) (dnskey, ds, ad bool, err error)
+	// mx returns the domain's MX hostnames (lowercased, trailing dot stripped).
+	mx(ctx context.Context, domain string) ([]string, error)
+	// tlsa counts TLSA records at name and reports whether the answer was
+	// DNSSEC-authenticated (AD flag) — DANE requires signed TLSA (RFC 7672).
+	tlsa(ctx context.Context, name string) (count int, ad bool, err error)
 }
 
 // Auditor runs the checks against a fixed resolver and HTTP client.
@@ -157,6 +162,9 @@ func (a *Auditor) Audit(ctx context.Context, rawDomain string) (Report, error) {
 
 	// DNSSEC.
 	fs = append(fs, a.evalDNSSEC(ctx, domain))
+
+	// DANE (TLSA at _25._tcp.<MX>, must be DNSSEC-authenticated).
+	fs = append(fs, a.evalDANE(ctx, domain))
 
 	// MTA-STS (DNS record + fetched policy).
 	sts, _ := a.conn.txt(ctx, "_mta-sts."+domain)
@@ -261,6 +269,46 @@ func (a *Auditor) evalDNSSEC(ctx context.Context, domain string) Finding {
 	return f
 }
 
+// evalDANE checks inbound SMTP DANE: TLSA records at _25._tcp.<MX> that are
+// DNSSEC-authenticated (RFC 7672). DANE is optional, so absence is Info; a TLSA
+// that is not authenticated is a failure (it cannot be trusted).
+func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
+	hosts, err := a.conn.mx(ctx, domain)
+	if err != nil {
+		return Finding{Check: "DANE", Status: Warn, Detail: "MX lookup failed: " + err.Error()}
+	}
+	total, authed := 0, true
+	for _, h := range hosts {
+		n, ad, terr := a.conn.tlsa(ctx, "_25._tcp."+h)
+		if terr != nil {
+			continue
+		}
+		total += n
+		if n > 0 && !ad {
+			authed = false
+		}
+	}
+	return classifyDANE(len(hosts), total, authed)
+}
+
+// classifyDANE turns the gathered MX/TLSA counts into a finding.
+func classifyDANE(mxCount, tlsaCount int, authenticated bool) Finding {
+	f := Finding{Check: "DANE"}
+	switch {
+	case mxCount == 0:
+		f.Status, f.Detail = Info, "no MX records — DANE not applicable"
+	case tlsaCount == 0:
+		f.Status, f.Value, f.Detail = Info, "not deployed", "no TLSA at _25._tcp.<MX> — DANE not configured"
+	case !authenticated:
+		f.Status, f.Value, f.Detail = Fail, "unauthenticated",
+			"TLSA present but not DNSSEC-signed — DANE cannot be trusted (RFC 7672 requires signed TLSA)"
+	default:
+		f.Status, f.Value, f.Detail = Pass, fmt.Sprintf("%d TLSA, authenticated", tlsaCount),
+			"TLSA published at _25._tcp.<MX> and DNSSEC-validated"
+	}
+	return f
+}
+
 // liveConn is the network-backed resolverConn.
 type liveConn struct {
 	resolver string
@@ -304,6 +352,33 @@ func (l *liveConn) txt(ctx context.Context, name string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+func (l *liveConn) mx(ctx context.Context, domain string) ([]string, error) {
+	msg, err := l.exchange(ctx, domain, dns.TypeMX, false)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, rr := range msg.Answer {
+		if mx, ok := rr.(*dns.MX); ok {
+			out = append(out, strings.ToLower(strings.TrimSuffix(mx.Mx, ".")))
+		}
+	}
+	return out, nil
+}
+
+func (l *liveConn) tlsa(ctx context.Context, name string) (count int, ad bool, err error) {
+	msg, err := l.exchange(ctx, name, dns.TypeTLSA, true)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, rr := range msg.Answer {
+		if _, ok := rr.(*dns.TLSA); ok {
+			count++
+		}
+	}
+	return count, msg.AuthenticatedData, nil
 }
 
 func (l *liveConn) dnssec(ctx context.Context, domain string) (dnskey, ds, ad bool, err error) {

@@ -59,6 +59,9 @@ type Mail struct {
 	Hostname        string `toml:"hostname"`
 	DKIMDir         string `toml:"dkim_dir"`
 	DefaultSelector string `toml:"default_selector"`
+	// TLSCert is the mail host's TLS certificate (PEM) used to derive DANE TLSA
+	// records. Optional; when empty, TLSA is read live via STARTTLS on port 25.
+	TLSCert string `toml:"tls_cert"`
 }
 
 // Server holds the public server addresses.
@@ -208,6 +211,7 @@ func (c *Config) normalize() {
 	c.Mail.Hostname = strings.TrimSpace(c.Mail.Hostname)
 	c.Mail.DKIMDir = strings.TrimSpace(c.Mail.DKIMDir)
 	c.Mail.DefaultSelector = strings.TrimSpace(c.Mail.DefaultSelector)
+	c.Mail.TLSCert = strings.TrimSpace(c.Mail.TLSCert)
 	c.Server.IPv4 = strings.TrimSpace(c.Server.IPv4)
 	c.Server.IPv6 = strings.TrimSpace(c.Server.IPv6)
 	c.DNS.Resolver = strings.TrimSpace(c.DNS.Resolver)
@@ -229,6 +233,7 @@ func (c *Config) applyEnvOverrides(getenv func(string) string) error {
 		{"MAILADMIN_MAIL_HOSTNAME", &c.Mail.Hostname},
 		{"MAILADMIN_MAIL_DKIM_DIR", &c.Mail.DKIMDir},
 		{"MAILADMIN_MAIL_DEFAULT_SELECTOR", &c.Mail.DefaultSelector},
+		{"MAILADMIN_MAIL_TLS_CERT", &c.Mail.TLSCert},
 		{"MAILADMIN_SERVER_IPV4", &c.Server.IPv4},
 		{"MAILADMIN_SERVER_IPV6", &c.Server.IPv6},
 		{"MAILADMIN_DNS_RESOLVER", &c.DNS.Resolver},

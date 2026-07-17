@@ -18,6 +18,7 @@ import (
 
 	"mailadmin/internal/audit"
 	"mailadmin/internal/config"
+	"mailadmin/internal/dane"
 	"mailadmin/internal/db"
 	"mailadmin/internal/dnsaudit"
 	"mailadmin/internal/dnscheck"
@@ -51,14 +52,15 @@ var errManualDNS = errors.New("domain is not managed by an automated DNS provide
 func newDNSCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{Use: "dns", Short: "Show, check and publish DNS records"}
 
-	var showMTASTS bool
+	var showMTASTS, showDANE bool
 	show := &cobra.Command{
 		Use:   "show <domain>",
 		Short: "Print the desired DNS record-set for a domain",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(c *cobra.Command, args []string) error { return app.dnsShow(c, args[0], showMTASTS) },
+		RunE:  func(c *cobra.Command, args []string) error { return app.dnsShow(c, args[0], showMTASTS, showDANE) },
 	}
 	show.Flags().BoolVar(&showMTASTS, "with-mta-sts", false, "include MTA-STS records in the printed set")
+	show.Flags().BoolVar(&showDANE, "dane", false, "print only the DANE TLSA record for the mail host (from its TLS cert)")
 
 	var checkNjalla, checkMTASTS bool
 	check := &cobra.Command{
@@ -79,14 +81,20 @@ func newDNSCmd(app *App) *cobra.Command {
 	check.Flags().BoolVar(&checkNjalla, "njalla", false, "compare against live records at the Njalla registrar instead of public DNS")
 	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --njalla)")
 
-	var publishMTASTS bool
+	var publishMTASTS, publishDANE bool
 	publish := &cobra.Command{
 		Use:   "publish <domain>",
 		Short: "Reconcile the desired record-set at the registrar",
 		Args:  cobra.ExactArgs(1),
-		RunE:  func(c *cobra.Command, args []string) error { return app.dnsPublish(c, args[0], publishMTASTS) },
+		RunE: func(c *cobra.Command, args []string) error {
+			if publishDANE {
+				return app.dnsPublishDANE(c, args[0])
+			}
+			return app.dnsPublish(c, args[0], publishMTASTS)
+		},
 	}
 	publish.Flags().BoolVar(&publishMTASTS, "with-mta-sts", false, "also publish MTA-STS records (requires a live enforce policy)")
+	publish.Flags().BoolVar(&publishDANE, "dane", false, "publish only the DANE TLSA record for the mail host at the provider")
 
 	var takeoverKeepWeb, takeoverMTASTS bool
 	takeover := &cobra.Command{
@@ -140,7 +148,7 @@ func newDNSCmd(app *App) *cobra.Command {
 	var auditSelectors []string
 	audit := &cobra.Command{
 		Use:   "audit <domain>",
-		Short: "Grade a domain's mail-security posture (SPF/DKIM/DMARC/DNSSEC/MTA-STS/TLS-RPT/BIMI)",
+		Short: "Grade a domain's mail-security posture (SPF/DKIM/DMARC/DNSSEC/DANE/MTA-STS/TLS-RPT/BIMI)",
 		Long: "Evaluate live public DNS for correctness and policy strength per RFC —\n" +
 			"not a desired/actual diff (that is `dns check`). Works for any domain,\n" +
 			"including externally hosted ones. DKIM selectors are taken from --selector,\n" +
@@ -529,7 +537,7 @@ type dnsBackends struct {
 
 // dnsShow prints the desired mail record-set for a domain. It needs no registrar
 // or DB write — only the DKIM key on disk and the domain's selector.
-func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS bool) error {
+func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS, withDANE bool) error {
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -541,6 +549,14 @@ func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS bool) err
 	domain, err := valid.Domain(rawDomain)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	if withDANE {
+		rec, res, derr := a.daneRecord(ctx(cmd), cfg, domain)
+		if derr != nil {
+			return fmt.Errorf("dns show %s: %w", domain, derr)
+		}
+		r.Message("TLSA for %s derived from %s", cfg.Mail.Hostname, res.Source)
+		return r.TypeTable(recordsTable([]dnsprovider.Record{rec}), 0)
 	}
 	database, err := a.openDB(cmd, cfg)
 	if err != nil {
@@ -736,6 +752,75 @@ func (a *App) dnsPublish(cmd *cobra.Command, rawDomain string, withMTASTS bool) 
 	}
 	r.Message("published %d change(s) for %s", len(applied), domain)
 	return r.Table(changesTable(applied))
+}
+
+// daneSubname builds the TLSA owner name (_25._tcp.<label>) for the mail host
+// relative to the zone `domain`. The mail host must live inside that zone.
+func daneSubname(mailHost, domain string) (string, error) {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(mailHost), "."))
+	d := strings.ToLower(strings.TrimSpace(domain))
+	switch {
+	case h == "":
+		return "", fmt.Errorf("mail hostname not configured")
+	case h == d:
+		return "_25._tcp", nil
+	case strings.HasSuffix(h, "."+d):
+		return "_25._tcp." + strings.TrimSuffix(h, "."+d), nil
+	default:
+		return "", fmt.Errorf("mail host %q is not within zone %q — publish its TLSA in the mail host's own domain", h, d)
+	}
+}
+
+// daneRecord derives the DANE TLSA record for the mail host, using the cert file
+// from config when set, else a live STARTTLS read.
+func (a *App) daneRecord(ctx context.Context, cfg *config.Config, domain string) (dnsprovider.Record, dane.Result, error) {
+	sub, err := daneSubname(cfg.Mail.Hostname, domain)
+	if err != nil {
+		return dnsprovider.Record{}, dane.Result{}, err
+	}
+	res, err := dane.Value(ctx, cfg.Mail.TLSCert, cfg.Mail.Hostname)
+	if err != nil {
+		return dnsprovider.Record{}, dane.Result{}, err
+	}
+	return dnsprovider.Record{Type: "TLSA", Name: sub, Content: res.Value}, res, nil
+}
+
+// dnsPublishDANE publishes the mail host's DANE TLSA record at the provider. It
+// adds the record (existing values are kept, supporting a cert-rollover overlap)
+// and never removes; honours --dry-run and confirms.
+func (a *App) dnsPublishDANE(cmd *cobra.Command, rawDomain string) error {
+	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
+	if err != nil {
+		return err
+	}
+	defer be.db.Close()
+	r, err := a.Renderer()
+	if err != nil {
+		return err
+	}
+
+	rec, res, err := a.daneRecord(ctx(cmd), be.cfg, domain)
+	if err != nil {
+		return fmt.Errorf("dns publish %s: %w", domain, err)
+	}
+	r.Message("TLSA for %s derived from %s", be.cfg.Mail.Hostname, res.Source)
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would publish TLSA %s at %s", rec.Name, be.provider.Name())
+		return r.TypeTable(recordsTable([]dnsprovider.Record{rec}), 0)
+	}
+
+	if err := a.confirm(fmt.Sprintf("Publish TLSA %s (%s) at %s?", rec.Name, rec.Content, be.provider.Name())); err != nil {
+		return err
+	}
+	if err := be.provider.AddRecord(ctx(cmd), domain, rec); err != nil {
+		return fmt.Errorf("dns publish %s: %w", domain, err)
+	}
+	if err := be.rec.Record(ctx(cmd), "dns.publish.dane", domain, nil, map[string]any{"name": rec.Name, "value": rec.Content}); err != nil {
+		return err
+	}
+	r.Message("published TLSA %s at %s (stale TLSA, if any, remove after one TTL)", rec.Name, be.provider.Name())
+	return r.TypeTable(recordsTable([]dnsprovider.Record{rec}), 0)
 }
 
 // dnsTakeover snapshots the whole zone then replaces every record with the mail
