@@ -464,6 +464,22 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 	}
 	r.Message("migrated to %s: %d created, %d already present, %d failed",
 		to, len(res.Created), len(res.Skipped), len(res.Failed))
+
+	// Offer to point the domain at the target so `dns publish` (and DANE) manage
+	// it going forward — migrate only copies records, it never changes the row.
+	if automatedDNS(to) {
+		if database, derr := a.openDB(cmd, cfg); derr == nil {
+			if dom, gerr := getDomain(ctx(cmd), database, domain); gerr == nil && !strings.EqualFold(dom.DNSProvider, to) {
+				if cerr := a.confirm(fmt.Sprintf("Set %s's DNS provider to %s (currently %s)?", domain, to, dom.DNSProvider)); cerr == nil {
+					if serr := database.SetDomainDNSProvider(ctx(cmd), domain, to); serr != nil {
+						r.Message("warning: could not set DNS provider: %v", serr)
+					} else {
+						r.Message("DNS provider for %s set to %s", domain, to)
+					}
+				}
+			}
+		}
+	}
 	return r.StatusTable(migrateTable(res), 0)
 }
 

@@ -82,11 +82,21 @@ func newDomainCmd(app *App) *cobra.Command {
 		RunE:  func(c *cobra.Command, args []string) error { return runDomainRegenDKIM(app, c, args[0]) },
 	}
 
-	for _, sc := range []*cobra.Command{show, remove, enable, disable, setDKIM, regenDKIM} {
+	setProvider := &cobra.Command{
+		Use:   "set-provider <domain> <provider>",
+		Short: "Set a domain's DNS provider (manual|njalla|desec|cloudflare|inwx|servercow|servfail)",
+		Long: "Point a domain at a DNS backend so `dns publish` (and DANE) manage its\n" +
+			"zone via that provider's API. Use after `dns migrate` moved the zone —\n" +
+			"migrate copies records but leaves the provider unchanged.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(c *cobra.Command, args []string) error { return runDomainSetProvider(app, c, args[0], args[1]) },
+	}
+
+	for _, sc := range []*cobra.Command{show, remove, enable, disable, setDKIM, regenDKIM, setProvider} {
 		sc.ValidArgsFunction = app.completeDomain
 	}
 
-	cmd.AddCommand(list, show, add, remove, enable, disable, setDKIM, regenDKIM)
+	cmd.AddCommand(list, show, add, remove, enable, disable, setDKIM, regenDKIM, setProvider)
 	return cmd
 }
 
@@ -437,6 +447,53 @@ func runDomainSetDKIM(app *App, c *cobra.Command, rawDomain, rawSelector string)
 	})
 }
 
+// runDomainSetProvider changes a domain's DNS backend and audits the change.
+// It does not publish records — the operator runs `dns publish` afterwards.
+func runDomainSetProvider(app *App, c *cobra.Command, rawDomain, rawProvider string) error {
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	name, err := valid.Domain(rawDomain)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	provider, err := validDNSProvider(strings.ToLower(strings.TrimSpace(rawProvider)))
+	if err != nil {
+		return err
+	}
+	database, err := app.db(ctx(c))
+	if err != nil {
+		return err
+	}
+	before, err := loadDomain(ctx(c), database, name)
+	if err != nil {
+		return err
+	}
+	rec, err := app.auditor(ctx(c))
+	if err != nil {
+		return err
+	}
+	if err := database.SetDomainDNSProvider(ctx(c), name, provider); err != nil {
+		return err
+	}
+	if err := rec.Record(ctx(c), "domain.set-provider", name,
+		map[string]any{"dns_provider": before.DNSProvider},
+		map[string]any{"dns_provider": provider}); err != nil {
+		return err
+	}
+	r.Message("set DNS provider for %s to %s", name, provider)
+	if provider != "manual" {
+		r.Message("run `mailadmin dns publish %s` to publish the mail record-set at %s", name, provider)
+	}
+	return r.Value(domainView{
+		Name:        name,
+		Active:      before.Active,
+		Selector:    before.DKIMSelector,
+		DNSProvider: provider,
+	})
+}
+
 // runDomainRegenDKIM (re)generates the DKIM key for a domain's current selector
 // and audits it. It reads the selector from the row, so an unknown domain maps
 // to exit 3.
@@ -495,5 +552,5 @@ func validDNSProvider(s string) (string, error) {
 	if s == "manual" || automatedDNS(s) {
 		return s, nil
 	}
-	return "", fmt.Errorf("%w: --dns must be manual|%s, got %q", ErrUsage, strings.Join(automatedProviders, "|"), s)
+	return "", fmt.Errorf("%w: DNS provider must be manual|%s, got %q", ErrUsage, strings.Join(automatedProviders, "|"), s)
 }
