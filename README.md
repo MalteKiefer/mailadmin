@@ -23,10 +23,14 @@ over SSH; there is no HTTP server and no web UI.
   (argon2id via `doveadm`), quota, enable/disable, dedupe, and per-mailbox
   **app passwords**.
 - **Aliases** — including catch-all.
-- **DNS** — verify (`SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT/rDNS/autoconfig`), publish
-  and zone takeover through a provider API (**Njalla, deSEC, Cloudflare, INWX,
-  Servercow, servfail.network/PowerDNS**), with a full-zone snapshot taken before
-  any destructive change and a `restore`.
+- **DNS** — verify (`SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT/rDNS/autoconfig`), publish,
+  migrate and zone takeover through a provider API (**Njalla, deSEC, Cloudflare,
+  INWX, Servercow, servfail.network/PowerDNS**), with a full-zone snapshot taken
+  before any destructive change and a `restore`. Grade posture with `dns audit`
+  (`SPF/DKIM/DMARC/DNSSEC/DANE/MTA-STS/TLS-RPT/BIMI`). See [docs/DNS.md](docs/DNS.md).
+- **DANE** — manage inbound-SMTP TLSA records (`dns show/publish --dane`, and a
+  DANE check in `dns audit`), derived from the mail host's certificate, with a
+  documented rollover for certificate renewals. See [docs/DNS.md](docs/DNS.md#dane-tlsa).
 - **Security** — CrowdSec ban list, IP allowlist, and nftables firewall
   open/close with a protected-port guard.
 - **Queue** — list/show/flush/hold/release/delete Postfix queue entries.
@@ -49,12 +53,14 @@ over SSH; there is no HTTP server and no web UI.
 mailadmin
   domain     list | show <d> | add <d> [--selector] [--dns manual|njalla|desec|cloudflare|inwx|servercow|servfail]
              | remove <d> | enable <d> | disable <d>
-             | set-dkim <d> <sel> | regen-dkim <d>
+             | set-dkim <d> <sel> | regen-dkim <d> | set-provider <d> <provider>
   mailbox    list [--domain d] | show <a> | add <a> [--quota] | remove <a> [--purge]
              | passwd <a> | set-quota <a> <bytes> | enable <a> | disable <a> | dedupe <a>
              app-password list <a> | add <a> <label> | remove <a> <label>
   alias      list [--domain d] | show <src> | add <src> <dst> [--catch-all] | remove <src> [<dst>]
-  dns        show <d> | check <d> | publish <d> | takeover <d> [--keep-web] | restore <d> <backup>
+  dns        show <d> [--dane] | check <d> | publish <d> [--dane] | audit <d>
+             | migrate <d> --to <p> (--from <p>|--axfr <ns>|--zonefile <f>|--probe) [--clean] [--create]
+             | takeover <d> [--keep-web] | restore <d> <backup> | zone create <d>
   security   ban list|add <ip> [--dur] | remove <ip>
              allowlist list|add <ip>|remove <ip>
              firewall show | open <proto> <port> | close <proto> <port>
@@ -152,6 +158,7 @@ service_file = "/var/lib/mailadmin/.pg_service.conf"
 hostname         = "mail.example.com"
 dkim_dir         = "/var/lib/rspamd/dkim"
 default_selector = "mail2026"
+tls_cert         = "/etc/ssl/mail/fullchain.pem"   # optional; for DANE TLSA (else read via STARTTLS)
 
 [server]
 ipv4 = "203.0.113.10"
@@ -173,6 +180,7 @@ units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "postgresql"]
 | `mail.hostname` | MX / mail host FQDN |
 | `mail.dkim_dir` | Rspamd DKIM key directory |
 | `mail.default_selector` | default DKIM selector for new domains |
+| `mail.tls_cert` | optional PEM path for DANE TLSA generation (else read live via STARTTLS) |
 | `server.ipv4` / `server.ipv6` | addresses used when generating DNS records |
 | `dns.resolver` | resolver for `dns check` (fixed; never user-supplied) |
 | `backup.dns_backup_dir` | where zone snapshots are written (0700 dir, 0600 files) |
@@ -229,6 +237,13 @@ Takeover is safe by construction: `dns takeover <d>` snapshots the entire zone t
 puts it back. Reconciliation is idempotent and orders changes so a record slot is
 never briefly empty. Use `--dry-run` to print the plan without touching anything.
 
+Beyond publish/takeover, `dns migrate` copies a whole zone into a provider (from
+another provider's API, AXFR, a zonefile, or public-DNS probe; `--clean` for a 1:1
+replacement), `domain set-provider` points a domain at a backend afterwards,
+`dns audit` grades mail-security posture, and `dns show/publish --dane` manage DANE
+TLSA records. The full workflow, including DANE certificate-renewal rollover, is
+documented in **[docs/DNS.md](docs/DNS.md)**.
+
 ---
 
 ## Security
@@ -242,8 +257,10 @@ never briefly empty. Use `--dry-run` to print the plan without touching anything
 - **Least privilege** — `systemctl` and `nft`/`cscli` are gated by explicit
   allowlists; no wildcards.
 - **Crypto / TLS** — mailbox passwords are argon2id; all outbound HTTPS pins
-  TLS 1.2+ with certificate verification (no `InsecureSkipVerify`); no
-  MD5/SHA1/DES/RC4. Self-update downloads are checksum-verified.
+  TLS 1.2+ with certificate verification; no MD5/SHA1/DES/RC4. Self-update
+  downloads are checksum-verified. The sole `InsecureSkipVerify` is the DANE
+  STARTTLS probe, which reads the certificate to fingerprint it (chain trust is
+  irrelevant — DANE pins the presented key), not to authenticate a session.
 - **Secrets** — 0600 `secrets.env`, redacted in every output path, read from the
   TTY (never argv).
 - **Audit** — every mutation writes an `audit_log` row; DNS takeovers snapshot
@@ -273,8 +290,8 @@ Tag a version and push it — the release workflow builds the static
 GitHub release that `mailadmin update` can consume:
 
 ```sh
-git tag v1.14.0
-git push origin v1.14.0
+git tag v1.18.0
+git push origin v1.18.0
 ```
 
 The version embedded in the binary comes from the tag
