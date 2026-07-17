@@ -40,7 +40,9 @@ over SSH; there is no HTTP server and no web UI.
   Rspamd logs.
 - **Sieve** — show/set/edit user filters via ManageSieve.
 - **Audit** — every mutation is recorded (actor, action, target, before/after).
-- **doctor** — one-shot health check of services, ports, TLS, and Rspamd config.
+- **Doctor** — health check: services, ports, TLS, rspamd config, and DANE
+  (outbound `smtp_tls_security_level`/`smtp_dns_support_level`, smtpd-cert drift,
+  validating resolver).
 - **Self-update** — `mailadmin version --check` and `mailadmin update` pull
   signed-by-checksum release binaries from GitHub.
 - Global `-o table|json|plain` output, `--yes`, `--dry-run`, `-q`, `--config`.

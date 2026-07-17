@@ -241,6 +241,28 @@ With this in place, DANE survives every automatic key rotation with no delivery
 outage. Verify at any time with `mailadmin dns audit <domain>` (DANE should read
 `pass — N TLSA, authenticated`).
 
+### Verifying DANE actually works
+
+Publishing the TLSA record is only half of DANE. Two commands confirm it is
+effective:
+
+- `mailadmin dns audit <domain>` — the **DANE** finding now also fetches the
+  live certificate over STARTTLS and confirms the published `3 1 1` TLSA still
+  matches it. A stale TLSA (after a key rotation without `--reuse-key`) shows as
+  **fail** — *"published TLSA does not match live certificate"* — which is
+  exactly what DANE senders would reject. An unreachable mail host downgrades to
+  a warning rather than a false pass.
+
+- `mailadmin doctor` — checks the Postfix side on the mail host:
+  - **dane-outbound**: `smtp_tls_security_level` is `dane`/`dane-only` and
+    `smtp_dns_support_level=dnssec`. `dane` is opportunistic (falls back to
+    plaintext when a peer has no signed TLSA); `dane-only` never falls back.
+  - **dane-smtpd-cert**: `smtpd_tls_cert_file` matches the cert that feeds the
+    TLSA (`mail.tls_cert`), catching deploy-path drift.
+  - **dane-resolver**: a loopback nameserver in `/etc/resolv.conf` — outbound
+    DANE needs a local validating resolver to trust the DNSSEC AD flag
+    (best-effort check).
+
 ---
 
 ## `dns takeover` / `dns restore`
