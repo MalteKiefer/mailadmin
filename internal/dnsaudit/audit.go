@@ -10,6 +10,7 @@ package dnsaudit
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -338,6 +339,9 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string
 		}
 		return Finding{Check: "DANE", Status: Pass, Value: base.Value,
 			Detail: base.Detail + "; matches live certificate"}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("no mail host could be probed")
 	}
 	return Finding{Check: "DANE", Status: Warn, Value: base.Value,
 		Detail: "TLSA authenticated but live cert unreachable to confirm match: " + lastErr.Error()}
