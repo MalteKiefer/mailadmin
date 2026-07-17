@@ -138,5 +138,27 @@ func TestEvalBIMI(t *testing.T) {
 	}
 }
 
+func TestDaneMatch(t *testing.T) {
+	live := "3 1 1 abc123"
+	cases := []struct {
+		name      string
+		published []string
+		want      bool
+	}{
+		{"exact", []string{"3 1 1 abc123"}, true},
+		{"case-insensitive", []string{"3 1 1 ABC123"}, true},
+		{"rollover overlap", []string{"3 1 1 old000", "3 1 1 abc123"}, true},
+		{"stale only", []string{"3 1 1 old000"}, false},
+		{"empty", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := daneMatch(tc.published, live); got != tc.want {
+				t.Fatalf("daneMatch(%v,%q)=%v want %v", tc.published, live, got, tc.want)
+			}
+		})
+	}
+}
+
 // rsa2048 is the base64 SubjectPublicKeyInfo of a 2048-bit RSA key (test-only).
 const rsa2048 = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAutMr4fhaKrvoRdnSkQ50wUvakIxhyJEydgP3bXfmuCJ0bcGuHJ3EZQZkDcUV4g2t04rF7x+XdE1cTDAVm7hCH1sTsOxKm9CW039ApesPZNNMVr5kdECfBSFdY/Q264UPForgcGhseB4o7FVv15N2LF01FglRI5JQSvBQ+gQCOYoVOTtfxxE/C5gAu69fycqEyYQsJTx2GOCaa9jIika1DYjr5PHeJn/8UVOuairQCMX2oOkfPGsZQgOzaTv+ep81TFrV0VhphU55CE9taiovu7Gsu1kDQIxHkeiyKVJMBxK+WXywdV7q2qJhVhBOHM9vo/alBsSoIN+5DGg0BY+6lwIDAQAB"
