@@ -62,8 +62,10 @@ mailadmin dns check <domain> --registrar         # diff desired vs. live at the 
 
 `check` resolves live DNS through the fixed `dns.resolver` and reports, per record,
 whether it matches, drifts (old → new), or is missing. With `--registrar` it queries
-the domain's configured provider's API instead of public DNS (aliases: `--njalla`,
-`--desec`) and additionally lists stale records not part of the mail set.
+the API of the domain's configured provider instead of public DNS and additionally
+lists stale records not part of the mail set. `--njalla` / `--desec` force that
+specific provider's API regardless of the domain's configured `dns_provider` — handy
+for verifying a zone before switching the domain over to it.
 
 ---
 
