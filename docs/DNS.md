@@ -57,10 +57,13 @@ separately (see [DANE](#dane-tlsa)) because it is derived from the TLS certifica
 ```sh
 mailadmin dns show <domain> [--with-mta-sts]     # print the desired record set
 mailadmin dns check <domain>                     # diff desired vs. live public DNS
+mailadmin dns check <domain> --registrar         # diff desired vs. live at the DNS provider (API)
 ```
 
 `check` resolves live DNS through the fixed `dns.resolver` and reports, per record,
-whether it matches, drifts (old → new), or is missing.
+whether it matches, drifts (old → new), or is missing. With `--registrar` it queries
+the domain's configured provider's API instead of public DNS (aliases: `--njalla`,
+`--desec`) and additionally lists stale records not part of the mail set.
 
 ---
 
