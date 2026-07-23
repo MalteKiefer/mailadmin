@@ -62,24 +62,27 @@ func newDNSCmd(app *App) *cobra.Command {
 	show.Flags().BoolVar(&showMTASTS, "with-mta-sts", false, "include MTA-STS records in the printed set")
 	show.Flags().BoolVar(&showDANE, "dane", false, "print only the DANE TLSA record for the mail host (from its TLS cert)")
 
-	var checkNjalla, checkMTASTS bool
+	var checkNjalla, checkDeSEC, checkRegistrar, checkMTASTS bool
 	check := &cobra.Command{
 		Use:   "check <domain>",
 		Short: "Verify live DNS (SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT)",
 		Long: "Compare the desired mail record-set against what is actually live.\n\n" +
 			"By default it resolves the public DNS via the configured resolver.\n" +
-			"With --njalla it queries the registrar API instead and reports, per\n" +
+			"With --registrar (or the provider aliases --njalla/--desec) it queries the\n" +
+			"registrar API for the domain's configured provider instead and reports, per\n" +
 			"record, whether it matches, drifts, or is missing at the zone.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if checkNjalla {
-				return app.dnsCheckNjalla(c, args[0], checkMTASTS)
+			if checkNjalla || checkDeSEC || checkRegistrar {
+				return app.dnsCheckRegistrar(c, args[0], checkMTASTS)
 			}
 			return app.dnsCheck(c, args[0])
 		},
 	}
-	check.Flags().BoolVar(&checkNjalla, "njalla", false, "compare against live records at the Njalla registrar instead of public DNS")
-	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --njalla)")
+	check.Flags().BoolVar(&checkRegistrar, "registrar", false, "compare against live records at the domain's DNS provider (registrar API) instead of public DNS")
+	check.Flags().BoolVar(&checkNjalla, "njalla", false, "alias for --registrar")
+	check.Flags().BoolVar(&checkDeSEC, "desec", false, "alias for --registrar")
+	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --registrar)")
 
 	var publishMTASTS, publishDANE bool
 	publish := &cobra.Command{
@@ -641,12 +644,13 @@ func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
 	return r.StatusTable(njallaCheckTable(plan), 0)
 }
 
-// dnsCheckNjalla compares the desired mail record-set against the records that
-// are actually live at the Njalla registrar (via the API, not public DNS) and
-// reports, per record, whether it matches, drifts (old→new), or is missing. It
-// also lists stale records (present at the zone but not part of the mail set)
-// and, on an interactive terminal, offers to delete a selection of them.
-func (a *App) dnsCheckNjalla(cmd *cobra.Command, rawDomain string, withMTASTS bool) error {
+// dnsCheckRegistrar compares the desired mail record-set against the records
+// that are actually live at the domain's configured DNS provider (via its API,
+// not public DNS) and reports, per record, whether it matches, drifts (old→new),
+// or is missing. It also lists stale records (present at the zone but not part
+// of the mail set) and, on an interactive terminal, offers to delete a selection
+// of them. Works for any automated provider (njalla, desec, ...).
+func (a *App) dnsCheckRegistrar(cmd *cobra.Command, rawDomain string, withMTASTS bool) error {
 	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
 	if err != nil {
 		return err
