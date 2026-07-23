@@ -3,6 +3,12 @@
 // and serve the host-templated client-config XML for every hosted domain — the
 // mailbox.org model, a single endpoint for all domains.
 //
+// It also owns the MTA-STS include: mta-sts.<domain> serving the static enforce
+// policy from a single web root. This mirrors the autodiscovery model and
+// supersedes the old external mailadmin-mta-sts-sync shell script, so the policy
+// endpoint is brought up in lockstep with the domain lifecycle instead of
+// depending on a separate, untriggered script.
+//
 // mailadmin regenerates one managed include file from the domain list and
 // reloads Caddy; it never edits the main Caddyfile. The XML itself is a Caddy
 // template keyed off the request host, so no per-domain file is needed.
@@ -21,29 +27,37 @@ import (
 
 // Defaults for the managed paths and the reload unit.
 const (
-	DefaultIncludePath      = "/etc/caddy/Caddyfile.d/autodiscovery.caddy"
-	DefaultAutoconfigRoot   = "/srv/caddy/autoconfig"
-	DefaultAutodiscoverRoot = "/srv/caddy/autodiscover"
-	DefaultReloadUnit       = "caddy"
-	binSystemctl            = "/usr/bin/systemctl"
+	DefaultIncludePath       = "/etc/caddy/Caddyfile.d/autodiscovery.caddy"
+	DefaultAutoconfigRoot    = "/srv/caddy/autoconfig"
+	DefaultAutodiscoverRoot  = "/srv/caddy/autodiscover"
+	DefaultMTASTSIncludePath = "/etc/caddy/Caddyfile.d/mta-sts.caddy"
+	DefaultMTASTSRoot        = "/srv/caddy/mta-sts"
+	DefaultReloadUnit        = "caddy"
+	binSystemctl             = "/usr/bin/systemctl"
 )
 
-// Manager writes the autodiscovery include and reloads Caddy.
+// Manager writes the autodiscovery and MTA-STS includes and reloads Caddy.
 type Manager struct {
 	runner           *sys.Runner
 	includePath      string
 	autoconfigRoot   string
 	autodiscoverRoot string
+	mtaStsInclude    string
+	mtaStsRoot       string
 	reloadUnit       string
 }
 
-// New builds a Manager; empty options fall back to the defaults.
+// New builds a Manager; empty options fall back to the defaults. The MTA-STS
+// paths are not part of the option list (no caller overrides them today); they
+// always take the defaults.
 func New(runner *sys.Runner, includePath, autoconfigRoot, autodiscoverRoot, reloadUnit string) *Manager {
 	return &Manager{
 		runner:           runner,
 		includePath:      orDefault(includePath, DefaultIncludePath),
 		autoconfigRoot:   orDefault(autoconfigRoot, DefaultAutoconfigRoot),
 		autodiscoverRoot: orDefault(autodiscoverRoot, DefaultAutodiscoverRoot),
+		mtaStsInclude:    DefaultMTASTSIncludePath,
+		mtaStsRoot:       DefaultMTASTSRoot,
 		reloadUnit:       orDefault(reloadUnit, DefaultReloadUnit),
 	}
 }
@@ -83,6 +97,41 @@ func (m *Manager) Sync(ctx context.Context, domains []string) error {
 	block := m.Block(domains)
 	if err := writeFileAtomic(m.includePath, []byte(block), 0o644); err != nil {
 		return fmt.Errorf("write autodiscovery include: %w", err)
+	}
+	if _, err := m.runner.Output(ctx, binSystemctl, "reload", m.reloadUnit); err != nil {
+		return fmt.Errorf("reload %s: %w", m.reloadUnit, err)
+	}
+	return nil
+}
+
+// MTASTSBlock renders the Caddy MTA-STS site block for the given domains. Like
+// Block it is pure (no I/O); domains are sorted and de-duplicated and an empty
+// list yields an empty string (no block). Every mta-sts.<domain> host serves the
+// same static enforce policy from the shared web root.
+func (m *Manager) MTASTSBlock(domains []string) string {
+	hosts := dedupeSorted(domains)
+	if len(hosts) == 0 {
+		return ""
+	}
+	labels := make([]string, len(hosts))
+	for i, d := range hosts {
+		labels[i] = "mta-sts." + d
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Managed by mailadmin — do not edit. Regenerated on domain add/remove.\n")
+	fmt.Fprintf(&b, "%s {\n\troot * %s\n\tfile_server\n\t@policy path /.well-known/mta-sts.txt\n\theader @policy Content-Type text/plain\n\tencode zstd gzip\n}\n",
+		strings.Join(labels, ", "), m.mtaStsRoot)
+	return b.String()
+}
+
+// SyncMTASTS writes the MTA-STS include for the given (active) domains and
+// reloads Caddy. Writing is atomic so a partial write never breaks Caddy. Only
+// active domains should be passed: a disabled domain must not advertise a policy
+// endpoint.
+func (m *Manager) SyncMTASTS(ctx context.Context, domains []string) error {
+	block := m.MTASTSBlock(domains)
+	if err := writeFileAtomic(m.mtaStsInclude, []byte(block), 0o644); err != nil {
+		return fmt.Errorf("write mta-sts include: %w", err)
 	}
 	if _, err := m.runner.Output(ctx, binSystemctl, "reload", m.reloadUnit); err != nil {
 		return fmt.Errorf("reload %s: %w", m.reloadUnit, err)
