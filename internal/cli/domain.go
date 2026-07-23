@@ -274,6 +274,12 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 	if err := app.syncAutodiscovery(ctx(c)); err != nil {
 		r.Message("warning: could not update Caddy autodiscovery: %v", err)
 	}
+	// Bring up the MTA-STS policy endpoint (mta-sts.<domain>) in the same step so
+	// a later `dns publish --with-mta-sts` finds a live enforce policy. A reload
+	// failure is a soft warning — the domain is already created.
+	if err := app.syncMTASTS(ctx(c)); err != nil {
+		r.Message("warning: could not update Caddy MTA-STS: %v", err)
+	}
 
 	// For an automated registrar, publish the mail record-set straight away so a
 	// new domain is live without a second manual step. MTA-STS is withheld until
@@ -345,6 +351,9 @@ func runDomainRemove(app *App, c *cobra.Command, rawDomain string) error {
 	if err := app.syncAutodiscovery(ctx(c)); err != nil {
 		r.Message("warning: could not update Caddy autodiscovery: %v", err)
 	}
+	if err := app.syncMTASTS(ctx(c)); err != nil {
+		r.Message("warning: could not update Caddy MTA-STS: %v", err)
+	}
 	return nil
 }
 
@@ -389,6 +398,11 @@ func runDomainSetActive(app *App, c *cobra.Command, rawDomain string, active boo
 		return err
 	}
 	r.Message("%s domain %s", verb, name)
+	// MTA-STS is active-gated: enabling must publish the policy endpoint, disabling
+	// must withdraw it. Regenerate the include from the new active set.
+	if err := app.syncMTASTS(ctx(c)); err != nil {
+		r.Message("warning: could not update Caddy MTA-STS: %v", err)
+	}
 	return nil
 }
 
