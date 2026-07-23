@@ -89,6 +89,7 @@ func runDoctor(app *App, c *cobra.Command) error {
 	results = append(results, daneOutboundCheck(ctx, runner))
 	results = append(results, daneCertCheck(ctx, runner, cfg.Mail.TLSCert))
 	results = append(results, resolverCheck(ctx, runner))
+	results = append(results, mtaStsEndpointChecks(ctx, app)...)
 
 	if err := renderChecks(r, results); err != nil {
 		return err
@@ -103,6 +104,40 @@ func runDoctor(app *App, c *cobra.Command) error {
 // errDoctorUnhealthy signals a failed health check. It maps to the default
 // runtime exit code (1); doctor deliberately does not use not-found/declined.
 var errDoctorUnhealthy = fmt.Errorf("doctor")
+
+// mtaStsEndpointChecks probes, for every active domain, that its MTA-STS policy
+// endpoint (https://mta-sts.<domain>/.well-known/mta-sts.txt) serves a reachable
+// mode: enforce policy — the very condition that must hold before the _mta-sts
+// TXT record is published. A down endpoint is a WARN (advisory, not fatal): a
+// freshly-added domain may still be waiting on its Caddy certificate, mirroring
+// the tls-cert check's pre-issuance tolerance. A DB/list failure yields one
+// ERROR row and never aborts the remaining report.
+func mtaStsEndpointChecks(ctx context.Context, app *App) []checkResult {
+	database, err := app.db(ctx)
+	if err != nil {
+		return []checkResult{{Name: "mta-sts", Status: statusError, Detail: "opening db: " + firstNonEmptyLine(err.Error())}}
+	}
+	domains, err := database.ListDomains(ctx)
+	if err != nil {
+		return []checkResult{{Name: "mta-sts", Status: statusError, Detail: "listing domains: " + firstNonEmptyLine(err.Error())}}
+	}
+	var out []checkResult
+	for _, dom := range domains {
+		if !dom.Active {
+			continue
+		}
+		res := checkResult{Name: "mta-sts:" + dom.Name}
+		if err := mtaStsReady(ctx, dom.Name); err != nil {
+			res.Status = statusWarn
+			res.Detail = firstNonEmptyLine(err.Error())
+		} else {
+			res.Status = statusOK
+			res.Detail = "policy endpoint serves mode: enforce"
+		}
+		out = append(out, res)
+	}
+	return out
+}
 
 // serviceChecks reports one row per allowlisted unit. A unit that is not active
 // is a FAIL; a probe error (systemctl unreachable) is an ERROR but does not
