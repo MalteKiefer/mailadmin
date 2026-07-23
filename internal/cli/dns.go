@@ -68,21 +68,26 @@ func newDNSCmd(app *App) *cobra.Command {
 		Short: "Verify live DNS (SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT)",
 		Long: "Compare the desired mail record-set against what is actually live.\n\n" +
 			"By default it resolves the public DNS via the configured resolver.\n" +
-			"With --registrar (or the provider aliases --njalla/--desec) it queries the\n" +
-			"registrar API for the domain's configured provider instead and reports, per\n" +
-			"record, whether it matches, drifts, or is missing at the zone.",
+			"With --registrar it queries the API of the domain's configured DNS provider\n" +
+			"instead and reports, per record, whether it matches, drifts, or is missing.\n" +
+			"--njalla / --desec force that specific provider's API regardless of the\n" +
+			"domain's configured dns_provider (useful before the row is switched over).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
-			if checkNjalla || checkDeSEC || checkRegistrar {
-				return app.dnsCheckRegistrar(c, args[0], checkMTASTS)
+			provider, err := registrarCheckProvider(checkRegistrar, checkNjalla, checkDeSEC)
+			if err != nil {
+				return err
 			}
-			return app.dnsCheck(c, args[0])
+			if !checkRegistrar && provider == "" { // no registrar flag: public DNS
+				return app.dnsCheck(c, args[0])
+			}
+			return app.dnsCheckRegistrar(c, args[0], provider, checkMTASTS)
 		},
 	}
-	check.Flags().BoolVar(&checkRegistrar, "registrar", false, "compare against live records at the domain's DNS provider (registrar API) instead of public DNS")
-	check.Flags().BoolVar(&checkNjalla, "njalla", false, "alias for --registrar")
-	check.Flags().BoolVar(&checkDeSEC, "desec", false, "alias for --registrar")
-	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --registrar)")
+	check.Flags().BoolVar(&checkRegistrar, "registrar", false, "compare against live records at the domain's configured DNS provider (registrar API) instead of public DNS")
+	check.Flags().BoolVar(&checkNjalla, "njalla", false, "compare against the Njalla API (forces provider njalla)")
+	check.Flags().BoolVar(&checkDeSEC, "desec", false, "compare against the deSEC API (forces provider desec)")
+	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --registrar/--njalla/--desec)")
 
 	var publishMTASTS, publishDANE bool
 	publish := &cobra.Command{
@@ -644,13 +649,32 @@ func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
 	return r.StatusTable(njallaCheckTable(plan), 0)
 }
 
+// registrarCheckProvider resolves the provider name to query for `dns check`,
+// from the mutually-exclusive registrar flags. "" means "use the domain's
+// configured dns_provider" (--registrar or no flag); a non-empty value forces
+// that specific provider (--njalla/--desec).
+func registrarCheckProvider(registrar, njalla, desec bool) (string, error) {
+	if njalla && desec {
+		return "", fmt.Errorf("%w: choose at most one of --njalla / --desec", ErrUsage)
+	}
+	switch {
+	case njalla:
+		return dnsProviderNjalla, nil
+	case desec:
+		return dnsProviderDeSEC, nil
+	default: // --registrar or no flag: the domain's configured provider
+		return "", nil
+	}
+}
+
 // dnsCheckRegistrar compares the desired mail record-set against the records
-// that are actually live at the domain's configured DNS provider (via its API,
-// not public DNS) and reports, per record, whether it matches, drifts (old→new),
-// or is missing. It also lists stale records (present at the zone but not part
-// of the mail set) and, on an interactive terminal, offers to delete a selection
-// of them. Works for any automated provider (njalla, desec, ...).
-func (a *App) dnsCheckRegistrar(cmd *cobra.Command, rawDomain string, withMTASTS bool) error {
+// that are actually live at a DNS provider (via its API, not public DNS) and
+// reports, per record, whether it matches, drifts (old→new), or is missing. It
+// also lists stale records (present at the zone but not part of the mail set)
+// and, on an interactive terminal, offers to delete a selection of them.
+// forceProvider, when non-empty, overrides the domain's configured dns_provider
+// (so a zone can be checked against a provider before the row is switched over).
+func (a *App) dnsCheckRegistrar(cmd *cobra.Command, rawDomain, forceProvider string, withMTASTS bool) error {
 	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
 	if err != nil {
 		return err
@@ -659,6 +683,18 @@ func (a *App) dnsCheckRegistrar(cmd *cobra.Command, rawDomain string, withMTASTS
 	r, err := a.Renderer()
 	if err != nil {
 		return err
+	}
+
+	if forceProvider != "" {
+		_, secrets, cerr := a.Config()
+		if cerr != nil {
+			return cerr
+		}
+		p, cerr := newProvider(forceProvider, secrets)
+		if cerr != nil {
+			return cerr
+		}
+		be.provider = p
 	}
 
 	desired, err := a.desiredRecords(cmd, be, domain, withMTASTS)
