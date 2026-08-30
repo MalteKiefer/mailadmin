@@ -18,6 +18,7 @@ type ConfigView struct {
 	IPv6             string   `json:"ipv6"`
 	Resolver         string   `json:"resolver"`
 	DNSBackupDir     string   `json:"dns_backup_dir"`
+	BackupDir        string   `json:"backup_dir"`
 	LogUnits         []string `json:"log_units"`
 	NjallaConfigured bool     `json:"njalla_configured"`
 	DeSECConfigured  bool     `json:"desec_configured"`
@@ -42,6 +43,7 @@ func View(c *Config, s *Secrets) ConfigView {
 		IPv6:             c.Server.IPv6,
 		Resolver:         c.DNS.Resolver,
 		DNSBackupDir:     c.Backup.DNSBackupDir,
+		BackupDir:        c.Backup.Dir,
 		LogUnits:         c.Logs.Units,
 		NjallaConfigured: s.HasNjalla(),
 		DeSECConfigured:  s.HasDeSEC(),
@@ -72,6 +74,14 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 
 	add("dkim_dir", dirExists(c.Mail.DKIMDir), c.Mail.DKIMDir)
 	add("dns_backup_dir", dirExists(c.Backup.DNSBackupDir), c.Backup.DNSBackupDir)
+	switch {
+	case c.Backup.Dir == "":
+		add("backup_dir", true, "not set (backup create/list require --out/--dir)")
+	case dirExists(c.Backup.Dir):
+		add("backup_dir", true, c.Backup.Dir)
+	default:
+		add("backup_dir", true, c.Backup.Dir+" (does not exist yet; created on first `backup create`)")
+	}
 
 	if c.Postgres.ServiceFile == "" {
 		add("postgres_service_file", true, "not set (using default libpq lookup)")
@@ -152,6 +162,7 @@ resolver = "1.1.1.1:53"
 
 [backup]
 dns_backup_dir = "/var/lib/mailadmin/dns-backups"
+dir            = "/var/lib/mailadmin/backups"
 
 [logs]
 units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "postgresql"]

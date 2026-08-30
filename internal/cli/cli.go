@@ -281,6 +281,7 @@ func NewRootCmd() *cobra.Command {
 		newLogCmd(app),
 		newStatsCmd(app),
 		newSieveCmd(app),
+		newBackupCmd(app),
 		newAuditCmd(app),
 		newDoctorCmd(app),
 		newConfigCmd(app),
