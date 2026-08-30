@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"mailadmin/internal/output"
 	"mailadmin/internal/rspamd"
+	"mailadmin/internal/rspamdconf"
 	"mailadmin/internal/security"
 	"mailadmin/internal/stats"
 	"mailadmin/internal/sys"
@@ -36,6 +38,8 @@ func newSecurityCmd(app *App) *cobra.Command {
 		newLearnSpamCmd(app),
 		newLearnHamCmd(app),
 		newQuarantineCmd(app),
+		newRatelimitCmd(app),
+		newGreylistCmd(app),
 	)
 	return cmd
 }
@@ -620,4 +624,291 @@ func runQuarantineList(app *App, cmd *cobra.Command, since string) error {
 		t.Rows = append(t.Rows, []string{e.Timestamp, e.Action, e.Score, e.From, e.To, e.Subject, e.QueueID})
 	}
 	return r.Table(t)
+}
+
+// ---- rspamd ratelimit / greylist tuning ------------------------------------
+//
+// These commands read and surgically edit /etc/rspamd/local.d/ratelimit.conf
+// and greylist.conf (see internal/rspamdconf for the parser/writer and why it
+// is a narrow line-oriented grammar rather than a full UCL editor). Every
+// mutating write is followed by the same `rspamadm configtest` check `doctor`
+// runs (rspamdCheck, doctor.go) before being reported as a success; a failed
+// check rolls the file back to its pre-write content so rspamd is never left
+// with a config that fails to load. A successful, validated write is followed
+// by a reload of the rspamd unit through internal/services (the same
+// allowlist-gated path `mailadmin service reload rspamd` uses) so the change
+// actually takes effect.
+//
+// rspamdConfDir is the local.d directory. It is not currently exposed as a
+// mailadmin config setting (internal/config/config.go is out of scope for
+// this change), so it is pinned to rspamdconf.DefaultConfDir, the well-known
+// Debian/rspamd default.
+const rspamdConfDir = rspamdconf.DefaultConfDir
+
+// validateAndReload runs the doctor rspamd-config check against the
+// just-written file; on failure it restores oldContent to path and returns an
+// error, so a bad rspamd config is never left on disk. On success it reloads
+// the rspamd unit via the allowlist-gated services backend.
+func (a *App) validateAndReload(cmd *cobra.Command, path string, oldContent []byte) error {
+	c := ctx(cmd)
+	res := rspamdCheck(c, a.runner())
+	if res.Status != statusOK {
+		if rbErr := rspamdconf.RestoreFile(path, oldContent); rbErr != nil {
+			return fmt.Errorf("rspamd config validation failed (%s) AND rollback failed: %v", res.Detail, rbErr)
+		}
+		return fmt.Errorf("rspamd config validation failed, rolled back: %s", res.Detail)
+	}
+
+	svc, err := a.services()
+	if err != nil {
+		return fmt.Errorf("config written and validated, but reload could not be attempted: %w", err)
+	}
+	if err := svc.Reload(c, "rspamd"); err != nil {
+		return fmt.Errorf("config written and validated, but reload failed: %w", err)
+	}
+	return nil
+}
+
+// ---- ratelimit --------------------------------------------------------
+
+func newRatelimitCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ratelimit",
+		Short: "Show or tune rspamd rate-limit buckets (local.d/ratelimit.conf)",
+	}
+
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Show the configured rate for every ratelimit bucket",
+		Args:  cobra.NoArgs,
+		RunE:  func(c *cobra.Command, _ []string) error { return runRatelimitShow(app, c) },
+	}
+
+	set := &cobra.Command{
+		Use:   "set <bucket> <rate>",
+		Short: "Set a ratelimit bucket's rate (e.g. \"20 / 1m\")",
+		Long: "Sets one bucket in the rspamd ratelimit module's `rates { }` block. Buckets:\n" +
+			strings.Join(rspamdconf.RatelimitBuckets, ", ") + ".\n" +
+			"rate must be \"<count> / <n><unit>\", unit one of s,m,h,d,w (e.g. \"20 / 1m\").",
+		Args: cobra.ExactArgs(2),
+		RunE: func(c *cobra.Command, args []string) error { return runRatelimitSet(app, c, args[0], args[1]) },
+	}
+
+	cmd.AddCommand(show, set)
+	return cmd
+}
+
+var ratelimitColumns = []string{"BUCKET", "RATE", "SOURCE"}
+
+func runRatelimitShow(app *App, cmd *cobra.Command) error {
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	values, err := rspamdconf.ReadRatelimit(rspamdConfDir)
+	if err != nil {
+		return err
+	}
+	rows := make([][]string, 0, len(rspamdconf.RatelimitBuckets))
+	for _, b := range rspamdconf.RatelimitBuckets {
+		if v, ok := values[b]; ok {
+			rows = append(rows, []string{b, v, "file"})
+		} else {
+			rows = append(rows, []string{b, "", "rspamd default"})
+		}
+	}
+	return r.Table(output.Table{Columns: ratelimitColumns, Rows: rows})
+}
+
+func runRatelimitSet(app *App, cmd *cobra.Command, bucketArg, rateArg string) error {
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	if !rspamdconf.IsBucket(bucketArg) {
+		return fmt.Errorf("%w: unknown ratelimit bucket %q (valid: %s)",
+			ErrUsage, bucketArg, strings.Join(rspamdconf.RatelimitBuckets, ", "))
+	}
+	normalized, err := rspamdconf.ValidateRate(rateArg)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+
+	values, err := rspamdconf.ReadRatelimit(rspamdConfDir)
+	if err != nil {
+		return err
+	}
+	oldDisplay, hadOld := values[bucketArg]
+	if !hadOld {
+		oldDisplay = "(rspamd default)"
+	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would set ratelimit %s: %s -> %s", bucketArg, oldDisplay, normalized)
+		return nil
+	}
+
+	if err := app.confirm(fmt.Sprintf("set ratelimit %s to %s (was %s)", bucketArg, normalized, oldDisplay)); err != nil {
+		return err
+	}
+
+	oldContent, oldValue, err := rspamdconf.SetRatelimit(rspamdConfDir, bucketArg, rateArg)
+	if err != nil {
+		return err
+	}
+
+	if err := app.validateAndReload(cmd, rspamdconf.RatelimitPath(rspamdConfDir), oldContent); err != nil {
+		return err
+	}
+
+	before := map[string]string{"rate": oldValue}
+	after := map[string]string{"rate": normalized}
+	app.recordSecurity(cmd, "security.ratelimit.set", bucketArg, before, after)
+
+	r.Message("set ratelimit %s to %s", bucketArg, normalized)
+	return nil
+}
+
+// ---- greylist -----------------------------------------------------------
+
+func newGreylistCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "greylist",
+		Short: "Show or tune rspamd greylisting (local.d/greylist.conf)",
+	}
+
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Show the configured greylist timeout/expire",
+		Args:  cobra.NoArgs,
+		RunE:  func(c *cobra.Command, _ []string) error { return runGreylistShow(app, c) },
+	}
+
+	var timeout, expire string
+	set := &cobra.Command{
+		Use:   "set",
+		Short: "Set greylist timeout and/or expire",
+		Long: "Sets the rspamd greylist module's timeout (how long a first-seen\n" +
+			"triplet is soft-rejected) and/or expire (how long a passed triplet stays\n" +
+			"valid), e.g. --timeout 5m --expire 1d. Durations use a single unit\n" +
+			"(s|m|h|d), matching the rest of mailadmin's duration flags.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error { return runGreylistSet(app, c, timeout, expire) },
+	}
+	set.Flags().StringVar(&timeout, "timeout", "", "greylist timeout, e.g. 5m")
+	set.Flags().StringVar(&expire, "expire", "", "greylist expire, e.g. 1d")
+
+	cmd.AddCommand(show, set)
+	return cmd
+}
+
+var greylistColumns = []string{"SETTING", "VALUE", "SOURCE"}
+
+func runGreylistShow(app *App, cmd *cobra.Command) error {
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	values, err := rspamdconf.ReadGreylist(rspamdConfDir)
+	if err != nil {
+		return err
+	}
+	rows := make([][]string, 0, len(rspamdconf.GreylistSettings))
+	for _, s := range rspamdconf.GreylistSettings {
+		if v, ok := values[s]; ok {
+			rows = append(rows, []string{s, v, "file"})
+		} else {
+			rows = append(rows, []string{s, "", "rspamd default"})
+		}
+	}
+	return r.Table(output.Table{Columns: greylistColumns, Rows: rows})
+}
+
+// greylistChange is one --timeout/--expire value to apply, in flag order.
+type greylistChange struct {
+	setting, value string
+}
+
+func runGreylistSet(app *App, cmd *cobra.Command, timeout, expire string) error {
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	if timeout == "" && expire == "" {
+		return fmt.Errorf("%w: at least one of --timeout/--expire is required", ErrUsage)
+	}
+
+	var changes []greylistChange
+	if timeout != "" {
+		v, verr := valid.Duration(timeout)
+		if verr != nil {
+			return fmt.Errorf("%w: --timeout: %v", ErrUsage, verr)
+		}
+		changes = append(changes, greylistChange{"timeout", v})
+	}
+	if expire != "" {
+		v, verr := valid.Duration(expire)
+		if verr != nil {
+			return fmt.Errorf("%w: --expire: %v", ErrUsage, verr)
+		}
+		changes = append(changes, greylistChange{"expire", v})
+	}
+
+	current, err := rspamdconf.ReadGreylist(rspamdConfDir)
+	if err != nil {
+		return err
+	}
+
+	if app.flags.dryRun {
+		for _, chg := range changes {
+			old, ok := current[chg.setting]
+			if !ok {
+				old = "(rspamd default)"
+			}
+			r.Message("dry-run: would set greylist %s: %s -> %s", chg.setting, old, chg.value)
+		}
+		return nil
+	}
+
+	descr := make([]string, 0, len(changes))
+	for _, chg := range changes {
+		descr = append(descr, fmt.Sprintf("%s=%s", chg.setting, chg.value))
+	}
+	if err := app.confirm("set greylist " + strings.Join(descr, ", ")); err != nil {
+		return err
+	}
+
+	var originalContent []byte
+	haveOriginal := false
+	before := map[string]string{}
+	after := map[string]string{}
+	targets := make([]string, 0, len(changes))
+
+	for _, chg := range changes {
+		oldContent, oldValue, serr := rspamdconf.SetGreylist(rspamdConfDir, chg.setting, chg.value)
+		if serr != nil {
+			if haveOriginal {
+				_ = rspamdconf.RestoreFile(rspamdconf.GreylistPath(rspamdConfDir), originalContent)
+			}
+			return serr
+		}
+		if !haveOriginal {
+			originalContent = oldContent
+			haveOriginal = true
+		}
+		before[chg.setting] = oldValue
+		after[chg.setting] = chg.value
+		targets = append(targets, chg.setting)
+	}
+
+	if err := app.validateAndReload(cmd, rspamdconf.GreylistPath(rspamdConfDir), originalContent); err != nil {
+		return err
+	}
+
+	app.recordSecurity(cmd, "security.greylist.set", strings.Join(targets, ","), before, after)
+
+	for _, chg := range changes {
+		r.Message("set greylist %s to %s", chg.setting, chg.value)
+	}
+	return nil
 }
