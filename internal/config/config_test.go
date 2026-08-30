@@ -86,9 +86,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 	getenv := func(k string) string { return env[k] }
 
 	c := validConfig()
-	if err := c.applyEnvOverrides(getenv); err != nil {
-		t.Fatalf("applyEnvOverrides: %v", err)
-	}
+	c.applyEnvOverrides(getenv)
 	if c.Postgres.Service != "other-svc" {
 		t.Errorf("postgres service not overridden: %q", c.Postgres.Service)
 	}
@@ -110,9 +108,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 func TestApplyEnvOverridesEmptyKeepsExisting(t *testing.T) {
 	c := validConfig()
 	orig := c.Mail.Hostname
-	if err := c.applyEnvOverrides(func(string) string { return "" }); err != nil {
-		t.Fatalf("applyEnvOverrides: %v", err)
-	}
+	c.applyEnvOverrides(func(string) string { return "" })
 	if c.Mail.Hostname != orig {
 		t.Fatalf("empty env should not change hostname: %q", c.Mail.Hostname)
 	}
