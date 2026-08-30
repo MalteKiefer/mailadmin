@@ -60,6 +60,52 @@ jobs:
         with:
           version: v2.13.2
 
+  test-integration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # internal/db/integration_test.go (//go:build integration) exercises the
+    # pgx CRUD layer against a real Postgres. It is fully self-contained: on
+    # each test it CREATEs a uniquely-named schema, runs its own embedded
+    # DDL (testSchemaDDL — reconstructed from what db.go/apppw.go actually
+    # SELECT/INSERT), points a pool at it via `options=-c search_path=...`,
+    # and DROPs the schema again in t.Cleanup. It never touches migrations/
+    # or the public schema, so migrations/001_baseline.sql and
+    # 002_dns_provider.sql are deliberately NOT applied here: 001's GRANT
+    # block targets roles (mailadmin/postfix/dovecot) that don't exist on a
+    # bare service container, so blindly `psql -f`-ing it would just fail —
+    # and even if it succeeded, the test doesn't read those tables. All this
+    # job needs is a reachable Postgres the test role can CREATE SCHEMA on.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build (integration tag)
+        run: go build -tags integration ./...
+
+      - name: test (integration, real Postgres)
+        env:
+          TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -tags integration ./internal/db/... -v
+
   coverage:
     runs-on: ubuntu-latest
     permissions:
