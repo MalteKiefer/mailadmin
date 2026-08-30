@@ -7,7 +7,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"mailadmin/internal/output"
+	"mailadmin/internal/rspamd"
 	"mailadmin/internal/security"
+	"mailadmin/internal/stats"
+	"mailadmin/internal/sys"
 	"mailadmin/internal/valid"
 )
 
@@ -17,9 +20,23 @@ func (a *App) security() *security.Service {
 	return security.New(a.runner())
 }
 
+// rspamdLearn() builds the rspamc Bayes-feedback backend on the shared
+// privileged runner, confined to the default vmail root.
+func (a *App) rspamdLearn() *rspamd.Service {
+	return rspamd.New(a.runner(), "")
+}
+
 func newSecurityCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{Use: "security", Short: "Bans, allowlist, firewall and overview"}
-	cmd.AddCommand(newBanCmd(app), newAllowlistCmd(app), newFirewallCmd(app), newOverviewCmd(app))
+	cmd.AddCommand(
+		newBanCmd(app),
+		newAllowlistCmd(app),
+		newFirewallCmd(app),
+		newOverviewCmd(app),
+		newLearnSpamCmd(app),
+		newLearnHamCmd(app),
+		newQuarantineCmd(app),
+	)
 	return cmd
 }
 
@@ -473,4 +490,134 @@ func (a *App) recordSecurity(cmd *cobra.Command, action, target string, before, 
 		return
 	}
 	_ = rec.Record(ctx(cmd), action, target, before, after)
+}
+
+// ---- rspamd Bayes feedback (learn-spam / learn-ham) ------------------------
+//
+// This replaces the deleted mailadmin-rspamd-learn shell helper (see
+// docs/SECURITY-AUDIT.md L-3): a message source is either a Postfix queue id
+// (fetched via postcat) or a file path, which internal/rspamd confines —
+// after symlink resolution — to the vmail root before it ever reaches rspamc.
+
+func newLearnSpamCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "learn-spam <queue-id|path>",
+		Short: "Train rspamd's Bayes classifier that a message is spam",
+		Long: "Feeds a message to `rspamc learn_spam`. The message source is either a\n" +
+			"Postfix queue id (fetched via postcat) or a file path under the vmail\n" +
+			"spool (e.g. a message file from a mailbox's Maildir); the path is\n" +
+			"confined to the vmail root, rejecting traversal and symlink escapes.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error { return runLearn(app, c, "spam", args[0]) },
+	}
+}
+
+func newLearnHamCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "learn-ham <queue-id|path>",
+		Short: "Train rspamd's Bayes classifier that a message is ham (not spam)",
+		Long: "Feeds a message to `rspamc learn_ham`. The message source is either a\n" +
+			"Postfix queue id (fetched via postcat) or a file path under the vmail\n" +
+			"spool (e.g. a message file from a mailbox's Maildir); the path is\n" +
+			"confined to the vmail root, rejecting traversal and symlink escapes.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error { return runLearn(app, c, "ham", args[0]) },
+	}
+}
+
+// runLearn validates source (no side effects), honours --dry-run, then trains
+// rspamd and records an audit entry. verdict is a compile-time constant
+// ("spam"|"ham") from the command wiring, never user input.
+func runLearn(app *App, cmd *cobra.Command, verdict, source string) error {
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+
+	svc := app.rspamdLearn()
+	kind, identifier, err := svc.Resolve(source)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would train rspamd (learn-%s) on %s %s", verdict, kind, identifier)
+		return nil
+	}
+
+	c := ctx(cmd)
+	var trainErr error
+	switch verdict {
+	case "spam":
+		_, trainErr = svc.LearnSpam(c, source)
+	default:
+		_, trainErr = svc.LearnHam(c, source)
+	}
+	if trainErr != nil {
+		return trainErr
+	}
+
+	app.recordSecurity(cmd, "security.learn-"+verdict, identifier, nil, map[string]string{"kind": kind})
+	r.Message("trained rspamd (learn-%s) on %s %s", verdict, kind, identifier)
+	return nil
+}
+
+// ---- quarantine (log-derived, read-only) -----------------------------------
+
+func newQuarantineCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "quarantine",
+		Short: "Inspect reject/greylist activity derived from the rspamd log",
+	}
+
+	var since string
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List reject/soft-reject/greylist verdicts parsed from the rspamd log (not a message store)",
+		Long: "rspamd is not configured with a quarantine message store here: a rejected\n" +
+			"message was never accepted onto disk, so there is nothing to release. This\n" +
+			"command is a read-only diagnostic view, parsed from the rspamd log, of\n" +
+			"reject/soft-reject/greylist verdicts in the given window. From/To/Subject\n" +
+			"are shown only when rspamd's configured log_format happens to include them.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error { return runQuarantineList(app, c, since) },
+	}
+	list.Flags().StringVar(&since, "since", "", "how far back to look, e.g. 2h, 3d (default 7 days)")
+
+	cmd.AddCommand(list)
+	return cmd
+}
+
+// runQuarantineList validates --since, parses the rspamd log over that
+// window, and renders the resulting verdicts. Read-only: no confirm, no audit.
+func runQuarantineList(app *App, cmd *cobra.Command, since string) error {
+	if since != "" {
+		if _, err := valid.Duration(since); err != nil {
+			return fmt.Errorf("%w: --since: %v", ErrUsage, err)
+		}
+	}
+
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	cfg, err := app.statsConfig()
+	if err != nil {
+		return err
+	}
+
+	col := stats.New(sys.New(sys.DefaultTimeout, nil), cfg.Logs.Units)
+	entries, err := col.Quarantine(ctx(cmd), since)
+	if err != nil {
+		return err
+	}
+
+	if app.flags.output == string(output.FormatJSON) {
+		return r.JSON(entries)
+	}
+	t := output.Table{Columns: []string{"TIMESTAMP", "ACTION", "SCORE", "FROM", "TO", "SUBJECT", "QUEUE ID"}}
+	for _, e := range entries {
+		t.Rows = append(t.Rows, []string{e.Timestamp, e.Action, e.Score, e.From, e.To, e.Subject, e.QueueID})
+	}
+	return r.Table(t)
 }
