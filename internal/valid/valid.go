@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -128,4 +130,60 @@ func Duration(s string) (string, error) {
 		return "", fail("duration", s)
 	}
 	return s, nil
+}
+
+// PathUnder confines raw to root, defending in depth against path traversal
+// and symlink escapes for a path that will reach a privileged command (this
+// process runs as root). raw may be an absolute path (which must itself fall
+// under root) or a path relative to root.
+//
+// The path is resolved with filepath.EvalSymlinks, so it must already exist
+// on disk — this validator is for reading an existing file (e.g. a message
+// under the vmail spool), not for computing a not-yet-created path. A dangling
+// symlink, a missing file, or a resolved target outside root are all rejected.
+//
+// This mirrors, and generalises, the realpath-confinement fix recommended in
+// docs/SECURITY-AUDIT.md L-3 for the deleted mailadmin-rspamd-learn helper,
+// whose path regex (`^/var/vmail/...glob.../.*$`) permitted `..` traversal.
+func PathUnder(root, raw string) (string, error) {
+	root = filepath.Clean(root)
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsRune(raw, 0) {
+		return "", fail("path", raw)
+	}
+	clean := filepath.Clean(raw)
+	if !filepath.IsAbs(clean) {
+		clean = filepath.Join(root, clean)
+	}
+
+	// Resolve both the candidate and root itself through EvalSymlinks before
+	// comparing: root may itself be reached via a symlink (or, as on Windows,
+	// through a different short/long path alias), so comparing un-resolved
+	// forms would either false-reject a legitimate path or — worse — let a
+	// symlinked root make the prefix check meaningless. The resolved-vs-
+	// resolved comparison below is the actual security boundary.
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", fmt.Errorf("%w: path %q: %v", ErrInvalid, raw, err)
+	}
+	resolved = filepath.Clean(resolved)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("%w: root %q: %v", ErrInvalid, root, err)
+	}
+	resolvedRoot = filepath.Clean(resolvedRoot)
+
+	if !pathWithin(resolvedRoot, resolved) {
+		return "", fail("path", raw)
+	}
+	return resolved, nil
+}
+
+// pathWithin reports whether p is root itself or strictly inside it.
+func pathWithin(root, p string) bool {
+	if p == root {
+		return true
+	}
+	prefix := root + string(os.PathSeparator)
+	return strings.HasPrefix(p, prefix)
 }
