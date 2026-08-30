@@ -104,8 +104,8 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 	add("servfail", s.HasServfail(), configuredDetail(s.HasServfail()))
 	add("rspamd_controller_pw", s.RspamdControllerPW() != "", configuredDetail(s.RspamdControllerPW() != ""))
 
-	switch {
-	case c.Notify.URL == "":
+	switch c.Notify.URL {
+	case "":
 		add("notify_url", true, "not set (doctor/dns drift-check --notify will no-op)")
 	default:
 		add("notify_url", true, c.Notify.URL)

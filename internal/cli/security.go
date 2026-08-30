@@ -700,7 +700,7 @@ func newRatelimitCmd(app *App) *cobra.Command {
 
 var ratelimitColumns = []string{"BUCKET", "RATE", "SOURCE"}
 
-func runRatelimitShow(app *App, cmd *cobra.Command) error {
+func runRatelimitShow(app *App, _ *cobra.Command) error {
 	r, err := app.Renderer()
 	if err != nil {
 		return err
@@ -804,7 +804,7 @@ func newGreylistCmd(app *App) *cobra.Command {
 
 var greylistColumns = []string{"SETTING", "VALUE", "SOURCE"}
 
-func runGreylistShow(app *App, cmd *cobra.Command) error {
+func runGreylistShow(app *App, _ *cobra.Command) error {
 	r, err := app.Renderer()
 	if err != nil {
 		return err
