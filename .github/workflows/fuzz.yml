@@ -1,0 +1,46 @@
+name: fuzz
+
+# Go native fuzzing for the validators that sit directly between untrusted CLI
+# input and an exec argv / SQL parameter / DNS query (internal/valid). Kept
+# off the push/PR path — each target gets a real, if short, time budget, and
+# running that on every push would slow normal iteration for little marginal
+# benefit over the fixed corpus already exercised by `go test`. Runs weekly
+# and can be triggered manually.
+on:
+  schedule:
+    - cron: '43 4 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [FuzzDomain, FuzzAddress, FuzzCIDR]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test -fuzz=${{ matrix.target }}
+        run: go test ./internal/valid/... -run=${{ matrix.target }} -fuzz=${{ matrix.target }} -fuzztime=60s
+
+      # A failing fuzz run writes the crashing input under testdata/fuzz/;
+      # surface it so it's easy to pull down and add as a permanent regression
+      # seed once fixed, without needing repo write access from this job.
+      - name: upload crash corpus
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: internal/valid/testdata/fuzz/
+          if-no-files-found: ignore

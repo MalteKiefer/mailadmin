@@ -194,7 +194,6 @@ func reconcileSlot(live, desired []Record) []Change {
 			if usedLive[i] || !sameContent(l, d) {
 				continue
 			}
-			l := l
 			usedLive[i] = true
 			pendingDesired[j] = true
 			out = append(out, Change{Op: OpUnchanged, Record: d, Current: &l})
@@ -228,7 +227,6 @@ func reconcileSlot(live, desired []Record) []Change {
 		if usedLive[i] {
 			continue
 		}
-		l := l
 		out = append(out, Change{Op: OpDelete, Current: &l, Record: l})
 	}
 	return out

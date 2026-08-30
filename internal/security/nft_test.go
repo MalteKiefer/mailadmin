@@ -88,7 +88,6 @@ func TestParseNftPorts(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := parseNftPorts([]byte(tt.in))
@@ -139,7 +138,6 @@ func TestScalarPort(t *testing.T) {
 		{``, 0, false},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
 			port, ok := scalarPort([]byte(tt.in))

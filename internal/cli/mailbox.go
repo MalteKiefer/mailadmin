@@ -142,7 +142,7 @@ func (a *App) mailboxList(cmd *cobra.Command, domainFilter string) error {
 	if domainFilter != "" {
 		dom, verr := valid.Domain(domainFilter)
 		if verr != nil {
-			return fmt.Errorf("%w: %v", ErrUsage, verr)
+			return fmt.Errorf("%w: %w", ErrUsage, verr)
 		}
 		domainFilter = dom
 	}
@@ -183,7 +183,7 @@ func (a *App) mailboxShow(cmd *cobra.Command, address string) error {
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -226,7 +226,7 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 	if quotaBytes < 0 {
 		return fmt.Errorf("%w: quota must be >= 0", ErrUsage)
@@ -283,7 +283,7 @@ func (a *App) mailboxRemove(cmd *cobra.Command, address string, purge bool) erro
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -310,7 +310,17 @@ func (a *App) mailboxRemove(cmd *cobra.Command, address string, purge bool) erro
 
 	if a.flags.dryRun {
 		msg := "dry-run: would remove mailbox " + m.Address()
-		if purge {
+		if purge && present {
+			// Cheap to compute: the same tree Purge would delete next, walked
+			// read-only instead. Falls back to the plain message if the walk
+			// itself fails (e.g. a permission hiccup) rather than aborting the
+			// preview.
+			if usage, uerr := md.Stat(local, dom); uerr == nil {
+				msg += fmt.Sprintf(" and its maildir (%d files, %s)", usage.Files, humanBytes(usage.Bytes))
+			} else {
+				msg += " and its maildir"
+			}
+		} else if purge {
 			msg += " and its maildir"
 		}
 		r.Message(msg)
@@ -355,7 +365,7 @@ func (a *App) mailboxPasswd(cmd *cobra.Command, address string) error {
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -404,7 +414,7 @@ func (a *App) mailboxSetQuota(cmd *cobra.Command, address, bytesArg string) erro
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 	bytesVal, perr := strconv.ParseInt(bytesArg, 10, 64)
 	if perr != nil || bytesVal < 0 {
@@ -450,7 +460,7 @@ func (a *App) mailboxSetActive(cmd *cobra.Command, address string, active bool) 
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -498,7 +508,7 @@ func (a *App) mailboxDedupe(cmd *cobra.Command, address string, dryRun bool) err
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -573,7 +583,7 @@ func (a *App) appPasswordList(cmd *cobra.Command, address string) error {
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -615,11 +625,11 @@ func (a *App) appPasswordAdd(cmd *cobra.Command, address, label string) error {
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 	label, verr = validLabel(label)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	d, err := a.db(c)
@@ -680,11 +690,11 @@ func (a *App) appPasswordRemove(cmd *cobra.Command, address, label string) error
 
 	local, dom, verr := valid.Address(address)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 	label, verr = validLabel(label)
 	if verr != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, verr)
+		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 
 	if a.flags.dryRun {
@@ -714,4 +724,19 @@ func (a *App) appPasswordRemove(cmd *cobra.Command, address, label string) error
 	}
 	r.Message("app password %q removed for %s@%s", label, local, dom)
 	return nil
+}
+
+// humanBytes formats a byte count for a human-readable dry-run message
+// (binary units, one decimal place above KiB).
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

@@ -130,7 +130,7 @@ func runConfigEdit(app *App, cmd *cobra.Command) error {
 	// #nosec G204 -- editor is taken from the trusted root operator's own
 	// environment, and the only argument is the fixed config path; no external
 	// or user-supplied input reaches the argv, and no shell is involved.
-	ed := exec.Command(editor[0], append(editor[1:], path)...)
+	ed := exec.CommandContext(ctx(cmd), editor[0], append(editor[1:], path)...)
 	ed.Stdin = app.stdin()
 	ed.Stdout = app.stdout()
 	ed.Stderr = app.stderr()

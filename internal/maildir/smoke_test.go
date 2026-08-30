@@ -1,6 +1,7 @@
 package maildir
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,5 +51,32 @@ func TestDedupeSmoke(t *testing.T) {
 	}
 	if _, e := m.Dedupe("nobody", "example.com", true); e == nil {
 		t.Fatal("expected not found")
+	}
+}
+
+func TestStat(t *testing.T) {
+	root := t.TempDir()
+	box := filepath.Join(root, "example.com", "alice", "Maildir")
+	write(t, filepath.Join(box, "cur", "m1"), "id-A")
+	write(t, filepath.Join(box, "cur", "m2"), "id-B")
+	write(t, filepath.Join(box, "new", "m3"), "id-C")
+
+	m := New(root)
+	usage, err := m.Stat("alice", "example.com")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if usage.Files != 3 {
+		t.Fatalf("Files = %d, want 3", usage.Files)
+	}
+	if usage.Bytes <= 0 {
+		t.Fatalf("Bytes = %d, want > 0", usage.Bytes)
+	}
+
+	if _, e := m.Stat("nobody", "example.com"); !errors.Is(e, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", e)
+	}
+	if _, e := m.Stat("../../etc", "x"); e == nil {
+		t.Fatal("expected escape rejection")
 	}
 }

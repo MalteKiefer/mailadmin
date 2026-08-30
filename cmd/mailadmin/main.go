@@ -16,13 +16,20 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run executes the CLI and returns the process exit code. Splitting this out
+// of main lets the signal-forwarding context's stop() defer run before the
+// process exits (os.Exit in main itself would skip it).
+func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	root := cli.NewRootCmd()
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(cli.ExitCode(err))
+		return cli.ExitCode(err)
 	}
-	os.Exit(cli.ExitOK)
+	return cli.ExitOK
 }

@@ -148,7 +148,7 @@ func (a *Auditor) Audit(ctx context.Context, rawDomain string) (Report, error) {
 	spf, _ := a.conn.txt(ctx, domain)
 	fs = append(fs, evalSPF(spf)...)
 	if rec, ok := singleSPF(spf); ok {
-		n, capped := a.spfLookups(ctx, domain, rec, 0, map[string]bool{domain: true})
+		n, capped := a.spfLookups(ctx, rec, 0, map[string]bool{domain: true})
 		fs = append(fs, spfLookupFinding(n, capped))
 	}
 
@@ -197,7 +197,7 @@ func (a *Auditor) Audit(ctx context.Context, rawDomain string) (Report, error) {
 // (include, a, mx, ptr, exists, and the redirect modifier) per RFC 7208 §4.6.4.
 // It follows include/redirect targets, guards against cycles, and stops once the
 // count exceeds the limit (returning capped=true).
-func (a *Auditor) spfLookups(ctx context.Context, domain, record string, depth int, seen map[string]bool) (int, bool) {
+func (a *Auditor) spfLookups(ctx context.Context, record string, depth int, seen map[string]bool) (int, bool) {
 	if depth > 10 {
 		return 0, true
 	}
@@ -216,7 +216,7 @@ func (a *Auditor) spfLookups(ctx context.Context, domain, record string, depth i
 			seen[target] = true
 			sub, _ := a.conn.txt(ctx, target)
 			if rec, ok := singleSPF(sub); ok {
-				n, capped := a.spfLookups(ctx, target, rec, depth+1, seen)
+				n, capped := a.spfLookups(ctx, rec, depth+1, seen)
 				count += n
 				if capped {
 					return count, true
@@ -465,7 +465,7 @@ func (l *liveConn) dnssec(ctx context.Context, domain string) (dnskey, ds, ad bo
 	ad = kmsg.AuthenticatedData
 	dmsg, err := l.exchange(ctx, domain, dns.TypeDS, true)
 	if err != nil {
-		return dnskey, false, ad, nil // DNSKEY result still usable
+		return dnskey, false, ad, nil //nolint:nilerr // DS lookup failing is non-fatal: the DNSKEY result above is still usable and reported
 	}
 	for _, rr := range dmsg.Answer {
 		if _, ok := rr.(*dns.DS); ok {

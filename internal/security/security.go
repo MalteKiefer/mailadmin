@@ -18,6 +18,17 @@ import (
 	"mailadmin/internal/valid"
 )
 
+// cscliAttempts/cscliBackoff bound the retry of mutating `cscli` calls
+// (decisions/allowlist add|delete). cscli talks to the local CrowdSec LAPI
+// over a unix socket; a momentary "connection refused" while the agent is
+// restarting is the known transient failure mode, and add/delete of a
+// ban/allowlist entry is idempotent (re-applying the same decision is a
+// no-op), so a couple of short retries is safe.
+const (
+	cscliAttempts = 3
+	cscliBackoff  = 2 * time.Second
+)
+
 // Binary paths (absolute; matches the old system).
 const (
 	binCscli    = "/usr/bin/cscli"
@@ -111,7 +122,7 @@ func (s *Service) AddBan(ctx context.Context, ip, duration string) error {
 		}
 		argv = append(argv, "--duration", dur)
 	}
-	if _, err := s.runner.Output(ctx, argv...); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, argv...); err != nil {
 		return fmt.Errorf("security.AddBan %s: %w", value, err)
 	}
 	return nil
@@ -123,7 +134,7 @@ func (s *Service) RemoveBan(ctx context.Context, ip string) error {
 	if err != nil {
 		return fmt.Errorf("security.RemoveBan: %w", err)
 	}
-	if _, err := s.runner.Output(ctx, binCscli, "decisions", "delete", "--ip", value); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "decisions", "delete", "--ip", value); err != nil {
 		return fmt.Errorf("security.RemoveBan %s: %w", value, err)
 	}
 	return nil
@@ -151,7 +162,7 @@ func (s *Service) AddAllow(ctx context.Context, ip string) error {
 	if err != nil {
 		return fmt.Errorf("security.AddAllow: %w", err)
 	}
-	if _, err := s.runner.Output(ctx, binCscli, "allowlists", "add", allowlistName, value); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "allowlists", "add", allowlistName, value); err != nil {
 		return fmt.Errorf("security.AddAllow %s: %w", value, err)
 	}
 	return nil
@@ -163,7 +174,7 @@ func (s *Service) RemoveAllow(ctx context.Context, ip string) error {
 	if err != nil {
 		return fmt.Errorf("security.RemoveAllow: %w", err)
 	}
-	if _, err := s.runner.Output(ctx, binCscli, "allowlists", "remove", allowlistName, value); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "allowlists", "remove", allowlistName, value); err != nil {
 		return fmt.Errorf("security.RemoveAllow %s: %w", value, err)
 	}
 	return nil

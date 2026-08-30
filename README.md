@@ -283,7 +283,8 @@ requirements are in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
 ## Development
 
 ```sh
-make check      # gofmt + vet + go test -race + staticcheck + gosec + govulncheck
+make check      # gofmt + vet + go test -race + staticcheck + gosec + govulncheck + golangci-lint
+make lint       # golangci-lint only (see .golangci.yml, docs/CI-SECURITY.md)
 make test       # unit tests
 make build      # host build into ./mailadmin
 ```
