@@ -218,3 +218,65 @@ against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" s
   helpers validated on the server via `mailadmin doctor`.
 - Server-side findings (H-1, M-1, L-1..L-5) require changes on the host, not in the Go
   repo; they are remediated by removing the `mailadmin-web` leftovers.
+
+## Addendum (2026-08-30) — `app_password.last_used` never populated
+
+**Finding:** `mailbox app-password list` rendered a `last_used` column that is
+structurally unable to ever hold data — a repo-wide grep found no `UPDATE
+app_password SET last_used=…` anywhere, and the reason isn't a missed call
+site, it's architectural.
+
+**Investigation:** Dovecot authenticates mailbox and app-password logins by
+querying Postgres directly (SQL passdb, `dovecot-pgsql`; see
+`docs/DISASTER-RECOVERY.md` — "point Postfix/Dovecot's SQL maps... pgsql
+virtual-mailbox configuration" is explicitly called out as living **outside**
+this repo, on the mail host). This CLI's `internal/db` code is never on that
+path — it only ever *writes* `app_password` rows (`CreateAppPassword`,
+`DeleteAppPassword*`), it never runs during a login. The flat-file mechanism
+that briefly existed (`mailadmin-app-sync` regenerating
+`/etc/dovecot/passwd-app`) belonged to the now-deleted `mailadmin-web`
+service and was already removed as dead privileged surface by M-1/L-5 above
+— it was never wired to the CLI's own app-password creation path either, and
+even when it existed it only handled the flat-file passdb; nothing analogous
+existed to *write back* a use timestamp.
+
+A standard Dovecot SQL `passdb { driver = sql }` is a plain, read-only
+`SELECT` — there is no built-in "run this UPDATE on successful auth" hook in
+that config block. The one real mechanism that could get close is Dovecot's
+post-login scripting (`postlogin_socket` / `script-login`), which runs after
+a session authenticates and could shell out to `psql`. It was **not**
+adopted here: (1) it requires new host-side wiring this repo has
+deliberately kept out of version control (see `docs/DISASTER-RECOVERY.md`,
+which treats the Dovecot SQL/passdb config as entirely server-managed), a
+pattern this change should not be the first to break for a "nice to have"
+column; (2) more fundamentally, a post-login hook fires after Dovecot has
+already merged the successful auth into a session — it has no reliable way
+to know *which* `app_password` row (i.e. which label) authenticated the
+session unless the passdb query is restructured to smuggle the label through
+as a passdb extra field, which turns a one-line config change into a
+redesign of the passdb query itself; (3) the security audit above
+(M-1/L-5) just finished removing a very similar class of server-side
+helper script as orphaned privileged surface — adding a new one back in for
+telemetry is the wrong direction.
+
+**Resolution:** honest labeling instead of a fake mechanism (option B).
+`app-password list` (`internal/cli/mailbox.go`) now always renders
+`last_used` as `not tracked` rather than a blank/zero-value that reads as
+"never used". `AppPassword.LastUsed` (`internal/db/models.go`) is documented
+as schema-only and kept (no migration) in case a real write mechanism is
+ever added on the Dovecot side later. `app-password list --stale <duration>`
+filters by **age since creation** (`created_at`), not usage — the flag help
+text and command `--help` text both say so explicitly, so this never
+overpromises again. `docs/SECURITY-INCIDENT-PLAYBOOK.md`'s "detection signs"
+for a compromised app password previously cited the fictional `last_used`
+timestamp; it now points at `mailadmin log show dovecot` (Dovecot's own auth
+log), noting that the log identifies the mailbox and source IP but — same
+root cause — not which app-password label was used.
+
+**Still fuzzy / out of scope:** whether Dovecot 2.4's auth log format could
+be extended (via `auth_verbose`/extra passdb fields) to include the
+app-password label in its log line, which would make `mailadmin log show
+dovecot` a materially better workaround than "correlate by IP and
+timestamp". That's a genuine Dovecot-config investigation of its own and was
+not pursued here — it doesn't require any change to this repo's Go code or
+schema either way, so it's a documentation-only follow-up if ever wanted.
