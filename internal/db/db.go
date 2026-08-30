@@ -103,11 +103,11 @@ func (d *DB) CountMailboxesInDomain(ctx context.Context, domain string) (int, er
 
 // ---- mailboxes -----------------------------------------------------------
 
-const mailboxCols = `username, domain, quota_bytes, active, created_at`
+const mailboxCols = `username, domain, password, quota_bytes, active, created_at`
 
 func scanMailbox(rows pgx.Rows) (Mailbox, error) {
 	var m Mailbox
-	err := rows.Scan(&m.Username, &m.Domain, &m.QuotaBytes, &m.Active, &m.CreatedAt)
+	err := rows.Scan(&m.Username, &m.Domain, &m.Password, &m.QuotaBytes, &m.Active, &m.CreatedAt)
 	return m, err
 }
 

@@ -41,7 +41,7 @@ func GreylistPath(dir string) string {
 // Settings absent from the file are omitted (rspamd's built-in default
 // applies); the caller decides how to present that.
 func ReadGreylist(dir string) (map[string]string, error) {
-	content, err := os.ReadFile(GreylistPath(dir)) //nolint:gosec // fixed, well-known rspamd config path
+	content, err := os.ReadFile(GreylistPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
 	if err != nil {
 		return nil, fmt.Errorf("rspamdconf: read %s: %w", GreylistPath(dir), err)
 	}
@@ -65,7 +65,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 	}
 
 	path := GreylistPath(dir)
-	content, err := os.ReadFile(path) //nolint:gosec // fixed, well-known rspamd config path
+	content, err := os.ReadFile(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
 	if err != nil {
 		return nil, "", fmt.Errorf("rspamdconf: read %s: %w", path, err)
 	}
@@ -76,7 +76,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 		return nil, "", err
 	}
 
-	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { //nolint:gosec // matches rspamd config perms; not secret material
+	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { // #nosec G304 G306 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
 		return content, "", fmt.Errorf("rspamdconf: write %s: %w", path, err)
 	}
 	return content, unquote(old), nil
@@ -86,7 +86,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 // for rollback after a failed post-write validation. path must be one of
 // RatelimitPath(dir) or GreylistPath(dir).
 func RestoreFile(path string, content []byte) error {
-	if err := os.WriteFile(path, content, 0o644); err != nil { //nolint:gosec // matches rspamd config perms; not secret material
+	if err := os.WriteFile(path, content, 0o644); err != nil { // #nosec G304 G306 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
 		return fmt.Errorf("rspamdconf: restore %s: %w", path, err)
 	}
 	return nil
