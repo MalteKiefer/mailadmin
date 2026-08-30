@@ -47,6 +47,34 @@ type Summary struct {
 	Series   []Series `json:"series,omitempty"`
 }
 
+// BounceEntry is one bounced delivery, parsed from the Postfix log
+// (`queue bounces`). It is a read-only diagnostic view — there is nothing to
+// act on here; the message was already returned to its sender.
+type BounceEntry struct {
+	Timestamp string `json:"timestamp"`
+	QueueID   string `json:"queue_id,omitempty"`
+	Recipient string `json:"recipient"`
+	DSN       string `json:"dsn,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// QuarantineEntry is one reject/soft-reject/greylist verdict, parsed from the
+// rspamd log (`security quarantine list`). rspamd does not store the message
+// anywhere in this setup — this is a log-derived diagnostic view, not a
+// message store: there is nothing to release, since a rejected message was
+// never accepted onto disk. From/To/Subject are best-effort: they are only
+// populated when rspamd's configured log_format happens to include them.
+type QuarantineEntry struct {
+	Timestamp string `json:"timestamp"`
+	MessageID string `json:"message_id,omitempty"`
+	QueueID   string `json:"queue_id,omitempty"`
+	From      string `json:"from,omitempty"`
+	To        string `json:"to,omitempty"`
+	Subject   string `json:"subject,omitempty"`
+	Score     string `json:"score,omitempty"`
+	Action    string `json:"action"`
+}
+
 // Collector parses logs into stats.
 type Collector struct {
 	runner *sys.Runner
@@ -104,6 +132,65 @@ func (c *Collector) Domain(ctx context.Context, domain string) (Summary, error) 
 	return summarizeDomain(events, domain, topRecipients), nil
 }
 
+// Bounces returns every bounced delivery from the Postfix log within since
+// (e.g. "2h", "3d"; empty uses the default 7-day window). Read-only: this
+// reports what already happened, nothing here is actionable.
+func (c *Collector) Bounces(ctx context.Context, since string) ([]BounceEntry, error) {
+	window, err := windowFromDuration(since)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := c.readUnitWindow(ctx, postfixUnit(c.units), window)
+	if err != nil {
+		return nil, err
+	}
+	parsed := parseBounces(lines)
+	out := make([]BounceEntry, 0, len(parsed))
+	for _, b := range parsed {
+		out = append(out, BounceEntry{
+			Timestamp: b.Timestamp,
+			QueueID:   b.QueueID,
+			Recipient: b.Recipient,
+			DSN:       b.DSN,
+			Reason:    b.Reason,
+		})
+	}
+	return out, nil
+}
+
+// Quarantine returns every reject/soft-reject/greylist verdict from the
+// rspamd log within since (e.g. "2h", "3d"; empty uses the default 7-day
+// window). This is a log-derived diagnostic view, not a message store: rspamd
+// has no built-in quarantine here, so there is nothing to release.
+func (c *Collector) Quarantine(ctx context.Context, since string) ([]QuarantineEntry, error) {
+	window, err := windowFromDuration(since)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := c.readUnitWindow(ctx, rspamdUnit(c.units), window)
+	if err != nil {
+		return nil, err
+	}
+	verdicts := parseRspamdVerdicts(lines)
+	out := make([]QuarantineEntry, 0, len(verdicts))
+	for _, v := range verdicts {
+		if !quarantineActions[v.Action] {
+			continue
+		}
+		out = append(out, QuarantineEntry{
+			Timestamp: v.Timestamp,
+			MessageID: v.MessageID,
+			QueueID:   v.QueueID,
+			From:      v.From,
+			To:        v.To,
+			Subject:   v.Subject,
+			Score:     v.Score,
+			Action:    v.Action,
+		})
+	}
+	return out, nil
+}
+
 // postfixEvents fetches and parses postfix delivery/reject lines across the
 // configured postfix units.
 func (c *Collector) postfixEvents(ctx context.Context) ([]postfixEvent, error) {
@@ -114,14 +201,21 @@ func (c *Collector) postfixEvents(ctx context.Context) ([]postfixEvent, error) {
 	return parsePostfix(lines), nil
 }
 
-// readUnit runs journalctl for one unit and returns its raw lines. argv is a
-// fixed slice (no shell); the window and unit are the only variable parts and
-// the unit comes from our own configured allowlist.
+// readUnit runs journalctl for one unit over the Collector's default window
+// and returns its raw lines.
 func (c *Collector) readUnit(ctx context.Context, unit string) ([]string, error) {
 	window := c.window
 	if window == "" {
 		window = defaultWindow
 	}
+	return c.readUnitWindow(ctx, unit, window)
+}
+
+// readUnitWindow runs journalctl for one unit over an explicit --since window
+// and returns its raw lines. argv is a fixed slice (no shell); window and unit
+// are the only variable parts, and unit comes from our own configured
+// allowlist (postfixUnit/rspamdUnit).
+func (c *Collector) readUnitWindow(ctx context.Context, unit, window string) ([]string, error) {
 	argv := []string{
 		binJournalctl,
 		"--unit=" + unit,
