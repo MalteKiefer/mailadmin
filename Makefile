@@ -4,7 +4,7 @@ LDFLAGS := -s -w -X mailadmin/internal/cli.Version=$(VERSION)
 GOOS    ?= linux
 GOARCH  ?= amd64
 
-.PHONY: build build-linux install fmt vet test race check staticcheck gosec vulncheck lint clean
+.PHONY: build build-linux install fmt vet test race test-integration check staticcheck gosec vulncheck lint clean
 
 ## build: build for the host platform into ./mailadmin
 build:
@@ -30,6 +30,32 @@ test:
 
 race:
 	go test -race ./...
+
+## test-integration: run internal/db's Postgres integration tests (needs Docker)
+# Spins up a throwaway postgres:17-alpine container (matches .github/workflows/ci.yml's
+# test-integration job), waits for it to be ready, points TEST_POSTGRES_DSN at it, runs
+# the -tags integration suite, then tears the container down. No migrations are applied:
+# internal/db/integration_test.go creates and drops its own uniquely-named schema on every
+# run (see its package doc comment) and never touches migrations/001_baseline.sql or
+# 002_dns_provider.sql, so there's nothing to apply first.
+#
+# Manual equivalent, if you'd rather not use this target or don't have Docker:
+#   docker run --rm -d --name mailadmin-test-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:17-alpine
+#   TEST_POSTGRES_DSN="postgres://postgres:postgres@localhost:55432/postgres?sslmode=disable" \
+#     go test -tags integration ./internal/db/... -v
+#   docker stop mailadmin-test-pg
+test-integration:
+	@command -v docker >/dev/null 2>&1 || { echo "docker not found; see the manual equivalent in this target's Makefile comment"; exit 1; }
+	docker run --rm -d --name mailadmin-test-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:17-alpine >/dev/null
+	@for i in $$(seq 1 30); do \
+		docker exec mailadmin-test-pg pg_isready -U postgres >/dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	TEST_POSTGRES_DSN="postgres://postgres:postgres@localhost:55432/postgres?sslmode=disable" \
+		go test -tags integration ./internal/db/... -v; \
+	status=$$?; \
+	docker stop mailadmin-test-pg >/dev/null; \
+	exit $$status
 
 staticcheck:
 	go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
