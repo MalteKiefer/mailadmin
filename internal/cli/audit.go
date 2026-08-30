@@ -4,18 +4,28 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"mailadmin/internal/db"
 	"mailadmin/internal/output"
+	"mailadmin/internal/valid"
 )
 
 // newAuditCmd builds the `audit` command group, which reads the append-only
 // audit_log written by every mutation. It is read-only: no confirmation and no
 // audit record of its own.
 func newAuditCmd(app *App) *cobra.Command {
-	var lines int
+	var (
+		lines  int
+		actor  string
+		action string
+		target string
+		since  string
+		until  string
+	)
 	cmd := &cobra.Command{
 		Use:   "audit",
 		Short: "Show the audit log",
@@ -26,20 +36,92 @@ func newAuditCmd(app *App) *cobra.Command {
 		Short: "List recent audit entries",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runAuditList(app, ctx(c), lines)
+			return runAuditList(app, ctx(c), auditListArgs{
+				lines:  lines,
+				actor:  actor,
+				action: action,
+				target: target,
+				since:  since,
+				until:  until,
+			})
 		},
 	}
 	list.Flags().IntVarP(&lines, "lines", "n", 200, "number of entries")
+	list.Flags().StringVar(&actor, "actor", "", "only entries recorded by this actor (exact match)")
+	list.Flags().StringVar(&action, "action", "", "only entries with this action (exact match, e.g. mailbox.add)")
+	list.Flags().StringVar(&target, "target", "", "only entries targeting this address, or every address at this domain (exact match, or an address whose domain matches)")
+	list.Flags().StringVar(&since, "since", "", "only entries at or after this long ago (e.g. 24h, 7d)")
+	list.Flags().StringVar(&until, "until", "", "only entries at or before this long ago (e.g. 1d); combine with --since for a window, e.g. --since 7d --until 1d for \"between 7 and 1 days ago\"")
 
 	cmd.AddCommand(list)
 	return cmd
 }
 
-// runAuditList loads config, opens the database, fetches the most recent
+// auditListArgs holds `audit list`'s raw flag values before validation.
+type auditListArgs struct {
+	lines                 int
+	actor, action, target string
+	since, until          string
+}
+
+// auditFilter validates args and turns them into a db.AuditFilter plus the
+// row-count limit to pass to ListAudit. It is a pure function (no I/O) so it
+// can be unit-tested without a database, following the pattern of
+// backupDir in backup.go.
+func auditFilter(a auditListArgs, now time.Time) (db.AuditFilter, int, error) {
+	if a.lines <= 0 {
+		return db.AuditFilter{}, 0, fmt.Errorf("%w: --lines must be positive", ErrUsage)
+	}
+
+	f := db.AuditFilter{Actor: a.actor, Action: a.action, Target: a.target}
+
+	if a.since != "" {
+		d, err := parseDurationAgo(a.since)
+		if err != nil {
+			return db.AuditFilter{}, 0, fmt.Errorf("%w: --since: %w", ErrUsage, err)
+		}
+		f.Since = now.Add(-d)
+	}
+	if a.until != "" {
+		d, err := parseDurationAgo(a.until)
+		if err != nil {
+			return db.AuditFilter{}, 0, fmt.Errorf("%w: --until: %w", ErrUsage, err)
+		}
+		f.Until = now.Add(-d)
+	}
+	if !f.Since.IsZero() && !f.Until.IsZero() && f.Since.After(f.Until) {
+		return db.AuditFilter{}, 0, fmt.Errorf("%w: --since must be further in the past than --until", ErrUsage)
+	}
+
+	return f, a.lines, nil
+}
+
+// parseDurationAgo validates s with valid.Duration (the same "4h"/"30m"/"7d"
+// format used by --since elsewhere, e.g. queue bounces/security quarantine
+// list) and converts it to a time.Duration. valid.Duration only validates the
+// format; time.ParseDuration doesn't understand the "d" (day) unit that
+// format allows, so the day case is expanded to hours before parsing.
+func parseDurationAgo(s string) (time.Duration, error) {
+	v, err := valid.Duration(s)
+	if err != nil {
+		return 0, err
+	}
+	if strings.HasSuffix(v, "d") {
+		n, err := strconv.Atoi(strings.TrimSuffix(v, "d"))
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(v)
+}
+
+// runAuditList loads config, opens the database, fetches the matching
 // entries, and renders them through the shared renderer.
-func runAuditList(app *App, ctx context.Context, lines int) error {
-	if lines <= 0 {
-		return fmt.Errorf("%w: --lines must be positive", ErrUsage)
+func runAuditList(app *App, ctx context.Context, a auditListArgs) error {
+	filter, limit, err := auditFilter(a, time.Now())
+	if err != nil {
+		return err
 	}
 
 	r, err := app.Renderer()
@@ -52,7 +134,7 @@ func runAuditList(app *App, ctx context.Context, lines int) error {
 		return fmt.Errorf("audit list: open database: %w", err)
 	}
 
-	entries, err := database.ListAudit(ctx, lines)
+	entries, err := database.ListAudit(ctx, limit, filter)
 	if err != nil {
 		return fmt.Errorf("audit list: query: %w", err)
 	}

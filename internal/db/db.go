@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -304,13 +306,76 @@ func (d *DB) Log(ctx context.Context, actor, action, target string, before, afte
 	return err
 }
 
-func (d *DB) ListAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
+// AuditFilter narrows ListAudit's result set. Every field is optional (its
+// zero value means "no constraint"); fields combine with AND.
+//
+// Target matches exactly or as the local-part of an address at that domain
+// (target=$n OR target LIKE '%@'||$n), mirroring ListAliases's domain match:
+// audit targets recorded by internal/audit are a mix of bare domain names
+// ("example.com"), addresses ("alice@example.com"), and other identifiers
+// (backup paths, service names), so a plain substring match would be too
+// loose (e.g. "example.com" would also match "notexample.com.evil"), but an
+// exact-only match would miss "show everything that happened to domain X"
+// (mailbox/alias entries targeting user@X). The suffix form is anchored on
+// '@' so it can't cross a domain boundary the way a bare LIKE '%'||$n would.
+type AuditFilter struct {
+	Actor  string
+	Action string
+	Target string
+	Since  time.Time // zero means unbounded
+	Until  time.Time // zero means unbounded
+}
+
+// ListAudit returns audit_log rows newest-first, optionally narrowed by
+// filter, capped at limit rows (limit<=0 defaults to 200, matching the
+// unfiltered behaviour this function has always had).
+func (d *DB) ListAudit(ctx context.Context, limit int, filter AuditFilter) ([]AuditEntry, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := d.pool.Query(ctx,
+
+	var (
+		where strings.Builder
+		args  []any
+	)
+	add := func(clause string, arg any) {
+		args = append(args, arg)
+		if where.Len() == 0 {
+			where.WriteString(" WHERE ")
+		} else {
+			where.WriteString(" AND ")
+		}
+		fmt.Fprintf(&where, clause, len(args))
+	}
+	if filter.Actor != "" {
+		add("actor=$%d", filter.Actor)
+	}
+	if filter.Action != "" {
+		add("action=$%d", filter.Action)
+	}
+	if filter.Target != "" {
+		args = append(args, filter.Target)
+		n := len(args)
+		if where.Len() == 0 {
+			where.WriteString(" WHERE ")
+		} else {
+			where.WriteString(" AND ")
+		}
+		fmt.Fprintf(&where, "(target=$%d OR target LIKE '%%@'||$%d)", n, n)
+	}
+	if !filter.Since.IsZero() {
+		add("ts >= $%d", filter.Since)
+	}
+	if !filter.Until.IsZero() {
+		add("ts <= $%d", filter.Until)
+	}
+
+	args = append(args, limit)
+	query := fmt.Sprintf(
 		`SELECT id, ts, actor, action, target, before, after, host(ip)::text, user_agent
-		 FROM audit_log ORDER BY ts DESC LIMIT $1`, limit)
+		 FROM audit_log%s ORDER BY ts DESC LIMIT $%d`, where.String(), len(args))
+
+	rows, err := d.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
