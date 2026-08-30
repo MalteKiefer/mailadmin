@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"mailadmin/internal/notify"
 	"mailadmin/internal/output"
 	"mailadmin/internal/services"
 	"mailadmin/internal/sys"
@@ -53,21 +54,27 @@ type checkResult struct {
 }
 
 func newDoctorCmd(app *App) *cobra.Command {
-	return &cobra.Command{
+	var doNotify, notifyHeartbeat bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Health check (services, ports, TLS, rspamd config)",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runDoctor(app, c)
+			return runDoctor(app, c, doNotify, notifyHeartbeat)
 		},
 	}
+	cmd.Flags().BoolVar(&doNotify, "notify", false,
+		"send one ntfy notification if any check FAILs (requires [notify].url + NTFY_TOKEN; silent on success)")
+	cmd.Flags().BoolVar(&notifyHeartbeat, "notify-heartbeat", false,
+		"with --notify, also send a low-priority OK ping when every check passes")
+	return cmd
 }
 
 // runDoctor performs the read-only health checks and renders them. It never
 // mutates state, so no confirmation or audit record is required. It aggregates
 // every probe's outcome and returns a runtime error only if a check FAILs,
 // giving scripts a non-zero exit while still printing the full report.
-func runDoctor(app *App, c *cobra.Command) error {
+func runDoctor(app *App, c *cobra.Command, doNotify, notifyHeartbeat bool) error {
 	cfg, _, err := app.Config()
 	if err != nil {
 		return err
@@ -95,10 +102,56 @@ func runDoctor(app *App, c *cobra.Command) error {
 		return err
 	}
 
+	if doNotify {
+		if msg, ok := doctorNotifyMessage(results, notifyHeartbeat, hostnameOrUnknown()); ok {
+			app.notifySend(ctx, msg)
+		}
+	}
+
 	if anyFailed(results) {
 		return fmt.Errorf("%w: one or more health checks failed", errDoctorUnhealthy)
 	}
 	return nil
+}
+
+// doctorNotifyMessage builds the single ntfy notification for a doctor run,
+// summarising every FAILed check — never one per failing row. WARN/ERROR
+// rows are advisory (they do not flip doctor's own exit code either, see
+// anyFailed) and deliberately do not page: a WARN is something like a
+// not-yet-issued TLS cert during initial provisioning, not urgent enough to
+// justify an alert. ok is false (nothing to send) on a fully healthy run
+// unless heartbeat asks for a low-priority OK ping. Pure and host-injected so
+// it is unit-testable without a real App/config.
+func doctorNotifyMessage(results []checkResult, heartbeat bool, host string) (notify.Message, bool) {
+	var failing []checkResult
+	for _, res := range results {
+		if res.Status == statusFail {
+			failing = append(failing, res)
+		}
+	}
+
+	if len(failing) == 0 {
+		if !heartbeat {
+			return notify.Message{}, false
+		}
+		return notify.Message{
+			Title:    "mailadmin doctor: all checks OK",
+			Body:     fmt.Sprintf("%d check(s) passed on %s", len(results), host),
+			Priority: notify.PriorityLow,
+			Tags:     "white_check_mark",
+		}, true
+	}
+
+	lines := make([]string, 0, len(failing))
+	for _, res := range failing {
+		lines = append(lines, fmt.Sprintf("%s: %s", res.Name, res.Detail))
+	}
+	return notify.Message{
+		Title:    fmt.Sprintf("mailadmin doctor: %d check(s) failing on %s", len(failing), host),
+		Body:     strings.Join(lines, "\n"),
+		Priority: notify.PriorityHigh,
+		Tags:     "rotating_light",
+	}, true
 }
 
 // errDoctorUnhealthy signals a failed health check. It maps to the default
