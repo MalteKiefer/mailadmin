@@ -358,7 +358,7 @@ func TestLeadingQueueID(t *testing.T) {
 	tests := map[string]string{
 		"ABC123: to=<a@b>, status=sent": "ABC123",
 		"no colon here":                 "",
-		"":                               "",
+		"":                              "",
 	}
 	for in, want := range tests {
 		if got := leadingQueueID(in); got != want {
@@ -371,7 +371,7 @@ func TestParseBounces(t *testing.T) {
 	lines := []string{
 		`2026-07-02T10:02:00+0200 mail postfix/smtp[12]: B3: to=<z@remote.org>, relay=mx[1.2.3.4]:25, dsn=5.1.1, status=bounced (host mx said: 550 5.1.1 unknown user)`,
 		`2026-07-02T10:03:00+0200 mail postfix/smtpd[11]: NOQUEUE: reject: RCPT from bad[9.9.9.9]: 554 blocked, status=bounced`, // smtpd is never a bounce source
-		`2026-07-02T10:04:00+0200 mail postfix/lmtp[10]: C1: to=<u@ex.de>, status=sent (250 OK)`,                               // sent, not bounced
+		`2026-07-02T10:04:00+0200 mail postfix/lmtp[10]: C1: to=<u@ex.de>, status=sent (250 OK)`,                                // sent, not bounced
 		`2026-07-02T10:05:00+0200 mail postfix/smtp[12]: B4: to=<y@remote.org>, dsn=4.4.7, status=bounced (delivery time expired)`,
 		`this is not a syslog line`,
 	}
