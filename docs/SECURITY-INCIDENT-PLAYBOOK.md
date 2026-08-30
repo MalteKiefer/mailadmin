@@ -24,9 +24,12 @@ Conventions used below:
 
 **Detection signs**: a spike in `queue list` entries with an internal
 `SENDER`, a spam/abuse complaint naming one of your addresses, unexpected
-volume in `mailadmin stats`, a mailbox's `last_used` app-password timestamp
-moving from an unfamiliar IP (`security overview` / audit log), or an
-external report of spam apparently sent "from" one of your domains.
+volume in `mailadmin stats`, a successful Dovecot login for the mailbox from
+an unfamiliar IP in `mailadmin log show dovecot` (app-password use is *not*
+tracked in `app-password list` — see docs/SECURITY-AUDIT.md — so the auth
+log is the only place this shows up, and it identifies the mailbox, not
+which app-password label was used), or an external report of spam apparently
+sent "from" one of your domains.
 
 ### Containment (do these first, in order)
 

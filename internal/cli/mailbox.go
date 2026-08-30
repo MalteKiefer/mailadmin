@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
@@ -548,12 +549,28 @@ func (a *App) mailboxDedupe(cmd *cobra.Command, address string, dryRun bool) err
 func newAppPasswordCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{Use: "app-password", Short: "Manage per-mailbox application passwords"}
 
+	var listStale time.Duration
 	list := &cobra.Command{
 		Use:   "list <address>",
 		Short: "List application passwords",
-		Args:  cobra.ExactArgs(1),
-		RunE:  func(c *cobra.Command, args []string) error { return app.appPasswordList(c, args[0]) },
+		Long: `List application passwords.
+
+Dovecot authenticates app passwords directly against Postgres on the mail
+server (SQL passdb config that lives outside this repo); mailadmin's own
+code path is never on that hot path, so it has no way to observe when a
+password is actually used. The "last_used" column therefore always reads
+"not tracked" — it is not a bug, there is currently no mechanism (in this
+CLI or in the deployed Dovecot config) that ever writes it. To approximate
+recent usage, cross-reference "mailadmin log show dovecot" for a successful
+login timestamp on the mailbox's address/IP around the time in question;
+Dovecot's auth log does not, however, distinguish which app-password label
+was used for a given login, only which mailbox.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error { return app.appPasswordList(c, args[0], listStale) },
 	}
+	list.Flags().DurationVar(&listStale, "stale", 0,
+		`only show passwords older than this (e.g. "720h"); measures age since creation `+
+			`("created_at"), NOT time since last use, which mailadmin cannot observe`)
 
 	add := &cobra.Command{
 		Use:   "add <address> <label>",
@@ -573,8 +590,53 @@ func newAppPasswordCmd(app *App) *cobra.Command {
 	return cmd
 }
 
+// appPasswordLastUsedLabel is shown in place of a real timestamp: nothing in
+// mailadmin or the deployed Dovecot config ever writes AppPassword.LastUsed
+// (Dovecot authenticates app passwords straight against Postgres, bypassing
+// this CLI entirely), so a blank or zero-value column would silently read as
+// "never used" when the truth is "we don't know". See `app-password list
+// --help` and docs/SECURITY-AUDIT.md for the investigation and the closest
+// available workaround (correlating "mailadmin log show dovecot" by address).
+const appPasswordLastUsedLabel = "not tracked"
+
+// appPasswordAge renders how long ago an app password was created. This is
+// the only staleness signal mailadmin can actually compute today; it is
+// deliberately not called "last used" or "idle for" anywhere in the CLI.
+func appPasswordAge(createdAt time.Time, now time.Time) string {
+	d := now.Sub(createdAt)
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours() / 24)
+	return fmt.Sprintf("%dd", days)
+}
+
+// filterAppPasswordsByAge keeps only passwords whose age (time since
+// created_at) is at least `stale`. It is named around "age" rather than
+// "staleness by use" because usage cannot be observed — see
+// appPasswordLastUsedLabel.
+func filterAppPasswordsByAge(pws []db.AppPassword, stale time.Duration, now time.Time) []db.AppPassword {
+	if stale <= 0 {
+		return pws
+	}
+	out := make([]db.AppPassword, 0, len(pws))
+	for _, p := range pws {
+		if now.Sub(p.CreatedAt) >= stale {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // appPasswordList lists a mailbox's application passwords (never their hashes).
-func (a *App) appPasswordList(cmd *cobra.Command, address string) error {
+//
+// The "last_used" column is always rendered as appPasswordLastUsedLabel:
+// Dovecot authenticates app passwords directly against Postgres on the mail
+// server, entirely bypassing mailadmin's code, so this CLI has no path by
+// which it could ever observe a successful use. See --help on this command
+// and docs/SECURITY-AUDIT.md ("app-password last_used") for the full
+// investigation and the closest available workaround.
+func (a *App) appPasswordList(cmd *cobra.Command, address string, stale time.Duration) error {
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -594,15 +656,13 @@ func (a *App) appPasswordList(cmd *cobra.Command, address string) error {
 	if err != nil {
 		return fmt.Errorf("list app passwords: %w", err)
 	}
+	pws = filterAppPasswordsByAge(pws, stale, time.Now())
 
-	t := output.Table{Columns: []string{"label", "active", "created_at", "last_used"}}
+	t := output.Table{Columns: []string{"label", "active", "created_at", "age", "last_used"}}
 	for _, p := range pws {
-		last := "-"
-		if p.LastUsed != nil {
-			last = p.LastUsed.Format("2006-01-02 15:04:05")
-		}
 		t.Rows = append(t.Rows, []string{
-			p.Label, boolYesNo(p.Active), p.CreatedAt.Format("2006-01-02 15:04:05"), last,
+			p.Label, boolYesNo(p.Active), p.CreatedAt.Format("2006-01-02 15:04:05"),
+			appPasswordAge(p.CreatedAt, time.Now()), appPasswordLastUsedLabel,
 		})
 	}
 	return r.Table(t)

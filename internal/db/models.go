@@ -45,7 +45,19 @@ type AppPassword struct {
 	Password  string // hash; write-only from the UI
 	Active    bool
 	CreatedAt time.Time
-	LastUsed  *time.Time
+	// LastUsed is a schema-only field: nothing in mailadmin or the deployed
+	// Dovecot config currently writes it. Dovecot authenticates app passwords
+	// directly against Postgres on the mail server (SQL passdb config kept
+	// outside this repo), bypassing this CLI entirely, so mailadmin has no
+	// path by which it could observe a successful use. It is always nil in
+	// practice today. The CLI (internal/cli/mailbox.go, appPasswordList)
+	// deliberately does not render this field as if it were live data — see
+	// docs/SECURITY-AUDIT.md ("app-password last_used") for the investigation
+	// that established this and the closest available workaround. Kept (not
+	// dropped via migration) so a future post-auth write mechanism, if one is
+	// ever added on the Dovecot side, has somewhere to land without a schema
+	// change.
+	LastUsed *time.Time
 }
 
 // Address returns user@domain for the owning mailbox.
