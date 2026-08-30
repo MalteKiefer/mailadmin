@@ -311,3 +311,158 @@ func TestSplitLines(t *testing.T) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
+
+func TestStatusField(t *testing.T) {
+	tests := []struct {
+		name       string
+		msg        string
+		wantStatus string
+		wantReason string
+	}{
+		{
+			name:       "bounced with reason",
+			msg:        "ABC1: to=<a@b.de>, relay=mx.b.de[1.2.3.4]:25, dsn=5.1.1, status=bounced (host mx.b.de said: 550 5.1.1 user unknown)",
+			wantStatus: "bounced",
+			wantReason: "host mx.b.de said: 550 5.1.1 user unknown",
+		},
+		{
+			name:       "sent has no parenthetical treated as reason text",
+			msg:        "ABC1: to=<a@b.de>, status=sent (250 2.0.0 OK)",
+			wantStatus: "sent",
+			wantReason: "250 2.0.0 OK",
+		},
+		{
+			name:       "no status field",
+			msg:        "ABC1: removed",
+			wantStatus: "",
+			wantReason: "",
+		},
+		{
+			name:       "status with no trailing reason",
+			msg:        "ABC1: to=<a@b.de>, status=deferred",
+			wantStatus: "deferred",
+			wantReason: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			status, reason := statusField(tc.msg)
+			if status != tc.wantStatus || reason != tc.wantReason {
+				t.Errorf("statusField(%q) = (%q,%q), want (%q,%q)", tc.msg, status, reason, tc.wantStatus, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestLeadingQueueID(t *testing.T) {
+	tests := map[string]string{
+		"ABC123: to=<a@b>, status=sent": "ABC123",
+		"no colon here":                 "",
+		"":                               "",
+	}
+	for in, want := range tests {
+		if got := leadingQueueID(in); got != want {
+			t.Errorf("leadingQueueID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseBounces(t *testing.T) {
+	lines := []string{
+		`2026-07-02T10:02:00+0200 mail postfix/smtp[12]: B3: to=<z@remote.org>, relay=mx[1.2.3.4]:25, dsn=5.1.1, status=bounced (host mx said: 550 5.1.1 unknown user)`,
+		`2026-07-02T10:03:00+0200 mail postfix/smtpd[11]: NOQUEUE: reject: RCPT from bad[9.9.9.9]: 554 blocked, status=bounced`, // smtpd is never a bounce source
+		`2026-07-02T10:04:00+0200 mail postfix/lmtp[10]: C1: to=<u@ex.de>, status=sent (250 OK)`,                               // sent, not bounced
+		`2026-07-02T10:05:00+0200 mail postfix/smtp[12]: B4: to=<y@remote.org>, dsn=4.4.7, status=bounced (delivery time expired)`,
+		`this is not a syslog line`,
+	}
+	got := parseBounces(lines)
+	if len(got) != 2 {
+		t.Fatalf("got %d bounces, want 2: %+v", len(got), got)
+	}
+	if got[0].QueueID != "B3" || got[0].Recipient != "z@remote.org" || got[0].DSN != "5.1.1" ||
+		got[0].Reason != "host mx said: 550 5.1.1 unknown user" || got[0].Day != "2026-07-02" {
+		t.Errorf("got[0] = %+v", got[0])
+	}
+	if got[1].QueueID != "B4" || got[1].DSN != "4.4.7" || got[1].Reason != "delivery time expired" {
+		t.Errorf("got[1] = %+v", got[1])
+	}
+}
+
+func TestParseRspamdVerdicts(t *testing.T) {
+	lines := []string{
+		// Minimal form (matches the format used elsewhere in this codebase's tests).
+		`2026-07-01T08:01:00+0200 mail rspamd[1]: <msgid-b>; task; result: (default: T (reject): [20.0/15])`,
+		// Richer form carrying from/rcpt_mime/subject/qid metadata.
+		`2026-07-01T08:02:00+0200 mail rspamd[1]: <msgid-c>; qid: ABCDEF01; from: <spammer@evil.example>; rcpt_mime: <victim@ex.de>; subject: "Buy now"; task; result: (default: T (soft reject): [16/15])`,
+		// no action / add header are not quarantine-worthy but must still parse.
+		`2026-07-01T08:03:00+0200 mail rspamd[1]: <msgid-d>; task; result: (default: F (no action): [1.0/15])`,
+		`2026-07-01T08:04:00+0200 mail rspamd[1]: <msgid-e>; task; result: (default: T (greylist): [5/15])`,
+		`2026-07-01T08:05:00+0200 mail dovecot[2]: unrelated line`,
+	}
+	got := parseRspamdVerdicts(lines)
+	if len(got) != 4 {
+		t.Fatalf("parsed %d verdicts, want 4: %+v", len(got), got)
+	}
+	if got[0].MessageID != "msgid-b" || got[0].Action != actReject || got[0].Score != "20.0/15" {
+		t.Errorf("got[0] = %+v", got[0])
+	}
+	if got[0].From != "" || got[0].To != "" || got[0].QueueID != "" {
+		t.Errorf("got[0] should have no optional metadata: %+v", got[0])
+	}
+	rich := got[1]
+	if rich.MessageID != "msgid-c" || rich.QueueID != "ABCDEF01" || rich.From != "spammer@evil.example" ||
+		rich.To != "victim@ex.de" || rich.Subject != "Buy now" || rich.Action != actSoftRej || rich.Score != "16/15" {
+		t.Errorf("got[1] = %+v", rich)
+	}
+}
+
+func TestQuarantineActions(t *testing.T) {
+	for _, a := range []string{actReject, actSoftRej, actGreylist} {
+		if !quarantineActions[a] {
+			t.Errorf("quarantineActions missing %q", a)
+		}
+	}
+	for _, a := range []string{actNoAction, actAddHeader, actRewrite} {
+		if quarantineActions[a] {
+			t.Errorf("quarantineActions unexpectedly includes %q", a)
+		}
+	}
+}
+
+func TestWindowFromDuration(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"", defaultWindow, false},
+		{"1h", "1 hour ago", false},
+		{"2h", "2 hours ago", false},
+		{"30m", "30 minutes ago", false},
+		{"1m", "1 minute ago", false},
+		{"3d", "3 days ago", false},
+		{"45s", "45 seconds ago", false},
+		{"1s", "1 second ago", false},
+		{"0h", "", true},
+		{"h", "", true},
+		{"4x", "", true},
+		{"-4h", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := windowFromDuration(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("windowFromDuration(%q) = %q, want error", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("windowFromDuration(%q) unexpected error: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("windowFromDuration(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

@@ -2,7 +2,10 @@ package stats
 
 import (
 	"errors"
+	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -425,4 +428,197 @@ func actionSeries(perAction map[string]int64) []Point {
 		}
 	}
 	return points
+}
+
+// --- bounces ---
+
+// postfixBounce is one parsed delivery-agent bounce line (status=bounced).
+type postfixBounce struct {
+	Day       string
+	Timestamp string
+	QueueID   string
+	Recipient string
+	DSN       string
+	Reason    string
+}
+
+// parseBounces extracts bounced deliveries from raw postfix journal lines.
+// Only delivery-agent lines (smtp/lmtp/local/virtual — never smtpd, which logs
+// receive-time rejects under a different vocabulary) that carry
+// "status=bounced" are kept.
+func parseBounces(lines []string) []postfixBounce {
+	out := make([]postfixBounce, 0, len(lines))
+	for _, line := range lines {
+		ts, ident, msg, ok := splitSyslog(line)
+		if !ok {
+			continue
+		}
+		prog, ok := postfixProg(ident)
+		if !ok || prog == "smtpd" {
+			continue
+		}
+		status, reason := statusField(msg)
+		if status != "bounced" {
+			continue
+		}
+		out = append(out, postfixBounce{
+			Day:       dayOf(ts),
+			Timestamp: ts,
+			QueueID:   leadingQueueID(msg),
+			Recipient: strings.ToLower(unbracket(fieldValue(msg, "to="))),
+			DSN:       fieldValue(msg, "dsn="),
+			Reason:    reason,
+		})
+	}
+	return out
+}
+
+// statusField extracts the delivery status token and, when present, the
+// parenthesised reason that follows it (e.g. "bounced (host mx said: 550 ...
+// user unknown)"). Unlike fieldValue (used for to=/relay=/etc., which stop at
+// the next ", "), status= is always the last field on a postfix delivery
+// line, so its reason text is read to the end of the message, commas and all.
+func statusField(msg string) (status, reason string) {
+	i := strings.Index(msg, "status=")
+	if i < 0 {
+		return "", ""
+	}
+	v := strings.TrimSpace(msg[i+len("status="):])
+	sp := strings.IndexByte(v, ' ')
+	if sp < 0 {
+		return v, ""
+	}
+	status = v[:sp]
+	reason = strings.TrimSpace(v[sp+1:])
+	reason = strings.TrimPrefix(reason, "(")
+	reason = strings.TrimSuffix(reason, ")")
+	return status, reason
+}
+
+// leadingQueueID returns the token preceding the first ": " in msg — postfix
+// delivery-agent lines always start with "<QUEUEID>: to=...". Returns "" if
+// the message has no such prefix.
+func leadingQueueID(msg string) string {
+	if col := strings.Index(msg, ": "); col > 0 {
+		return msg[:col]
+	}
+	return ""
+}
+
+// --- rspamd verdicts (quarantine) ---
+
+// rspamdVerdict is one parsed rspamd verdict line with as much message
+// metadata as the log line happens to carry. rspamd's log_format is
+// operator-configurable, so every field beyond Action/Score is best-effort:
+// absent fields are left empty rather than failing the parse.
+type rspamdVerdict struct {
+	Day       string
+	Timestamp string
+	MessageID string
+	QueueID   string
+	From      string
+	To        string
+	Subject   string
+	Score     string
+	Action    string
+}
+
+var (
+	reRspamdMsgID = regexp.MustCompile(`^<([^>]*)>`)
+	reRspamdQID   = regexp.MustCompile(`qid:\s*<?([^,;>\s]+)>?`)
+	reRspamdFrom  = regexp.MustCompile(`from:\s*<([^>]*)>`)
+	reRspamdRcpt  = regexp.MustCompile(`(?:rcpt_mime|rcpt|to):\s*<([^>]*)>`)
+	reRspamdSubj  = regexp.MustCompile(`subject:\s*"([^"]*)"`)
+	reRspamdScore = regexp.MustCompile(`\[\s*(-?[0-9.]+)\s*/\s*(-?[0-9.]+)\s*\]`)
+)
+
+// parseRspamdVerdicts extracts one verdict per rspamd journal line that
+// carries a recognised action (see rspamdActionOf), mirroring parseRspamd but
+// retaining message metadata for the quarantine view.
+func parseRspamdVerdicts(lines []string) []rspamdVerdict {
+	out := make([]rspamdVerdict, 0, len(lines))
+	for _, line := range lines {
+		ts, ident, msg, ok := splitSyslog(line)
+		if !ok {
+			ts, msg = "", line
+		} else if !strings.HasPrefix(ident, "rspamd") {
+			continue
+		}
+		act, ok := rspamdActionOf(msg)
+		if !ok {
+			continue
+		}
+		out = append(out, rspamdVerdict{
+			Day:       dayOf(ts),
+			Timestamp: ts,
+			MessageID: reMatch(reRspamdMsgID, msg),
+			QueueID:   reMatch(reRspamdQID, msg),
+			From:      reMatch(reRspamdFrom, msg),
+			To:        reMatch(reRspamdRcpt, msg),
+			Subject:   reMatch(reRspamdSubj, msg),
+			Score:     rspamdScoreOf(msg),
+			Action:    act,
+		})
+	}
+	return out
+}
+
+// reMatch returns the first capture group of re in s, or "" if it doesn't match.
+func reMatch(re *regexp.Regexp, s string) string {
+	m := re.FindStringSubmatch(s)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+// rspamdScoreOf renders a "score/threshold" string from a bracketed
+// "[score/threshold]" verdict, or "" if none is present.
+func rspamdScoreOf(msg string) string {
+	m := reRspamdScore.FindStringSubmatch(msg)
+	if len(m) < 3 {
+		return ""
+	}
+	return m[1] + "/" + m[2]
+}
+
+// quarantineActions are the rspamd actions surfaced by `security quarantine
+// list`: outcomes where the message was not delivered as sent (rejected
+// outright, soft-deferred, or greylisted). "add header"/"rewrite subject"
+// deliver the message and so are not "quarantine"-like.
+var quarantineActions = map[string]bool{
+	actReject:   true,
+	actSoftRej:  true,
+	actGreylist: true,
+}
+
+// --- since-duration handling ---
+
+// unitWords maps a valid.Duration suffix to its journalctl --since word.
+var unitWords = map[byte]string{'s': "second", 'm': "minute", 'h': "hour", 'd': "day"}
+
+// windowFromDuration converts a duration like "2h" or "3d" (the same format
+// valid.Duration accepts) into a journalctl --since value ("2 hours ago").
+// An empty duration yields defaultWindow.
+func windowFromDuration(d string) (string, error) {
+	d = strings.TrimSpace(d)
+	if d == "" {
+		return defaultWindow, nil
+	}
+	if len(d) < 2 {
+		return "", fmt.Errorf("%w: duration %q", errInvalid, d)
+	}
+	suffix := d[len(d)-1]
+	word, ok := unitWords[suffix]
+	if !ok {
+		return "", fmt.Errorf("%w: duration %q", errInvalid, d)
+	}
+	n, err := strconv.Atoi(d[:len(d)-1])
+	if err != nil || n <= 0 {
+		return "", fmt.Errorf("%w: duration %q", errInvalid, d)
+	}
+	if n != 1 {
+		word += "s"
+	}
+	return fmt.Sprintf("%d %s ago", n, word), nil
 }
