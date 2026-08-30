@@ -67,11 +67,16 @@ mailadmin
              allowlist list|add <ip>|remove <ip>
              firewall show | open <proto> <port> | close <proto> <port>
              overview
+             learn-spam <qid|path> | learn-ham <qid|path>
+             quarantine list [--since 2h]
   queue      list | show <qid> | flush | hold <qid> | release <qid> | delete <qid>
+             | bounces [--since 2h]
   service    list | status <unit> | start|stop|restart|reload <unit>
   log        show <unit> [-n] | tail <unit>
   stats      inbound | outbound | spam | domain <d>
   sieve      show <a> | set <a> <file> | edit <a>
+             | vacation <a> [--start d] [--end d] [--subject s] --message <t|@f> [--days n]
+             | vacation-off <a>
   audit      list [-n]
   doctor
   config     show | check | edit | init
