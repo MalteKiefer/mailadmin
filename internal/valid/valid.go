@@ -164,12 +164,12 @@ func PathUnder(root, raw string) (string, error) {
 	// resolved comparison below is the actual security boundary.
 	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
-		return "", fmt.Errorf("%w: path %q: %v", ErrInvalid, raw, err)
+		return "", fmt.Errorf("%w: path %q: %w", ErrInvalid, raw, err)
 	}
 	resolved = filepath.Clean(resolved)
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", fmt.Errorf("%w: root %q: %v", ErrInvalid, root, err)
+		return "", fmt.Errorf("%w: root %q: %w", ErrInvalid, root, err)
 	}
 	resolvedRoot = filepath.Clean(resolvedRoot)
 
