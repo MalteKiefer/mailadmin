@@ -1,6 +1,7 @@
 package bimi
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -56,7 +57,7 @@ func TestValidateSVG_TooLarge(t *testing.T) {
 	for i := range huge {
 		huge[i] = 'a'
 	}
-	if err := ValidateSVG(huge); err != ErrTooLarge {
+	if err := ValidateSVG(huge); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("expected ErrTooLarge, got: %v", err)
 	}
 }
