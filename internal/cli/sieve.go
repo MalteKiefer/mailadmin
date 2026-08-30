@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -41,8 +43,47 @@ func newSieveCmd(app *App) *cobra.Command {
 		RunE:  func(c *cobra.Command, args []string) error { return app.sieveEdit(c, args[0]) },
 	}
 
-	cmd.AddCommand(show, set, edit)
+	var vac vacationFlags
+	vacation := &cobra.Command{
+		Use:   "vacation <address>",
+		Short: "Install an RFC 5230 vacation autoresponder for a mailbox",
+		Long: "Generates a Sieve `vacation` script and installs it as the mailbox's\n" +
+			"active script (replacing whatever was active before — mailadmin manages a\n" +
+			"single script per mailbox, see `sieve set`). With --start/--end, the\n" +
+			"responder is wrapped in a date guard so it only fires within that window;\n" +
+			"without them it is always on. --message accepts literal text or @file to\n" +
+			"read the body from a file.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error { return app.sieveVacation(c, args[0], vac) },
+	}
+	vacation.Flags().StringVar(&vac.start, "start", "", "vacation window start (YYYY-MM-DD); requires --end")
+	vacation.Flags().StringVar(&vac.end, "end", "", "vacation window end (YYYY-MM-DD); requires --start")
+	vacation.Flags().StringVar(&vac.subject, "subject", "", "reply subject (default: the Sieve implementation's default)")
+	vacation.Flags().StringVar(&vac.message, "message", "", "reply body text, or @file to read it from a file (required)")
+	vacation.Flags().IntVar(&vac.days, "days", 7, "minimum days between repeat replies to the same sender")
+
+	vacationOff := &cobra.Command{
+		Use:   "vacation-off <address>",
+		Short: "Disable the vacation autoresponder",
+		Long: "Replaces the mailbox's active Sieve script with a minimal `keep;`\n" +
+			"passthrough. mailadmin does not keep a history of prior script bodies (it\n" +
+			"manages a single script per mailbox), so this cannot restore whatever was\n" +
+			"active before the vacation responder — reinstall a saved script with\n" +
+			"`sieve set` if you need that.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error { return app.sieveVacationOff(c, args[0]) },
+	}
+
+	cmd.AddCommand(show, set, edit, vacation, vacationOff)
 	return cmd
+}
+
+// vacationFlags holds the `sieve vacation` flag values.
+type vacationFlags struct {
+	start, end string
+	subject    string
+	message    string
+	days       int
 }
 
 // sieveShow renders the active Sieve script for a mailbox.
@@ -162,6 +203,148 @@ func (a *App) sieveEdit(cmd *cobra.Command, address string) error {
 // sieveMeta is the audit before/after payload: script size only, never the body.
 func sieveMeta(size int) map[string]int {
 	return map[string]int{"bytes": size}
+}
+
+// sieveVacation generates a vacation autoresponder script from opts and
+// installs it as address's active script via the same sieve.Service.Set path
+// `sieve set` uses.
+func (a *App) sieveVacation(cmd *cobra.Command, address string, opts vacationFlags) error {
+	r, err := a.Renderer()
+	if err != nil {
+		return err
+	}
+	message, err := resolveVacationMessage(opts.message)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	body, err := sieve.GenerateVacation(sieve.VacationOptions{
+		Start:   opts.start,
+		End:     opts.end,
+		Subject: opts.subject,
+		Message: message,
+		Days:    opts.days,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would install vacation autoresponder for %s (%d bytes)", address, len(body))
+		return nil
+	}
+	if err := a.confirm(fmt.Sprintf("Install vacation autoresponder for %s (replaces the active Sieve script)?", address)); err != nil {
+		return err
+	}
+
+	c := ctx(cmd)
+	svc := sieve.New(a.runner())
+	before, err := currentSieveMeta(c, svc, address)
+	if err != nil {
+		return err
+	}
+	rec, err := a.auditor(c)
+	if err != nil {
+		return err
+	}
+	if err := svc.Set(c, address, body); err != nil {
+		return err
+	}
+	if err := rec.Record(c, "sieve.vacation-on", address, before, sieveMeta(len(body))); err != nil {
+		return err
+	}
+	r.Message("vacation autoresponder installed for %s (%d bytes)", address, len(body))
+	return nil
+}
+
+// sieveVacationOff replaces address's active Sieve script with a minimal
+// `keep;` passthrough, disabling any autoresponder. mailadmin manages a
+// single script per mailbox (see sieveSet), so this cannot restore whatever
+// script was active before — reinstalling a saved copy via `sieve set` is the
+// way to do that.
+func (a *App) sieveVacationOff(cmd *cobra.Command, address string) error {
+	r, err := a.Renderer()
+	if err != nil {
+		return err
+	}
+	body := sieve.GenerateDisabled()
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would disable vacation autoresponder for %s", address)
+		return nil
+	}
+	if err := a.confirm(fmt.Sprintf("Disable vacation autoresponder for %s (replaces the active Sieve script with keep;)?", address)); err != nil {
+		return err
+	}
+
+	c := ctx(cmd)
+	svc := sieve.New(a.runner())
+	before, err := currentSieveMeta(c, svc, address)
+	if err != nil {
+		return err
+	}
+	rec, err := a.auditor(c)
+	if err != nil {
+		return err
+	}
+	if err := svc.Set(c, address, body); err != nil {
+		return err
+	}
+	if err := rec.Record(c, "sieve.vacation-off", address, before, sieveMeta(len(body))); err != nil {
+		return err
+	}
+	r.Message("vacation autoresponder disabled for %s", address)
+	return nil
+}
+
+// currentSieveMeta returns the audit "before" snapshot (script size only) for
+// address's current active script, or nil if it has none.
+func currentSieveMeta(c context.Context, svc *sieve.Service, address string) (any, error) {
+	cur, err := svc.Show(c, address)
+	if err == nil {
+		return sieveMeta(len(cur.Body)), nil
+	}
+	if errors.Is(err, sieve.ErrNotFound) {
+		return nil, nil
+	}
+	return nil, err
+}
+
+// resolveVacationMessage returns the vacation message body: raw is used
+// literally, unless it starts with "@", in which case the rest is a file path
+// to read the body from (mirroring the common curl/-d @file convention).
+func resolveVacationMessage(raw string) (string, error) {
+	if !strings.HasPrefix(raw, "@") {
+		if strings.TrimSpace(raw) == "" {
+			return "", fmt.Errorf("--message is required")
+		}
+		return raw, nil
+	}
+	path := strings.TrimPrefix(raw, "@")
+	if path == "" {
+		return "", fmt.Errorf("--message: @ given with no file path")
+	}
+	return readSieveVacationMessageFile(path)
+}
+
+// readSieveVacationMessageFile reads and size-caps a vacation message body
+// file (same cap and confinement discipline as readSieveFile).
+func readSieveVacationMessageFile(path string) (string, error) {
+	clean := filepath.Clean(path)
+	fi, err := os.Stat(clean)
+	if err != nil {
+		return "", fmt.Errorf("read message file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("read message file: %s is not a regular file", clean)
+	}
+	if fi.Size() > maxSieveFile {
+		return "", fmt.Errorf("read message file: %s is %d bytes (max %d)", clean, fi.Size(), maxSieveFile)
+	}
+	b, err := os.ReadFile(clean) // #nosec G304 -- operator-supplied local message file path (root CLI), cleaned and stat-checked
+	if err != nil {
+		return "", fmt.Errorf("read message file: %w", err)
+	}
+	return string(b), nil
 }
 
 // readSieveFile reads and size-caps a Sieve script file. The path is cleaned and

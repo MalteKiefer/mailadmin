@@ -10,6 +10,8 @@ import (
 
 	"mailadmin/internal/output"
 	"mailadmin/internal/postfixq"
+	"mailadmin/internal/stats"
+	"mailadmin/internal/sys"
 	"mailadmin/internal/valid"
 )
 
@@ -76,7 +78,21 @@ func newQueueCmd(app *App) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(list, show, flush, hold, release, del)
+	var bouncesSince string
+	bounces := &cobra.Command{
+		Use:   "bounces",
+		Short: "List bounced messages parsed from the Postfix log",
+		Long: "Read-only: parses the Postfix log for delivery-agent lines with\n" +
+			"status=bounced and lists the recipient, DSN code, and reason. The message\n" +
+			"was already returned to its sender — there is nothing to act on here.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runQueueBounces(app, c, bouncesSince)
+		},
+	}
+	bounces.Flags().StringVar(&bouncesSince, "since", "", "how far back to look, e.g. 2h, 3d (default 7 days)")
+
+	cmd.AddCommand(list, show, flush, hold, release, del, bounces)
 	return cmd
 }
 
@@ -223,4 +239,38 @@ func joinRcpts(rcpts []string) string {
 	default:
 		return fmt.Sprintf("%s (+%d)", rcpts[0], len(rcpts)-1)
 	}
+}
+
+// runQueueBounces validates --since, parses the Postfix log for bounces over
+// that window, and renders them. Read-only: no confirm, no audit.
+func runQueueBounces(app *App, c *cobra.Command, since string) error {
+	if since != "" {
+		if _, err := valid.Duration(since); err != nil {
+			return fmt.Errorf("%w: --since: %v", ErrUsage, err)
+		}
+	}
+
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	cfg, err := app.statsConfig()
+	if err != nil {
+		return err
+	}
+
+	col := stats.New(sys.New(sys.DefaultTimeout, nil), cfg.Logs.Units)
+	entries, err := col.Bounces(ctx(c), since)
+	if err != nil {
+		return err
+	}
+
+	if app.flags.output == string(output.FormatJSON) {
+		return r.JSON(entries)
+	}
+	t := output.Table{Columns: []string{"TIMESTAMP", "QUEUE ID", "RECIPIENT", "DSN", "REASON"}}
+	for _, e := range entries {
+		t.Rows = append(t.Rows, []string{e.Timestamp, e.QueueID, e.Recipient, e.DSN, e.Reason})
+	}
+	return r.Table(t)
 }
