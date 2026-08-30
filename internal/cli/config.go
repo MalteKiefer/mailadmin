@@ -208,6 +208,6 @@ func runConfigInit(app *App) error {
 		return err
 	}
 	r.Message("wrote %s (0644)", configPath)
-	r.Message("wrote %s (0600) — set NJALLA_TOKEN / RSPAMD_CONTROLLER_PW", secretsPath)
+	r.Message("wrote %s (0600) — set NJALLA_TOKEN / RSPAMD_CONTROLLER_PW / NTFY_TOKEN", secretsPath)
 	return nil
 }

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"mailadmin/internal/notify"
 )
 
 func TestClassifyResolver(t *testing.T) {
@@ -59,6 +61,67 @@ func TestClassifyDANEOutbound(t *testing.T) {
 		}
 		if strings.Contains(got.Detail, "smtp_tls_security_level=dnssec") {
 			t.Fatalf("detail %q incorrectly treats dnssec as smtp_tls_security_level — positional parse bug", got.Detail)
+		}
+	})
+}
+
+func TestDoctorNotifyMessage(t *testing.T) {
+	healthy := []checkResult{
+		{Name: "service:postfix", Status: statusOK, Detail: "active/running (enabled)"},
+		{Name: "tls-cert", Status: statusWarn, Detail: "no readable certificate"}, // WARN must never trigger a page
+	}
+	failing := []checkResult{
+		{Name: "service:postfix", Status: statusFail, Detail: "inactive/dead (disabled)"},
+		{Name: "ports", Status: statusFail, Detail: "not listening: 25"},
+		{Name: "tls-cert", Status: statusWarn, Detail: "no readable certificate"},
+	}
+
+	t.Run("healthy, no heartbeat: nothing to send", func(t *testing.T) {
+		_, ok := doctorNotifyMessage(healthy, false, "host1")
+		if ok {
+			t.Fatal("expected ok=false (silence is the success signal)")
+		}
+	})
+
+	t.Run("healthy, heartbeat: low-priority OK ping", func(t *testing.T) {
+		msg, ok := doctorNotifyMessage(healthy, true, "host1")
+		if !ok {
+			t.Fatal("expected ok=true with heartbeat requested")
+		}
+		if msg.Priority != notify.PriorityLow {
+			t.Errorf("priority = %q, want low", msg.Priority)
+		}
+		if !strings.Contains(msg.Title, "OK") {
+			t.Errorf("title = %q, want an OK heartbeat title", msg.Title)
+		}
+		if !strings.Contains(msg.Body, "host1") {
+			t.Errorf("body = %q, want it to mention the host", msg.Body)
+		}
+	})
+
+	t.Run("failing: exactly one high-priority notification naming only the FAILs", func(t *testing.T) {
+		msg, ok := doctorNotifyMessage(failing, false, "mailhost")
+		if !ok {
+			t.Fatal("expected ok=true when checks are failing")
+		}
+		if msg.Priority != notify.PriorityHigh {
+			t.Errorf("priority = %q, want high", msg.Priority)
+		}
+		if !strings.Contains(msg.Title, "2 check(s) failing") {
+			t.Errorf("title = %q, want it to count exactly the 2 FAILs (not the WARN)", msg.Title)
+		}
+		if !strings.Contains(msg.Body, "service:postfix") || !strings.Contains(msg.Body, "ports") {
+			t.Errorf("body = %q, want both failing check names", msg.Body)
+		}
+		if strings.Contains(msg.Body, "tls-cert") {
+			t.Errorf("body = %q, WARN row must not be included", msg.Body)
+		}
+	})
+
+	t.Run("failing with heartbeat: still exactly one failure notification, not a heartbeat", func(t *testing.T) {
+		msg, ok := doctorNotifyMessage(failing, true, "mailhost")
+		if !ok || msg.Priority != notify.PriorityHigh {
+			t.Fatalf("heartbeat flag must not soften a failing run: msg=%+v ok=%v", msg, ok)
 		}
 	})
 }

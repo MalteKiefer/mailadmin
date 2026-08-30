@@ -40,6 +40,7 @@ const (
 	keyServfailAPIKey   = "SERVFAIL_API_KEY"     // #nosec G101 -- env-var name, not a credential value
 	keyServfailServer   = "SERVFAIL_SERVER"      // #nosec G101 -- env-var name, not a credential value
 	keyRspamdPW         = "RSPAMD_CONTROLLER_PW" // #nosec G101 -- env-var name, not a credential value
+	keyNtfyToken        = "NTFY_TOKEN"           // #nosec G101 -- env-var name, not a credential value
 )
 
 // ErrInvalidConfig is wrapped by all validation failures.
@@ -89,6 +90,16 @@ type Logs struct {
 	Units []string `toml:"units"`
 }
 
+// Notify holds the ntfy.sh alerting target for `doctor --notify` and
+// `dns drift-check --notify`. URL is not secret (the topic is only useful
+// with its bearer token, which lives in secrets.env as NTFY_TOKEN); it is
+// entirely optional — an unset URL (or a missing token) simply means
+// --notify no-ops instead of erroring, so a fresh install never breaks on
+// this.
+type Notify struct {
+	URL string `toml:"url"`
+}
+
 // Config is the fully-parsed, validated, non-secret configuration.
 type Config struct {
 	Postgres Postgres `toml:"postgres"`
@@ -97,6 +108,7 @@ type Config struct {
 	DNS      DNS      `toml:"dns"`
 	Backup   Backup   `toml:"backup"`
 	Logs     Logs     `toml:"logs"`
+	Notify   Notify   `toml:"notify"`
 
 	// Path is the file this config was loaded from (not serialised).
 	Path string `toml:"-"`
@@ -116,6 +128,7 @@ type Secrets struct {
 	servfailAPIKey   string
 	servfailServer   string
 	rspamdControllPW string
+	ntfyToken        string
 }
 
 // NjallaToken returns the Njalla API token (empty if unset).
@@ -161,6 +174,15 @@ func (s *Secrets) HasServfail() bool { return s.servfailAPIKey != "" && s.servfa
 
 // RspamdControllerPW returns the rspamd controller password (empty if unset).
 func (s *Secrets) RspamdControllerPW() string { return s.rspamdControllPW }
+
+// NtfyToken returns the ntfy.sh bearer token (empty if unset).
+func (s *Secrets) NtfyToken() string { return s.ntfyToken }
+
+// HasNtfy reports whether a non-empty ntfy.sh token is configured. Note this
+// only reports the secret half — `doctor --notify`/`dns drift-check
+// --notify` also need notify.url set in config.toml before an alert can
+// actually be sent (see notify.Config.Configured).
+func (s *Secrets) HasNtfy() bool { return s.ntfyToken != "" }
 
 // HasNjalla reports whether a non-empty Njalla token is configured.
 func (s *Secrets) HasNjalla() bool { return s.njallaToken != "" }
@@ -219,6 +241,7 @@ func (c *Config) normalize() {
 	c.DNS.Resolver = strings.TrimSpace(c.DNS.Resolver)
 	c.Backup.DNSBackupDir = strings.TrimSpace(c.Backup.DNSBackupDir)
 	c.Backup.Dir = strings.TrimSpace(c.Backup.Dir)
+	c.Notify.URL = strings.TrimSpace(c.Notify.URL)
 	for i := range c.Logs.Units {
 		c.Logs.Units[i] = strings.TrimSpace(c.Logs.Units[i])
 	}
@@ -242,6 +265,7 @@ func (c *Config) applyEnvOverrides(getenv func(string) string) {
 		{"MAILADMIN_DNS_RESOLVER", &c.DNS.Resolver},
 		{"MAILADMIN_BACKUP_DNS_BACKUP_DIR", &c.Backup.DNSBackupDir},
 		{"MAILADMIN_BACKUP_DIR", &c.Backup.Dir},
+		{"MAILADMIN_NOTIFY_URL", &c.Notify.URL},
 	}
 	for _, o := range overrides {
 		if v := getenv(o.key); v != "" {
@@ -318,6 +342,10 @@ func (c *Config) Validate() error {
 	// be absolute.
 	if c.Backup.Dir != "" && !filepath.IsAbs(c.Backup.Dir) {
 		return fmt.Errorf("%w: backup.dir must be an absolute path", ErrInvalidConfig)
+	}
+
+	if c.Notify.URL != "" && !strings.HasPrefix(c.Notify.URL, "https://") && !strings.HasPrefix(c.Notify.URL, "http://") {
+		return fmt.Errorf("%w: notify.url must start with http:// or https://", ErrInvalidConfig)
 	}
 
 	if len(c.Logs.Units) == 0 {
@@ -412,6 +440,8 @@ func LoadSecrets(path string) (*Secrets, error) {
 			s.servfailServer = val
 		case keyRspamdPW:
 			s.rspamdControllPW = val
+		case keyNtfyToken:
+			s.ntfyToken = val
 		default:
 			// Unknown keys are ignored deliberately: secrets.env may hold
 			// values consumed by other tools; error messages never echo the
