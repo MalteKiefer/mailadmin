@@ -246,7 +246,7 @@ func joinRcpts(rcpts []string) string {
 func runQueueBounces(app *App, c *cobra.Command, since string) error {
 	if since != "" {
 		if _, err := valid.Duration(since); err != nil {
-			return fmt.Errorf("%w: --since: %v", ErrUsage, err)
+			return fmt.Errorf("%w: --since: %w", ErrUsage, err)
 		}
 	}
 

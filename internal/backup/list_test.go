@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func makeBundle(t *testing.T, root, name string, tm time.Time) string {
+func makeBundle(t *testing.T, root, name string, tm time.Time) {
 	t.Helper()
 	dir := filepath.Join(root, name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -19,7 +19,6 @@ func makeBundle(t *testing.T, root, name string, tm time.Time) string {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, DBDumpFile), "not-a-real-dump-but-has-bytes")
-	return dir
 }
 
 func TestListBundlesNewestFirst(t *testing.T) {

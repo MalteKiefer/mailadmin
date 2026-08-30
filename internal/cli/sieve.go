@@ -215,7 +215,7 @@ func (a *App) sieveVacation(cmd *cobra.Command, address string, opts vacationFla
 	}
 	message, err := resolveVacationMessage(opts.message)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	body, err := sieve.GenerateVacation(sieve.VacationOptions{
 		Start:   opts.start,
@@ -225,7 +225,7 @@ func (a *App) sieveVacation(cmd *cobra.Command, address string, opts vacationFla
 		Days:    opts.days,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 
 	if a.flags.dryRun {
