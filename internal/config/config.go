@@ -176,16 +176,14 @@ func Load(path string) (*Config, *Secrets, error) {
 	var c Config
 	md, err := toml.DecodeFile(path, &c)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		return nil, nil, fmt.Errorf("%w: unknown key %q", ErrInvalidConfig, undecoded[0].String())
 	}
 	c.Path = path
 
-	if err := c.applyEnvOverrides(os.Getenv); err != nil {
-		return nil, nil, err
-	}
+	c.applyEnvOverrides(os.Getenv)
 	c.normalize()
 
 	if err := c.Validate(); err != nil {
@@ -223,7 +221,7 @@ func (c *Config) normalize() {
 
 // applyEnvOverrides applies MAILADMIN_* overrides. getenv is injected so the
 // logic is testable without touching the real process environment.
-func (c *Config) applyEnvOverrides(getenv func(string) string) error {
+func (c *Config) applyEnvOverrides(getenv func(string) string) {
 	overrides := []struct {
 		key string
 		dst *string
@@ -254,7 +252,6 @@ func (c *Config) applyEnvOverrides(getenv func(string) string) error {
 		}
 		c.Logs.Units = units
 	}
-	return nil
 }
 
 // DSN returns the libpq connection string ("service=<name>") for the pool.
@@ -275,7 +272,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: mail.hostname is required", ErrInvalidConfig)
 	}
 	if _, err := valid.Domain(c.Mail.Hostname); err != nil {
-		return fmt.Errorf("%w: mail.hostname: %v", ErrInvalidConfig, err)
+		return fmt.Errorf("%w: mail.hostname: %w", ErrInvalidConfig, err)
 	}
 	if c.Mail.DKIMDir == "" || !filepath.IsAbs(c.Mail.DKIMDir) {
 		return fmt.Errorf("%w: mail.dkim_dir must be an absolute path", ErrInvalidConfig)
@@ -284,7 +281,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: mail.default_selector is required", ErrInvalidConfig)
 	}
 	if _, err := valid.Selector(c.Mail.DefaultSelector); err != nil {
-		return fmt.Errorf("%w: mail.default_selector: %v", ErrInvalidConfig, err)
+		return fmt.Errorf("%w: mail.default_selector: %w", ErrInvalidConfig, err)
 	}
 
 	if c.Server.IPv4 == "" {
@@ -303,7 +300,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: dns.resolver is required", ErrInvalidConfig)
 	}
 	if err := validateHostPort(c.DNS.Resolver); err != nil {
-		return fmt.Errorf("%w: dns.resolver: %v", ErrInvalidConfig, err)
+		return fmt.Errorf("%w: dns.resolver: %w", ErrInvalidConfig, err)
 	}
 
 	if c.Backup.DNSBackupDir == "" || !filepath.IsAbs(c.Backup.DNSBackupDir) {
@@ -315,7 +312,7 @@ func (c *Config) Validate() error {
 	}
 	for _, u := range c.Logs.Units {
 		if _, err := valid.Unit(u); err != nil {
-			return fmt.Errorf("%w: logs.units: %v", ErrInvalidConfig, err)
+			return fmt.Errorf("%w: logs.units: %w", ErrInvalidConfig, err)
 		}
 	}
 	return nil

@@ -207,7 +207,7 @@ func serviceError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, valid.ErrInvalid):
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	case errors.Is(err, services.ErrUnitNotAllowed):
 		return fmt.Errorf("%w: unit not managed", ErrNotFound)
 	default:

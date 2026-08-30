@@ -101,7 +101,7 @@ func (a *App) Renderer() (*output.Renderer, error) {
 	}
 	format, err := output.ParseFormat(a.flags.output)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUsage, err)
+		return nil, fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	a.renderer = output.New(format, a.stdout(), a.flags.quiet)
 	switch a.flags.color {
@@ -259,7 +259,7 @@ func NewRootCmd() *cobra.Command {
 	}
 	// Flag parse errors are usage errors (exit 2).
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	})
 
 	pf := root.PersistentFlags()

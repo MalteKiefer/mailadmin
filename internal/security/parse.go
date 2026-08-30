@@ -41,7 +41,7 @@ func parseDecisions(data []byte) ([]Decision, error) {
 	var raw []cscliDecision
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("%w: decode decisions: %v", ErrInvalidResponse, err)
+		return nil, fmt.Errorf("%w: decode decisions: %w", ErrInvalidResponse, err)
 	}
 	out := make([]Decision, 0, len(raw))
 	for _, d := range raw {
@@ -108,7 +108,7 @@ func parseAllowlist(data []byte) ([]AllowEntry, error) {
 	var doc cscliAllowlist
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("%w: decode allowlist: %v", ErrInvalidResponse, err)
+		return nil, fmt.Errorf("%w: decode allowlist: %w", ErrInvalidResponse, err)
 	}
 	items := doc.Items
 	if len(items) == 0 {

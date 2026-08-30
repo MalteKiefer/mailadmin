@@ -3,8 +3,10 @@ package sys
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +72,21 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(3)
 	case "fail":
 		os.Exit(7)
+	case "flaky":
+		// args: flaky <counterFile> <failCount> — fails (exit 9) until the
+		// counter file has been touched failCount times, then succeeds. Used to
+		// exercise RunWithRetry's retry-then-succeed path across real, separate
+		// process invocations.
+		counterFile, failCount := args[1], 0
+		_, _ = fmt.Sscanf(args[2], "%d", &failCount)
+		data, _ := os.ReadFile(counterFile)
+		n := 0
+		_, _ = fmt.Sscanf(string(data), "%d", &n)
+		n++
+		_ = os.WriteFile(counterFile, []byte(strconv.Itoa(n)), 0o600)
+		if n <= failCount {
+			os.Exit(9)
+		}
 	case "sleep":
 		d, _ := time.ParseDuration(args[1])
 		time.Sleep(d)
@@ -83,10 +100,12 @@ func TestHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-// runHelper wires GO_SYS_HELPER into the child env for a single invocation.
-func withHelperEnv(t *testing.T, mode string) {
+// withHelperEnv wires GO_SYS_HELPER into the child env for a single test, so
+// TestHelperProcess dispatches instead of returning immediately. The value
+// only needs to be non-empty.
+func withHelperEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("GO_SYS_HELPER", mode)
+	t.Setenv("GO_SYS_HELPER", "1")
 }
 
 type capturingRecorder struct {
@@ -129,7 +148,7 @@ func TestRunGuards(t *testing.T) {
 }
 
 func TestRunSuccessAndOutput(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	rec := &capturingRecorder{}
 	r := helperRunner(t, 5*time.Second, rec)
 	ctx := context.Background()
@@ -161,7 +180,7 @@ func TestRunSuccessAndOutput(t *testing.T) {
 }
 
 func TestRunStdin(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	r := helperRunner(t, 5*time.Second, nil)
 	res, err := r.Run(context.Background(), []byte("piped-input"), helperCmd("cat")...)
 	if err != nil {
@@ -173,7 +192,7 @@ func TestRunStdin(t *testing.T) {
 }
 
 func TestRunNonZeroExit(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	rec := &capturingRecorder{}
 	r := helperRunner(t, 5*time.Second, rec)
 
@@ -206,7 +225,7 @@ func TestRunNonZeroExit(t *testing.T) {
 }
 
 func TestOutputPropagatesError(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	r := helperRunner(t, 5*time.Second, nil)
 	_, err := r.Output(context.Background(), helperCmd("fail")...)
 	if !errors.Is(err, ErrNonZeroExit) {
@@ -215,7 +234,7 @@ func TestOutputPropagatesError(t *testing.T) {
 }
 
 func TestRunTimeout(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	r := helperRunner(t, 100*time.Millisecond, nil)
 	start := time.Now()
 	_, err := r.Run(context.Background(), nil, helperCmd("sleep", "5s")...)
@@ -231,7 +250,7 @@ func TestRunTimeout(t *testing.T) {
 }
 
 func TestRunContextCancel(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	r := helperRunner(t, 5*time.Second, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -253,7 +272,7 @@ func TestRunStartError(t *testing.T) {
 }
 
 func TestOutputCapped(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	r := helperRunner(t, 30*time.Second, nil)
 	// Ask for well over maxOutput bytes; captured stdout must be capped.
 	res, err := r.Run(context.Background(), nil, helperCmd("spam", strconv.Itoa(maxOutput+1<<20))...)
@@ -326,7 +345,7 @@ func TestCommandNameNoLeak(t *testing.T) {
 }
 
 func TestArgvCopied(t *testing.T) {
-	withHelperEnv(t, "1")
+	withHelperEnv(t)
 	rec := &capturingRecorder{}
 	r := helperRunner(t, 5*time.Second, rec)
 	argv := helperCmd("echo", "orig")
@@ -348,3 +367,61 @@ func TestArgvCopied(t *testing.T) {
 
 // ensure exec import stays referenced if the file is trimmed later.
 var _ = exec.ErrNotFound
+
+func TestRunWithRetrySucceedsAfterFailures(t *testing.T) {
+	withHelperEnv(t)
+	r := helperRunner(t, 5*time.Second, nil)
+	counter := filepath.Join(t.TempDir(), "counter")
+
+	res, err := r.RunWithRetry(context.Background(), 3, 10*time.Millisecond, nil,
+		helperCmd("flaky", counter, "2")...)
+	if err != nil {
+		t.Fatalf("RunWithRetry: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit = %d, want 0", res.ExitCode)
+	}
+}
+
+func TestRunWithRetryExhausted(t *testing.T) {
+	withHelperEnv(t)
+	r := helperRunner(t, 5*time.Second, nil)
+	counter := filepath.Join(t.TempDir(), "counter")
+
+	// failCount (5) exceeds attempts (3), so every attempt fails and the last
+	// attempt's error is returned.
+	_, err := r.RunWithRetry(context.Background(), 3, 10*time.Millisecond, nil,
+		helperCmd("flaky", counter, "5")...)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if !errors.Is(err, ErrNonZeroExit) {
+		t.Fatalf("err = %v, want Is ErrNonZeroExit", err)
+	}
+	data, _ := os.ReadFile(counter)
+	if string(data) != "3" {
+		t.Fatalf("attempts made = %q, want 3", data)
+	}
+}
+
+func TestRunWithRetrySingleAttemptDefault(t *testing.T) {
+	withHelperEnv(t)
+	r := helperRunner(t, 5*time.Second, nil)
+	// attempts < 1 is treated as 1.
+	_, err := r.RunWithRetry(context.Background(), 0, 0, nil, helperCmd("fail")...)
+	if !errors.Is(err, ErrNonZeroExit) {
+		t.Fatalf("err = %v, want Is ErrNonZeroExit", err)
+	}
+}
+
+func TestOutputWithRetry(t *testing.T) {
+	withHelperEnv(t)
+	r := helperRunner(t, 5*time.Second, nil)
+	out, err := r.OutputWithRetry(context.Background(), 2, time.Millisecond, helperCmd("echo", "hi")...)
+	if err != nil {
+		t.Fatalf("OutputWithRetry: %v", err)
+	}
+	if out != "hi" {
+		t.Fatalf("out = %q, want hi", out)
+	}
+}

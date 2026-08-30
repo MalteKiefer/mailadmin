@@ -5,16 +5,19 @@ on:
     branches: [main, develop]
   pull_request:
 
+# Default to read-only; jobs below don't need more.
 permissions:
   contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -39,3 +42,50 @@ jobs:
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.5.0
+
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Coverage floor: a regression guard, not a target. Baseline measured
+      # 2026-08-30 was 25.1% total statements (`go tool cover -func`), pulled
+      # down by packages with no test files (internal/db, internal/valid) and
+      # internal/cli's largely-untested cobra RunE bodies (exercised in
+      # practice via manual/integration use, not unit tests). The floor sits
+      # a few points under that so ordinary fluctuation doesn't false-positive,
+      # while a real drop (e.g. a large new package landing untested) still
+      # fails CI. Ratchet this up as coverage improves — see docs/CI-SECURITY.md.
+      - name: coverage floor (20%)
+        run: |
+          set -euo pipefail
+          go test -coverprofile=coverage.out ./...
+          pct=$(go tool cover -func=coverage.out | tail -1 | grep -oE '[0-9]+\.[0-9]+' | tail -1)
+          echo "total coverage: ${pct}%"
+          floor=20.0
+          awk -v p="$pct" -v f="$floor" 'BEGIN { exit !(p >= f) }' \
+            || { echo "coverage ${pct}% is below the ${floor}% floor"; exit 1; }
