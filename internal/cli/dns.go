@@ -89,6 +89,28 @@ func newDNSCmd(app *App) *cobra.Command {
 	check.Flags().BoolVar(&checkDeSEC, "desec", false, "compare against the deSEC API (forces provider desec)")
 	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --registrar/--njalla/--desec)")
 
+	var driftAll bool
+	driftCheck := &cobra.Command{
+		Use:   "drift-check [domain]",
+		Short: "Cron-friendly public-DNS drift check: non-zero exit if anything has drifted",
+		Long: "Runs the same desired-vs-live public DNS comparison as `dns check`, for\n" +
+			"one domain or every domain (--all), but is shaped for unattended use:\n" +
+			"it exits non-zero (runtime error, exit code 1) if any record is missing\n" +
+			"or has drifted, so it works as-is in a cron job or systemd timer.\n" +
+			"`-o json` emits a machine-parseable summary per domain (domain, total,\n" +
+			"matched, drift count) — see docs/DNS-DRIFT-MONITORING.md for a worked\n" +
+			"systemd timer example.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			domain := ""
+			if len(args) == 1 {
+				domain = args[0]
+			}
+			return app.dnsDriftCheck(c, domain, driftAll)
+		},
+	}
+	driftCheck.Flags().BoolVar(&driftAll, "all", false, "check every domain instead of a single one")
+
 	var publishMTASTS, publishDANE bool
 	publish := &cobra.Command{
 		Use:   "publish <domain>",
@@ -177,12 +199,12 @@ func newDNSCmd(app *App) *cobra.Command {
 	zoneCreate.Flags().StringVar(&zoneProvider, "provider", "", "provider to create the zone at: desec (default: the domain's dns_provider)")
 	zone.AddCommand(zoneCreate)
 
-	for _, sc := range []*cobra.Command{show, check, publish, takeover, migrate, audit} {
+	for _, sc := range []*cobra.Command{show, check, publish, takeover, migrate, audit, driftCheck} {
 		sc.ValidArgsFunction = app.completeDomain
 	}
 	zoneCreate.ValidArgsFunction = app.completeDomain
 
-	cmd.AddCommand(show, check, publish, takeover, restore, migrate, audit, zone)
+	cmd.AddCommand(show, check, publish, takeover, restore, migrate, audit, zone, driftCheck)
 	return cmd
 }
 
@@ -602,36 +624,41 @@ func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS, withDANE
 	return r.TypeTable(recordsTable(recs), 0)
 }
 
-// dnsCheck verifies live public DNS against the full desired record-set (the
-// same set `dns show` prints), reporting per record whether it matches, drifts
-// (old→new), or is missing — coloured, and covering MX/SPF/DMARC/DKIM/TLS-RPT/
-// SRV/CNAME, not just the policy records.
-func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
-	r, err := a.Renderer()
-	if err != nil {
-		return err
-	}
+// dnsCheckResult is the outcome of comparing desired vs. live public DNS for
+// one domain — the computation shared by `dns check` (human table) and
+// `dns drift-check` (cron-friendly, per-domain, non-zero exit on drift).
+type dnsCheckResult struct {
+	Domain  string               `json:"domain"`
+	Total   int                  `json:"total"`
+	Matched int                  `json:"matched"`
+	Drift   int                  `json:"drift"`
+	Plan    []dnsprovider.Change `json:"-"`
+}
+
+// computeDNSCheck resolves live public DNS and diffs it against the desired
+// mail record-set for domain. It does no rendering — callers own that.
+func (a *App) computeDNSCheck(cmd *cobra.Command, rawDomain string) (dnsCheckResult, error) {
 	cfg, _, err := a.Config()
 	if err != nil {
-		return err
+		return dnsCheckResult{}, err
 	}
 	domain, err := valid.Domain(rawDomain)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return dnsCheckResult{}, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	database, err := a.openDB(cmd, cfg)
 	if err != nil {
-		return err
+		return dnsCheckResult{}, err
 	}
 	dom, err := getDomain(ctx(cmd), database, domain)
 	if err != nil {
-		return err
+		return dnsCheckResult{}, err
 	}
 
 	mgr := mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6)
 	key, err := mgr.ReadDKIM(domain, dom.DKIMSelector)
 	if err != nil {
-		return fmt.Errorf("dns check %s: %w", domain, err)
+		return dnsCheckResult{}, fmt.Errorf("dns check %s: %w", domain, err)
 	}
 	// withMTASTS=false: verify everything incl. the mta-sts host records, but do
 	// not demand the _mta-sts policy TXT (only relevant once MTA-STS is activated
@@ -641,12 +668,121 @@ func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
 	live, err := dnscheck.New(cfg.DNS.Resolver, cfg.Mail.Hostname, cfg.Mail.DefaultSelector).
 		ResolveLive(ctx(cmd), domain, desired)
 	if err != nil {
-		return fmt.Errorf("dns check %s: %w", domain, err)
+		return dnsCheckResult{}, fmt.Errorf("dns check %s: %w", domain, err)
 	}
 	plan := dnsprovider.Plan(live, desired)
-	match := len(plan) - countMutating(plan)
-	r.Message("%s — public DNS: %d of %d records correct", domain, match, len(plan))
-	return r.StatusTable(njallaCheckTable(plan), 0)
+	drift := countMutating(plan)
+	return dnsCheckResult{
+		Domain:  domain,
+		Total:   len(plan),
+		Matched: len(plan) - drift,
+		Drift:   drift,
+		Plan:    plan,
+	}, nil
+}
+
+// dnsCheck verifies live public DNS against the full desired record-set (the
+// same set `dns show` prints), reporting per record whether it matches, drifts
+// (old→new), or is missing — coloured, and covering MX/SPF/DMARC/DKIM/TLS-RPT/
+// SRV/CNAME, not just the policy records.
+func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
+	r, err := a.Renderer()
+	if err != nil {
+		return err
+	}
+	res, err := a.computeDNSCheck(cmd, rawDomain)
+	if err != nil {
+		return err
+	}
+	r.Message("%s — public DNS: %d of %d records correct", res.Domain, res.Matched, res.Total)
+	return r.StatusTable(njallaCheckTable(res.Plan), 0)
+}
+
+// validateDriftCheckArgs enforces that drift-check gets exactly one of a
+// domain argument or --all, never both and never neither. Pure so it is
+// unit-testable without touching config/DB.
+func validateDriftCheckArgs(domain string, all bool) error {
+	if all == (domain != "") {
+		if all {
+			return fmt.Errorf("%w: pass either a domain or --all, not both", ErrUsage)
+		}
+		return fmt.Errorf("%w: pass a domain, or --all to check every domain", ErrUsage)
+	}
+	return nil
+}
+
+// dnsDriftCheck runs the same desired-vs-live public DNS comparison as
+// `dns check` for one domain or every domain (--all), but is shaped for
+// unattended/cron use: it exits non-zero when any domain has drifted, and
+// renders a machine-parseable summary under -o json. It never mutates
+// anything — a thin, exit-code-flavoured wrapper around computeDNSCheck, not
+// a second implementation of the diffing logic.
+func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all bool) error {
+	r, err := a.Renderer()
+	if err != nil {
+		return err
+	}
+	if verr := validateDriftCheckArgs(rawDomain, all); verr != nil {
+		return verr
+	}
+
+	cfg, _, err := a.Config()
+	if err != nil {
+		return err
+	}
+	domains := []string{rawDomain}
+	if all {
+		database, derr := a.openDB(cmd, cfg)
+		if derr != nil {
+			return derr
+		}
+		defer database.Close()
+		rows, derr := database.ListDomains(ctx(cmd))
+		if derr != nil {
+			return derr
+		}
+		domains = domains[:0]
+		for _, d := range rows {
+			domains = append(domains, d.Name)
+		}
+	}
+
+	results := make([]dnsCheckResult, 0, len(domains))
+	var failed []string
+	drifted := 0
+	for _, d := range domains {
+		res, cerr := a.computeDNSCheck(cmd, d)
+		if cerr != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", d, cerr))
+			continue
+		}
+		results = append(results, res)
+		if res.Drift > 0 {
+			drifted++
+		}
+	}
+
+	if r.Format() == output.FormatJSON {
+		if jerr := r.JSON(results); jerr != nil {
+			return jerr
+		}
+	} else {
+		for _, res := range results {
+			status := "clean"
+			if res.Drift > 0 {
+				status = fmt.Sprintf("%d drifted", res.Drift)
+			}
+			r.Message("%s — %d/%d correct (%s)", res.Domain, res.Matched, res.Total, status)
+		}
+	}
+
+	if len(failed) > 0 {
+		return fmt.Errorf("drift-check: %d domain(s) could not be checked: %s", len(failed), strings.Join(failed, "; "))
+	}
+	if drifted > 0 {
+		return fmt.Errorf("drift-check: drift detected in %d of %d domain(s)", drifted, len(results))
+	}
+	return nil
 }
 
 // registrarCheckProvider resolves the provider name to query for `dns check`,
