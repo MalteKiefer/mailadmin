@@ -76,7 +76,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 		return nil, "", err
 	}
 
-	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { // #nosec G304 G306 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
 		return content, "", fmt.Errorf("rspamdconf: write %s: %w", path, err)
 	}
 	return content, unquote(old), nil
@@ -86,7 +86,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 // for rollback after a failed post-write validation. path must be one of
 // RatelimitPath(dir) or GreylistPath(dir).
 func RestoreFile(path string, content []byte) error {
-	if err := os.WriteFile(path, content, 0o644); err != nil { // #nosec G304 G306 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := os.WriteFile(path, content, 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
 		return fmt.Errorf("rspamdconf: restore %s: %w", path, err)
 	}
 	return nil
