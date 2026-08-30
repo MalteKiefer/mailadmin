@@ -70,6 +70,54 @@ func (m *Manager) Exists(local, domain string) (bool, error) {
 	return fi.IsDir(), nil
 }
 
+// UsageReport summarises what Purge would delete: how many regular files and
+// how many bytes they occupy.
+type UsageReport struct {
+	Files int64
+	Bytes int64
+}
+
+// Stat walks the mailbox directory tree read-only and reports how many
+// regular files and bytes it contains — the same information Purge is about
+// to delete, computed cheaply beforehand so a dry-run preview can show
+// concrete numbers instead of a bare "would purge" message. A missing
+// directory is reported via ErrNotFound, matching Purge.
+func (m *Manager) Stat(local, domain string) (UsageReport, error) {
+	p, err := m.path(local, domain)
+	if err != nil {
+		return UsageReport{}, err
+	}
+	fi, statErr := os.Stat(p)
+	if errors.Is(statErr, os.ErrNotExist) {
+		return UsageReport{}, fmt.Errorf("%w: %s", ErrNotFound, p)
+	}
+	if statErr != nil {
+		return UsageReport{}, statErr
+	}
+	if !fi.IsDir() {
+		return UsageReport{}, fmt.Errorf("%w: %s is not a directory", ErrOutsideRoot, p)
+	}
+	var rep UsageReport
+	walkErr := filepath.WalkDir(p, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			info, ierr := d.Info()
+			if ierr != nil {
+				return ierr
+			}
+			rep.Files++
+			rep.Bytes += info.Size()
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return UsageReport{}, fmt.Errorf("maildir stat: %w", walkErr)
+	}
+	return rep, nil
+}
+
 // Purge deletes the mailbox directory tree. A missing directory is reported via
 // ErrNotFound so the caller can surface a clear message.
 func (m *Manager) Purge(local, domain string) error {

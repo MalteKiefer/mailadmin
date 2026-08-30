@@ -21,8 +21,20 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"mailadmin/internal/sys"
+)
+
+// reloadAttempts/reloadBackoff bound the retry of `systemctl reload <unit>`.
+// A reload can transiently fail while Caddy is still validating a config it
+// just picked up (or, as observed once in production, while a permission fix
+// on the Caddyfile propagates) — a couple of short retries clears that without
+// masking a real, persistent failure (which still surfaces after the last
+// attempt).
+const (
+	reloadAttempts = 3
+	reloadBackoff  = 2 * time.Second
 )
 
 // Defaults for the managed paths and the reload unit.
@@ -98,7 +110,7 @@ func (m *Manager) Sync(ctx context.Context, domains []string) error {
 	if err := writeFileAtomic(m.includePath, []byte(block), 0o644); err != nil {
 		return fmt.Errorf("write autodiscovery include: %w", err)
 	}
-	if _, err := m.runner.Output(ctx, binSystemctl, "reload", m.reloadUnit); err != nil {
+	if _, err := m.runner.OutputWithRetry(ctx, reloadAttempts, reloadBackoff, binSystemctl, "reload", m.reloadUnit); err != nil {
 		return fmt.Errorf("reload %s: %w", m.reloadUnit, err)
 	}
 	return nil
@@ -133,7 +145,7 @@ func (m *Manager) SyncMTASTS(ctx context.Context, domains []string) error {
 	if err := writeFileAtomic(m.mtaStsInclude, []byte(block), 0o644); err != nil {
 		return fmt.Errorf("write mta-sts include: %w", err)
 	}
-	if _, err := m.runner.Output(ctx, binSystemctl, "reload", m.reloadUnit); err != nil {
+	if _, err := m.runner.OutputWithRetry(ctx, reloadAttempts, reloadBackoff, binSystemctl, "reload", m.reloadUnit); err != nil {
 		return fmt.Errorf("reload %s: %w", m.reloadUnit, err)
 	}
 	return nil

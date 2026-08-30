@@ -61,7 +61,6 @@ func TestParseDecisions(t *testing.T) {
 		{name: "object instead of array errors", in: `{"value":"1.1.1.1"}`, wantErr: ErrInvalidResponse},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := parseDecisions([]byte(tt.in))
@@ -127,7 +126,6 @@ func TestParseAllowlist(t *testing.T) {
 		{name: "malformed errors", in: `{`, wantErr: ErrInvalidResponse},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := parseAllowlist([]byte(tt.in))
@@ -166,7 +164,6 @@ func TestIsFail2banPong(t *testing.T) {
 		{"ERROR   Unable to contact server", false},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
 			if got := isFail2banPong([]byte(tt.in)); got != tt.want {

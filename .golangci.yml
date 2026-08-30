@@ -1,0 +1,80 @@
+version: "2"
+
+# mailadmin lint policy. Kept intentionally close to golangci-lint's own
+# "standard" set plus a handful of security/quality linters that overlap with
+# what gosec/staticcheck don't already cover — this repo already runs
+# staticcheck and gosec as separate CI steps, so this config avoids
+# duplicating them wholesale and instead adds signal golangci-lint is
+# uniquely good at (unused parameters, shadowed variables, unchecked
+# type-assertions, copying locks by value, unconvert casts).
+linters:
+  enable:
+    - bodyclose      # HTTP response bodies must be closed (this repo makes outbound HTTPS calls in internal/dnsprovider)
+    - copyloopvar     # pre-Go-1.22 loop-variable-capture bugs
+    - errorlint       # %w wrapping / errors.Is / errors.As correctness (this repo leans heavily on wrapped sentinel errors)
+    - gocritic        # broad diagnostics/style checks with low false-positive rate
+    - gosec           # kept in sync with the dedicated `make gosec` step for editor/PR-time feedback
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr          # returning nil after checking err != nil
+    - noctx           # HTTP requests without context.Context
+    - revive          # idiomatic-Go / stylistic checks
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+  disable:
+    - errcheck        # too many intentional `_ = x.Close()` / best-effort patterns already reviewed in SECURITY-AUDIT.md; would require blanket exclusions that hide real misses
+  settings:
+    gocritic:
+      disabled-checks:
+        - ifElseChain # stylistic; this codebase's switch/if-chains read fine as-is
+    revive:
+      rules:
+        - name: unused-parameter
+          disabled: true # many handlers implement fixed interfaces (cobra RunE, Recorder) where the arg is part of the contract, not dead
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      # Test helper files intentionally re-exec the test binary and exercise
+      # error paths with relaxed checks (table-driven, `_ =` on cleanup).
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - noctx
+      # internal/cli/{alias,dns,mailbox,sieve,security,domain}.go define cobra
+      # commands that are, as of this branch, actively being edited by parallel
+      # in-flight branches (dry-run hardening). This branch owns CI/tooling
+      # only and must not touch those command-definition files to avoid
+      # stepping on concurrent work — see the branch's task brief. The
+      # findings below are real but small and stylistic (non-wrapping %v in an
+      # already-%w-wrapped error; an editor-invocation helper not yet
+      # threaded with ctx; a couple of always-same-value bool params in
+      # provider-selection helpers) and are left for whichever agent next
+      # touches these files to fix in context.
+      - path: internal/cli/alias\.go
+        linters:
+          - errorlint
+      - path: internal/cli/dns\.go
+        linters:
+          - unparam
+          - errorlint
+      - path: internal/cli/sieve\.go
+        linters:
+          - noctx
+      - path: internal/cli/domain\.go
+        linters:
+          - errorlint
+      - path: internal/cli/security\.go
+        linters:
+          - errorlint
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

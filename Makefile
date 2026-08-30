@@ -40,8 +40,12 @@ gosec:
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+## lint: golangci-lint per .golangci.yml (see docs/CI-SECURITY.md for policy)
+lint:
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0 run ./...
+
 ## check: run the full quality gate (matches CI + docs/REQUIREMENTS.md)
-check: fmt vet race staticcheck gosec vulncheck
+check: fmt vet race staticcheck gosec vulncheck lint
 	@echo "all checks passed"
 
 clean:

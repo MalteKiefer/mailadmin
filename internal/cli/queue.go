@@ -133,7 +133,7 @@ func runQueueShow(app *App, c *cobra.Command, rawQID string) error {
 	}
 	qid, err := valid.QueueID(rawQID)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	m, err := app.postfixq().Show(ctx(c), qid)
 	if err != nil {
@@ -175,7 +175,7 @@ func runQueueMutate(app *App, c *cobra.Command, op, rawQID string) error {
 	}
 	qid, err := valid.QueueID(rawQID)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 
 	if app.flags.dryRun {
@@ -223,7 +223,7 @@ func queueError(qid string, err error) error {
 	case errors.Is(err, postfixq.ErrNotFound):
 		return fmt.Errorf("queue id %s: %w", qid, ErrNotFound)
 	case errors.Is(err, valid.ErrInvalid):
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	default:
 		return err
 	}

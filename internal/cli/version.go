@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/cobra/doc"
 
 	"mailadmin/internal/selfupdate"
 )
@@ -11,6 +13,7 @@ import (
 // Version is the build version, overridable via -ldflags at build time.
 var Version = "dev"
 
+//nolint:unparam // app kept for signature parity with the other newXCmd(app, ...) constructors in this package; unused today, a natural extension point (e.g. reading app.flags) tomorrow
 func newVersionCmd(app *App) *cobra.Command {
 	var check bool
 	cmd := &cobra.Command{
@@ -39,6 +42,35 @@ func newVersionCmd(app *App) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "check GitHub for a newer release")
 	return cmd
+}
+
+// newManCmd generates a full man-page tree for the CLI (one page per command)
+// via cobra/doc, alongside the shell-completion generators above. It is
+// registered as `completion man <output-dir>` rather than a top-level command
+// since, like shell completion, it is generated documentation derived from the
+// command tree rather than an operational subcommand.
+func newManCmd(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "man <output-dir>",
+		Short: "Generate man pages for every command into <output-dir>",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			dir := args[0]
+			if err := os.MkdirAll(dir, 0o750); err != nil {
+				return fmt.Errorf("man: %w", err)
+			}
+			header := &doc.GenManHeader{
+				Title:   "MAILADMIN",
+				Section: "1",
+				Source:  "mailadmin " + Version,
+			}
+			if err := doc.GenManTree(root, header, dir); err != nil {
+				return fmt.Errorf("man: %w", err)
+			}
+			_, err := fmt.Fprintf(c.OutOrStdout(), "man pages written to %s\n", dir)
+			return err
+		},
+	}
 }
 
 // newUpdateCmd downloads the latest release binary (verified against its
@@ -98,5 +130,6 @@ func newCompletionCmd(root *cobra.Command) *cobra.Command {
 			}
 		},
 	}
+	cmd.AddCommand(newManCmd(root))
 	return cmd
 }

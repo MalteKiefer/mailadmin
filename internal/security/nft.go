@@ -69,7 +69,7 @@ func parseNftPorts(data []byte) ([]FirewallPort, error) {
 	var rs nftRuleset
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if err := dec.Decode(&rs); err != nil {
-		return nil, fmt.Errorf("%w: decode nft ruleset: %v", ErrInvalidResponse, err)
+		return nil, fmt.Errorf("%w: decode nft ruleset: %w", ErrInvalidResponse, err)
 	}
 	seen := make(map[FirewallPort]struct{})
 	var out []FirewallPort

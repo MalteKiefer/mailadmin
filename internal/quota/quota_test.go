@@ -77,7 +77,6 @@ func TestParseStorage(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			used, limit, err := parseStorage([]byte(tt.out))
@@ -113,7 +112,6 @@ func TestParseLimit(t *testing.T) {
 		{"nan", 0, true},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
 			got, err := parseLimit(tt.in)
@@ -145,7 +143,6 @@ func TestPercent(t *testing.T) {
 		{"empty everything", 0, 0, 0},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := percent(tt.used, tt.limit); got != tt.want {
@@ -176,7 +173,6 @@ func TestNormalizeAddress(t *testing.T) {
 		{"us;rm -rf@example.com", "", true},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.in, func(t *testing.T) {
 			t.Parallel()
 			got, err := normalizeAddress(tt.in)

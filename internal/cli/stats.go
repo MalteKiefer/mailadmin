@@ -61,7 +61,7 @@ func newStatsCmd(app *App) *cobra.Command {
 		RunE: func(c *cobra.Command, args []string) error {
 			d, err := valid.Domain(args[0])
 			if err != nil {
-				return fmt.Errorf("%w: %v", ErrUsage, err)
+				return fmt.Errorf("%w: %w", ErrUsage, err)
 			}
 			return runStats(app, func(col *stats.Collector) (stats.Summary, error) {
 				return col.Domain(ctx(c), d)
@@ -84,7 +84,7 @@ func runStats(app *App, collect func(*stats.Collector) (stats.Summary, error)) e
 	}
 	format, err := output.ParseFormat(app.flags.output)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	r := output.New(format, os.Stdout, app.flags.quiet)
 
