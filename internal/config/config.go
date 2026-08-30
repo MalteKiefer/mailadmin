@@ -75,9 +75,13 @@ type DNS struct {
 	Resolver string `toml:"resolver"`
 }
 
-// Backup holds paths for DNS snapshots.
+// Backup holds paths for DNS snapshots and full disaster-recovery bundles.
 type Backup struct {
 	DNSBackupDir string `toml:"dns_backup_dir"`
+	// Dir is the default directory `backup create`/`backup list` use for
+	// full DR bundles (DB dump + DKIM keys + Sieve scripts + config.toml).
+	// Optional: unset means the operator must pass --out/--dir explicitly.
+	Dir string `toml:"dir"`
 }
 
 // Logs holds the unit allowlist for the log/journal commands.
@@ -216,6 +220,7 @@ func (c *Config) normalize() {
 	c.Server.IPv6 = strings.TrimSpace(c.Server.IPv6)
 	c.DNS.Resolver = strings.TrimSpace(c.DNS.Resolver)
 	c.Backup.DNSBackupDir = strings.TrimSpace(c.Backup.DNSBackupDir)
+	c.Backup.Dir = strings.TrimSpace(c.Backup.Dir)
 	for i := range c.Logs.Units {
 		c.Logs.Units[i] = strings.TrimSpace(c.Logs.Units[i])
 	}
@@ -238,6 +243,7 @@ func (c *Config) applyEnvOverrides(getenv func(string) string) error {
 		{"MAILADMIN_SERVER_IPV6", &c.Server.IPv6},
 		{"MAILADMIN_DNS_RESOLVER", &c.DNS.Resolver},
 		{"MAILADMIN_BACKUP_DNS_BACKUP_DIR", &c.Backup.DNSBackupDir},
+		{"MAILADMIN_BACKUP_DIR", &c.Backup.Dir},
 	}
 	for _, o := range overrides {
 		if v := getenv(o.key); v != "" {
@@ -308,6 +314,13 @@ func (c *Config) Validate() error {
 
 	if c.Backup.DNSBackupDir == "" || !filepath.IsAbs(c.Backup.DNSBackupDir) {
 		return fmt.Errorf("%w: backup.dns_backup_dir must be an absolute path", ErrInvalidConfig)
+	}
+	// backup.dir is optional (unlike dns_backup_dir): a fresh deployed config
+	// without it should still validate, and `mailadmin backup create`/`list`
+	// require --out/--dir explicitly when it is unset. When set, it must still
+	// be absolute.
+	if c.Backup.Dir != "" && !filepath.IsAbs(c.Backup.Dir) {
+		return fmt.Errorf("%w: backup.dir must be an absolute path", ErrInvalidConfig)
 	}
 
 	if len(c.Logs.Units) == 0 {
