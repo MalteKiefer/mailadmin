@@ -68,11 +68,11 @@ func GenerateVacation(opts VacationOptions) (string, error) {
 	}
 	startT, err := time.Parse(dateLayout, start)
 	if err != nil {
-		return "", fmt.Errorf("%w: --start: %v", valid.ErrInvalid, err)
+		return "", fmt.Errorf("%w: --start: %w", valid.ErrInvalid, err)
 	}
 	endT, err := time.Parse(dateLayout, end)
 	if err != nil {
-		return "", fmt.Errorf("%w: --end: %v", valid.ErrInvalid, err)
+		return "", fmt.Errorf("%w: --end: %w", valid.ErrInvalid, err)
 	}
 	if !endT.After(startT) {
 		return "", fmt.Errorf("%w: --end must be after --start", valid.ErrInvalid)
