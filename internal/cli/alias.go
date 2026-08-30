@@ -167,6 +167,11 @@ func runAliasAdd(app *App, c *cobra.Command, rawSource, rawDest string, catchAll
 		return err
 	}
 
+	if app.flags.dryRun {
+		r.Message("dry-run: would add alias %s -> %s", source, dest)
+		return nil
+	}
+
 	if err := database.CreateAlias(ctx(c), source, dest); err != nil {
 		return err
 	}
@@ -216,6 +221,11 @@ func runAliasRemove(app *App, c *cobra.Command, rawSource, rawDest string) error
 			return fmt.Errorf("alias %s -> %s: %w", source, dest, ErrNotFound)
 		}
 		return fmt.Errorf("alias %s: %w", source, ErrNotFound)
+	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would remove %d alias destination(s) for %s", len(existing), source)
+		return nil
 	}
 
 	prompt := fmt.Sprintf("Remove alias %s -> %s?", source, dest)

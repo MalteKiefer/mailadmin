@@ -237,6 +237,11 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 
+	if app.flags.dryRun {
+		r.Message("dry-run: would add domain %s (selector %s, dns %s)", name, selector, provider)
+		return nil
+	}
+
 	database, err := app.db(ctx(c))
 	if err != nil {
 		return err
@@ -334,6 +339,11 @@ func runDomainRemove(app *App, c *cobra.Command, rawDomain string) error {
 		return fmt.Errorf("domain %s has %d mailbox(es) — remove them first", name, n)
 	}
 
+	if app.flags.dryRun {
+		r.Message("dry-run: would remove domain %s", name)
+		return nil
+	}
+
 	if err := app.confirm("Remove domain " + name + " (irreversible)?"); err != nil {
 		return err
 	}
@@ -380,6 +390,14 @@ func runDomainSetActive(app *App, c *cobra.Command, rawDomain string, active boo
 	if !active {
 		action = "domain.disable"
 		verb = "disabled"
+	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would set domain %s active=%v", name, active)
+		return nil
+	}
+
+	if !active {
 		if err := app.confirm("Disable domain " + name + " (stops mail for all its mailboxes)?"); err != nil {
 			return err
 		}
@@ -430,6 +448,11 @@ func runDomainSetDKIM(app *App, c *cobra.Command, rawDomain, rawSelector string)
 	if err != nil {
 		return err
 	}
+	if app.flags.dryRun {
+		r.Message("dry-run: would set DKIM selector for %s to %s", name, selector)
+		return nil
+	}
+
 	mgr, _, err := app.domainManager()
 	if err != nil {
 		return err
@@ -484,6 +507,12 @@ func runDomainSetProvider(app *App, c *cobra.Command, rawDomain, rawProvider str
 	if err != nil {
 		return err
 	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would set DNS provider for %s to %s", name, provider)
+		return nil
+	}
+
 	rec, err := app.auditor(ctx(c))
 	if err != nil {
 		return err
@@ -530,6 +559,10 @@ func runDomainRegenDKIM(app *App, c *cobra.Command, rawDomain string) error {
 	}
 	if d.DKIMSelector == "" {
 		return fmt.Errorf("domain %s has no DKIM selector — set one with: mailadmin domain set-dkim %s <selector>", name, name)
+	}
+	if app.flags.dryRun {
+		r.Message("dry-run: would regenerate DKIM key for %s (selector %s)", name, d.DKIMSelector)
+		return nil
 	}
 	if err := app.confirm("Regenerate the DKIM key for " + name + " (selector " + d.DKIMSelector + ")?"); err != nil {
 		return err
