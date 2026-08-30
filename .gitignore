@@ -16,3 +16,4 @@ secrets.env
 # Editor / OS
 .DS_Store
 *.swp
+.worktrees/
