@@ -435,7 +435,7 @@ func TestAuditLog(t *testing.T) {
 		t.Fatalf("Log (nil before/after, no ip): %v", err)
 	}
 
-	entries, err := d.ListAudit(ctx, 10)
+	entries, err := d.ListAudit(ctx, 10, AuditFilter{})
 	if err != nil {
 		t.Fatalf("ListAudit: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestAuditLog(t *testing.T) {
 		t.Fatalf("audit entry mismatch: %+v", second)
 	}
 
-	limited, err := d.ListAudit(ctx, 1)
+	limited, err := d.ListAudit(ctx, 1, AuditFilter{})
 	if err != nil {
 		t.Fatalf("ListAudit(limit=1): %v", err)
 	}
@@ -468,11 +468,74 @@ func TestAuditLog(t *testing.T) {
 
 	// limit<=0 defaults to 200 rather than returning everything unbounded or
 	// erroring.
-	all, err := d.ListAudit(ctx, 0)
+	all, err := d.ListAudit(ctx, 0, AuditFilter{})
 	if err != nil {
 		t.Fatalf("ListAudit(limit=0): %v", err)
 	}
 	if len(all) != 2 {
 		t.Fatalf("ListAudit(limit=0) returned %d; want 2 (default limit not hit)", len(all))
+	}
+
+	// ---- filters -----------------------------------------------------
+	byActor, err := d.ListAudit(ctx, 10, AuditFilter{Actor: "admin@example.com"})
+	if err != nil {
+		t.Fatalf("ListAudit(actor): %v", err)
+	}
+	if len(byActor) != 2 {
+		t.Fatalf("ListAudit(actor=admin@example.com) returned %d; want 2", len(byActor))
+	}
+	if none, err := d.ListAudit(ctx, 10, AuditFilter{Actor: "nobody"}); err != nil {
+		t.Fatalf("ListAudit(actor=nobody): %v", err)
+	} else if len(none) != 0 {
+		t.Fatalf("ListAudit(actor=nobody) returned %d; want 0", len(none))
+	}
+
+	byAction, err := d.ListAudit(ctx, 10, AuditFilter{Action: "mailbox.add"})
+	if err != nil {
+		t.Fatalf("ListAudit(action): %v", err)
+	}
+	if len(byAction) != 1 || byAction[0].Action != "mailbox.add" {
+		t.Fatalf("ListAudit(action=mailbox.add) = %+v; want exactly the mailbox.add entry", byAction)
+	}
+
+	// Target matches exactly ("alice@example.com") and, per AuditFilter's
+	// doc comment, as an address at a bare-domain target — but here both
+	// recorded targets already are full addresses, so a domain-only filter
+	// like "example.com" should NOT match them (that suffix rule anchors on
+	// '@', it does not substring-match the domain out of an address).
+	byTargetExact, err := d.ListAudit(ctx, 10, AuditFilter{Target: "alice@example.com"})
+	if err != nil {
+		t.Fatalf("ListAudit(target exact): %v", err)
+	}
+	if len(byTargetExact) != 1 || byTargetExact[0].Target != "alice@example.com" {
+		t.Fatalf("ListAudit(target=alice@example.com) = %+v; want exactly one matching entry", byTargetExact)
+	}
+	if err := d.Log(ctx, "admin@example.com", "domain.note", "example.com", nil, nil, "", ""); err != nil {
+		t.Fatalf("Log (domain-target entry): %v", err)
+	}
+	byTargetDomain, err := d.ListAudit(ctx, 10, AuditFilter{Target: "example.com"})
+	if err != nil {
+		t.Fatalf("ListAudit(target domain): %v", err)
+	}
+	if len(byTargetDomain) != 3 {
+		t.Fatalf("ListAudit(target=example.com) returned %d; want 3 (bare domain + both @example.com addresses)", len(byTargetDomain))
+	}
+
+	future := time.Now().Add(time.Hour)
+	if empty, err := d.ListAudit(ctx, 10, AuditFilter{Since: future}); err != nil {
+		t.Fatalf("ListAudit(since=future): %v", err)
+	} else if len(empty) != 0 {
+		t.Fatalf("ListAudit(since=future) returned %d; want 0", len(empty))
+	}
+	past := time.Now().Add(-time.Hour)
+	if all3, err := d.ListAudit(ctx, 10, AuditFilter{Since: past}); err != nil {
+		t.Fatalf("ListAudit(since=past): %v", err)
+	} else if len(all3) != 3 {
+		t.Fatalf("ListAudit(since=past) returned %d; want 3", len(all3))
+	}
+	if empty, err := d.ListAudit(ctx, 10, AuditFilter{Until: past}); err != nil {
+		t.Fatalf("ListAudit(until=past): %v", err)
+	} else if len(empty) != 0 {
+		t.Fatalf("ListAudit(until=past) returned %d; want 0", len(empty))
 	}
 }
