@@ -133,6 +133,11 @@ func runServiceAction(app *App, cmd *cobra.Command, verb, unit string) error {
 		return serviceError(err)
 	}
 
+	if app.flags.dryRun {
+		r.Message("dry-run: would %s unit %s", verb, before.Unit)
+		return nil
+	}
+
 	if err := app.confirm(fmt.Sprintf("%s unit %q?", verb, before.Unit)); err != nil {
 		return err
 	}

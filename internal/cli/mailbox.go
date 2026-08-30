@@ -247,6 +247,11 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 		return fmt.Errorf("get domain: %w", gerr)
 	}
 
+	if a.flags.dryRun {
+		r.Message("dry-run: would add mailbox %s@%s (quota %d bytes)", local, dom, quotaBytes)
+		return nil
+	}
+
 	plaintext, err := a.readPassword("New password for " + local + "@" + dom)
 	if err != nil {
 		return err
@@ -303,6 +308,15 @@ func (a *App) mailboxRemove(cmd *cobra.Command, address string, purge bool) erro
 			ErrUsage, m.Address())
 	}
 
+	if a.flags.dryRun {
+		msg := "dry-run: would remove mailbox " + m.Address()
+		if purge {
+			msg += " and its maildir"
+		}
+		r.Message(msg)
+		return nil
+	}
+
 	action := "delete mailbox " + m.Address()
 	if purge {
 		action += " and its maildir"
@@ -355,6 +369,11 @@ func (a *App) mailboxPasswd(cmd *cobra.Command, address string) error {
 		return fmt.Errorf("get mailbox: %w", gerr)
 	}
 
+	if a.flags.dryRun {
+		r.Message("dry-run: would update password for %s@%s", local, dom)
+		return nil
+	}
+
 	plaintext, err := a.readPassword("New password for " + local + "@" + dom)
 	if err != nil {
 		return err
@@ -403,6 +422,12 @@ func (a *App) mailboxSetQuota(cmd *cobra.Command, address, bytesArg string) erro
 		}
 		return fmt.Errorf("get mailbox: %w", gerr)
 	}
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would set quota for %s to %d bytes", m.Address(), bytesVal)
+		return nil
+	}
+
 	if err := d.UpdateMailboxQuota(c, local, dom, bytesVal); err != nil {
 		return fmt.Errorf("update quota: %w", err)
 	}
@@ -439,6 +464,12 @@ func (a *App) mailboxSetActive(cmd *cobra.Command, address string, active bool) 
 		}
 		return fmt.Errorf("get mailbox: %w", gerr)
 	}
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would set mailbox %s active=%v", m.Address(), active)
+		return nil
+	}
+
 	if err := d.SetMailboxActive(c, local, dom, active); err != nil {
 		return fmt.Errorf("set active: %w", err)
 	}
@@ -607,6 +638,11 @@ func (a *App) appPasswordAdd(cmd *cobra.Command, address, label string) error {
 		return fmt.Errorf("%w: mailbox %s is disabled", ErrUsage, m.Address())
 	}
 
+	if a.flags.dryRun {
+		r.Message("dry-run: would add app password for %s (label: %s)", m.Address(), label)
+		return nil
+	}
+
 	plaintext, err := generatePassword(appPasswordLen)
 	if err != nil {
 		return err
@@ -649,6 +685,11 @@ func (a *App) appPasswordRemove(cmd *cobra.Command, address, label string) error
 	label, verr = validLabel(label)
 	if verr != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, verr)
+	}
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would remove app password %q for %s@%s", label, local, dom)
+		return nil
 	}
 
 	if err := a.confirm(fmt.Sprintf("remove app password %q for %s@%s?", label, local, dom)); err != nil {

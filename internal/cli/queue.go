@@ -133,6 +133,10 @@ func runQueueFlush(app *App, c *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	if app.flags.dryRun {
+		r.Message("dry-run: would flush the deferred queue")
+		return nil
+	}
 	if err := app.confirm("Flush the deferred queue (attempt delivery of all deferred mail)?"); err != nil {
 		return err
 	}
@@ -156,6 +160,11 @@ func runQueueMutate(app *App, c *cobra.Command, op, rawQID string) error {
 	qid, err := valid.QueueID(rawQID)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would %s queued message %s", op, qid)
+		return nil
 	}
 
 	action, apply, prompt := queueOp(ctx(c), app.postfixq(), op, qid)

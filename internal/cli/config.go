@@ -117,6 +117,15 @@ func runConfigEdit(app *App, cmd *cobra.Command) error {
 		return err
 	}
 
+	if app.flags.dryRun {
+		r, err := app.Renderer()
+		if err != nil {
+			return err
+		}
+		r.Message("dry-run: would edit config %s", path)
+		return nil
+	}
+
 	editor := editorCommand()
 	// #nosec G204 -- editor is taken from the trusted root operator's own
 	// environment, and the only argument is the fixed config path; no external
@@ -180,6 +189,16 @@ func splitFields(s string) []string {
 // to the --config path, refusing to overwrite existing files.
 func runConfigInit(app *App) error {
 	dir := filepath.Dir(app.flags.configPath)
+
+	if app.flags.dryRun {
+		r, err := app.Renderer()
+		if err != nil {
+			return err
+		}
+		r.Message("dry-run: would write config.toml and secrets.env in %s", dir)
+		return nil
+	}
+
 	configPath, secretsPath, err := config.Init(dir)
 	if err != nil {
 		return err

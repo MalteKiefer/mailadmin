@@ -73,6 +73,12 @@ func (a *App) sieveSet(cmd *cobra.Command, address, file string) error {
 	if err != nil {
 		return err
 	}
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would replace Sieve script for %s from %s (%d bytes)", address, file, len(body))
+		return nil
+	}
+
 	if err := a.confirm(fmt.Sprintf("Replace active Sieve script for %s from %s?", address, file)); err != nil {
 		return err
 	}
@@ -120,6 +126,11 @@ func (a *App) sieveEdit(cmd *cobra.Command, address string) error {
 		original = script.Body
 	} else if !errors.Is(err, sieve.ErrNotFound) {
 		return err
+	}
+
+	if a.flags.dryRun {
+		r.Message("dry-run: would edit Sieve script for %s", address)
+		return nil
 	}
 
 	edited, err := editInEditor(original)
