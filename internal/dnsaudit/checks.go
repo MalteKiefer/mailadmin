@@ -338,7 +338,7 @@ func evalBIMI(records []string, dmarcPolicy string) Finding {
 	f := Finding{Check: "BIMI"}
 	bimi := filterByTag(records, "v=BIMI1")
 	if len(bimi) == 0 {
-		f.Status, f.Detail = Info, "no default._bimi record (optional)"
+		f.Status, f.Detail = Info, "no default._bimi record (optional) — provision one with: mailadmin domain set-bimi <domain> --logo-url <url>"
 		return f
 	}
 	tags := parseTags(bimi[0])

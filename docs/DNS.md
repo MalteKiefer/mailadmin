@@ -18,6 +18,9 @@ renewals.
   - [Publishing](#publishing)
   - [Certificate renewal & rollover](#certificate-renewal--rollover)
 - [`dns takeover` / `dns restore`](#dns-takeover--dns-restore)
+- [`domain set-bimi`](#domain-set-bimi)
+- [DKIM rotation](#dkim-rotation)
+- [`dns drift-check`](#dns-drift-check)
 
 ---
 
@@ -280,3 +283,103 @@ mailadmin dns restore  <domain> <backup>
 `takeover` replaces the **entire** zone with the mail record set, snapshotting it
 to `backup.dns_backup_dir` first; `--keep-web` preserves apex/www A/AAAA/CNAME.
 `restore` puts a snapshot back. Both are destructive — use `--dry-run` to preview.
+
+---
+
+## `domain set-bimi`
+
+```sh
+mailadmin domain set-bimi <domain> --logo-url <https-url> [--logo-file <path>] [--vmc-url <https-url>]
+```
+
+Computes and publishes the `default._bimi` TXT record
+(`v=BIMI1; l=<logo-url>[; a=<vmc-url>]`) through the same
+Plan/Reconcile path `dns publish` uses — it respects `--dry-run` and the
+domain's configured `dns_provider` (manual just prints the record; an
+automated provider publishes it after confirmation).
+
+**Hosting design decision:** mailadmin does **not** host the logo or the VMC.
+An alternative was considered — a managed Caddy web root at `/srv/caddy/bimi`,
+mirroring `internal/webserver`'s autodiscovery/MTA-STS include pattern — but
+was rejected: BIMI logos must satisfy constraints mailadmin cannot check or
+obtain on the operator's behalf (full SVG Tiny PS conformance, and — for the
+checkmark to actually render in most mailbox providers — a Verified Mark
+Certificate issued by a commercial CA against the *exact* hosted bytes).
+Hosting it locally would not remove that dependency, only add a Caddy include
+and reload path for no real benefit. So: host the SVG (and VMC, if you have
+one) yourself at a stable HTTPS URL, then run `set-bimi` to publish the
+pointer record.
+
+`--logo-file` is optional and purely a local sanity check: it parses the file
+as XML and confirms the root `<svg>` carries `baseProfile="tiny-ps"` — the two
+most common mistakes (not valid XML at all, or a normal SVG export missing the
+BIMI profile). It is **not** a full SVG Tiny PS conformance check.
+
+BIMI only displays once DMARC enforces (`p=quarantine` or `p=reject`) — see
+[`dns audit`](#dns-audit)'s BIMI finding, which now points here when no record
+is published yet.
+
+---
+
+## DKIM rotation
+
+```sh
+mailadmin domain dkim-rotate-start  <domain> [--selector <new-selector>]
+mailadmin domain dkim-rotate-finish <domain> <new-selector> [--remove-old]
+```
+
+`domain set-dkim` / `domain regen-dkim` cut over **instantly**: a new key is
+generated and the domain's row is updated to the new selector in one step.
+That is fine when the old key is not worth keeping alive, but it means any
+DNS resolver still caching the old public key sees a mismatch the moment
+signing switches — a real, if usually brief, delivery risk during
+propagation.
+
+`dkim-rotate-start`/`dkim-rotate-finish` split that into two explicit steps
+with an overlap window, no instant cutover:
+
+1. **`dkim-rotate-start`** generates a **new** key under a **new** selector
+   and publishes **both** the current and new selector's DKIM TXT records.
+   The domain keeps *signing* with the old selector throughout — nothing
+   about mail delivery changes yet. The new selector defaults to
+   `<current>-<YYYYMMDD>`, or pass `--selector` explicitly. The command
+   prints the selector it used; **mailadmin does not persist rotation state**
+   between the two steps, so note it down (or use an explicit `--selector`)
+   if you're not running `dkim-rotate-finish` right away.
+2. Wait for DNS to propagate — at least the record TTL, longer for a
+   comfortable margin.
+3. **`dkim-rotate-finish <domain> <new-selector>`** performs the DB cutover
+   (`SetDKIMSelector`) that `set-dkim`/`regen-dkim` do instantly, now as an
+   explicit, deliberate step once the new key is known-good in DNS.
+
+**Old-record grace period (tradeoff):** by default `dkim-rotate-finish`
+leaves the old selector's DNS record published after cutover. It costs
+nothing (an unused TXT record) and is safer — any mail that was queued or is
+still being verified against the old signature keeps working. Pass
+`--remove-old` to delete it immediately instead, once you're confident
+nothing still depends on it.
+
+Both `set-dkim`/`regen-dkim` (instant, no-overlap) and
+`dkim-rotate-start`/`dkim-rotate-finish` (two-step, overlapping) stay
+available — pick whichever fits the situation.
+
+---
+
+## `dns drift-check`
+
+```sh
+mailadmin dns drift-check <domain>          # one domain
+mailadmin dns drift-check --all             # every domain
+mailadmin dns drift-check --all -o json     # machine-parseable summary
+```
+
+Runs the exact same desired-vs-live public DNS comparison as
+[`dns check`](#dns-show--dns-check) — it is a thin wrapper, not a second
+implementation of the diffing logic — but is shaped for unattended use: it
+**exits non-zero** (runtime error, exit code 1) if any record is missing or
+has drifted, so it can be dropped straight into a cron job or systemd timer.
+`-o json` emits one object per domain (`domain`, `total`, `matched`,
+`drift`), for a monitoring script to parse instead of scraping table output.
+
+See [`docs/DNS-DRIFT-MONITORING.md`](DNS-DRIFT-MONITORING.md) for a systemd
+timer example.
