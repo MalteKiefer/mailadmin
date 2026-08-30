@@ -194,6 +194,15 @@ func runBanAdd(app *App, cmd *cobra.Command, ip, dur string) error {
 		}
 	}
 
+	if app.flags.dryRun {
+		if dur != "" {
+			r.Message("dry-run: would ban %s for %s", value, dur)
+		} else {
+			r.Message("dry-run: would ban %s", value)
+		}
+		return nil
+	}
+
 	prompt := fmt.Sprintf("ban %s", value)
 	if dur != "" {
 		prompt = fmt.Sprintf("ban %s for %s", value, dur)
@@ -224,6 +233,10 @@ func runBanRemove(app *App, cmd *cobra.Command, ip string) error {
 	value, err := valid.CIDR(ip)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	if app.flags.dryRun {
+		r.Message("dry-run: would remove ban %s", value)
+		return nil
 	}
 	if err := app.confirm(fmt.Sprintf("remove ban %s", value)); err != nil {
 		return err
@@ -263,6 +276,10 @@ func runAllowAdd(app *App, cmd *cobra.Command, ip string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
+	if app.flags.dryRun {
+		r.Message("dry-run: would allowlist %s", value)
+		return nil
+	}
 	if err := app.confirm(fmt.Sprintf("allowlist %s", value)); err != nil {
 		return err
 	}
@@ -282,6 +299,10 @@ func runAllowRemove(app *App, cmd *cobra.Command, ip string) error {
 	value, err := valid.CIDR(ip)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	if app.flags.dryRun {
+		r.Message("dry-run: would remove allowlist entry %s", value)
+		return nil
 	}
 	if err := app.confirm(fmt.Sprintf("remove allowlist entry %s", value)); err != nil {
 		return err
@@ -330,6 +351,11 @@ func runFirewallPort(app *App, cmd *cobra.Command, action, protoArg, portArg str
 	port, err := valid.Port(portNum)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+
+	if app.flags.dryRun {
+		r.Message("dry-run: would %s %s port %d", action, proto, port)
+		return nil
 	}
 
 	if err := app.confirm(fmt.Sprintf("%s %s port %d", action, proto, port)); err != nil {
