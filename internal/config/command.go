@@ -20,9 +20,11 @@ type ConfigView struct {
 	DNSBackupDir     string   `json:"dns_backup_dir"`
 	BackupDir        string   `json:"backup_dir"`
 	LogUnits         []string `json:"log_units"`
+	NotifyURL        string   `json:"notify_url"`
 	NjallaConfigured bool     `json:"njalla_configured"`
 	DeSECConfigured  bool     `json:"desec_configured"`
 	RspamdConfigured bool     `json:"rspamd_configured"`
+	NtfyConfigured   bool     `json:"ntfy_configured"`
 }
 
 // CheckResult reports one config/secret sanity check for `config check`.
@@ -45,9 +47,11 @@ func View(c *Config, s *Secrets) ConfigView {
 		DNSBackupDir:     c.Backup.DNSBackupDir,
 		BackupDir:        c.Backup.Dir,
 		LogUnits:         c.Logs.Units,
+		NotifyURL:        c.Notify.URL,
 		NjallaConfigured: s.HasNjalla(),
 		DeSECConfigured:  s.HasDeSEC(),
 		RspamdConfigured: s.RspamdControllerPW() != "",
+		NtfyConfigured:   s.HasNtfy(),
 	}
 }
 
@@ -99,6 +103,14 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 	add("servercow", s.HasServercow(), configuredDetail(s.HasServercow()))
 	add("servfail", s.HasServfail(), configuredDetail(s.HasServfail()))
 	add("rspamd_controller_pw", s.RspamdControllerPW() != "", configuredDetail(s.RspamdControllerPW() != ""))
+
+	switch {
+	case c.Notify.URL == "":
+		add("notify_url", true, "not set (doctor/dns drift-check --notify will no-op)")
+	default:
+		add("notify_url", true, c.Notify.URL)
+	}
+	add("ntfy_token", s.HasNtfy(), configuredDetail(s.HasNtfy()))
 
 	return results, nil
 }
@@ -166,6 +178,13 @@ dir            = "/var/lib/mailadmin/backups"
 
 [logs]
 units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "postgresql"]
+
+# Optional: ntfy.sh (or a self-hosted instance) target for
+# "doctor --notify" / "dns drift-check --notify". Leave unset to skip
+# alerting entirely (the flags then no-op). The bearer token goes in
+# secrets.env as NTFY_TOKEN, never here.
+[notify]
+# url = "https://ntfy.sh/your-topic"
 `
 
 // starterSecrets is the template written by Init (values left blank; 0600).
@@ -182,6 +201,8 @@ SERVERCOW_PASSWORD=
 SERVFAIL_API_KEY=
 SERVFAIL_SERVER=
 RSPAMD_CONTROLLER_PW=
+# Bearer token for the [notify] url above (ntfy.sh or self-hosted), if used.
+NTFY_TOKEN=
 ` // #nosec G101 -- template with empty values, not a hardcoded credential
 
 // Init writes a starter config.toml (0644) and secrets.env (0600) in dir,

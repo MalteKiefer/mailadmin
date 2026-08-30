@@ -49,6 +49,10 @@ func TestValidate(t *testing.T) {
 		{"relative backup dir", func(c *Config) { c.Backup.DNSBackupDir = "backups" }, true},
 		{"no log units", func(c *Config) { c.Logs.Units = nil }, true},
 		{"bad log unit", func(c *Config) { c.Logs.Units = []string{"ok", "bad unit!"} }, true},
+		{"notify url unset is fine", func(c *Config) { c.Notify.URL = "" }, false},
+		{"notify url https ok", func(c *Config) { c.Notify.URL = "https://notify.example.com/mailadmin" }, false},
+		{"notify url http ok", func(c *Config) { c.Notify.URL = "http://notify.internal/mailadmin" }, false},
+		{"notify url missing scheme", func(c *Config) { c.Notify.URL = "notify.example.com/mailadmin" }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,6 +86,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"MAILADMIN_SERVER_IPV4":      "198.51.100.5",
 		"MAILADMIN_DNS_RESOLVER":     "9.9.9.9:53",
 		"MAILADMIN_LOGS_UNITS":       "postfix, rspamd ,, caddy",
+		"MAILADMIN_NOTIFY_URL":       "https://notify.override.test/mailadmin",
 	}
 	getenv := func(k string) string { return env[k] }
 
@@ -102,6 +107,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 	want := []string{"postfix", "rspamd", "caddy"}
 	if strings.Join(c.Logs.Units, ",") != strings.Join(want, ",") {
 		t.Errorf("units = %v, want %v", c.Logs.Units, want)
+	}
+	if c.Notify.URL != "https://notify.override.test/mailadmin" {
+		t.Errorf("notify url not overridden: %q", c.Notify.URL)
 	}
 }
 
@@ -157,7 +165,7 @@ func TestLoadSecretsMissingFile(t *testing.T) {
 func TestLoadSecretsParsesAndEnforcesMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secrets.env")
-	content := "# secrets\nNJALLA_TOKEN=tok-123\nRSPAMD_CONTROLLER_PW=\"pw with space\"\nUNKNOWN=ignored\n"
+	content := "# secrets\nNJALLA_TOKEN=tok-123\nRSPAMD_CONTROLLER_PW=\"pw with space\"\nNTFY_TOKEN=tok-ntfy\nUNKNOWN=ignored\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +181,12 @@ func TestLoadSecretsParsesAndEnforcesMode(t *testing.T) {
 	}
 	if !s.HasNjalla() {
 		t.Error("HasNjalla() = false, want true")
+	}
+	if s.NtfyToken() != "tok-ntfy" {
+		t.Errorf("ntfy token = %q", s.NtfyToken())
+	}
+	if !s.HasNtfy() {
+		t.Error("HasNtfy() = false, want true")
 	}
 }
 
@@ -304,7 +318,7 @@ func TestCheckReportsState(t *testing.T) {
 	for _, r := range results {
 		byName[r.Name] = r
 	}
-	for _, name := range []string{"config", "dkim_dir", "dns_backup_dir", "secrets_file", "njalla_token"} {
+	for _, name := range []string{"config", "dkim_dir", "dns_backup_dir", "secrets_file", "njalla_token", "notify_url"} {
 		r, ok := byName[name]
 		if !ok {
 			t.Fatalf("missing check %q", name)
@@ -315,6 +329,9 @@ func TestCheckReportsState(t *testing.T) {
 	}
 	if byName["rspamd_controller_pw"].OK {
 		t.Error("rspamd_controller_pw should be not-configured")
+	}
+	if byName["ntfy_token"].OK {
+		t.Error("ntfy_token should be not-configured")
 	}
 	// No secret value must appear in any detail string.
 	for _, r := range results {
