@@ -219,7 +219,13 @@ Two ways to stay valid:
 A worked example for a Caddy-issued cert deployed to Postfix/Dovecot, driven by a
 systemd `path` unit that watches Caddy's certificate:
 
-`/usr/local/sbin/mail-cert-deploy` (excerpt — install new cert, then rollover):
+[`scripts/mail-cert-deploy.sh`](../scripts/mail-cert-deploy.sh) in this repo is
+the source of truth for the script — deploy it to
+`/usr/local/sbin/mail-cert-deploy` on the mail server (see the header comment
+in that file for the exact deploy steps and for the assumptions made about the
+scaffolding around the excerpt below, since only the core install+rollover
+logic was ever pinned down here). Core of the script — install the new cert,
+then roll DANE over:
 
 ```bash
 umask 027
