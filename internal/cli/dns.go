@@ -24,6 +24,7 @@ import (
 	"mailadmin/internal/dnscheck"
 	"mailadmin/internal/dnsprovider"
 	"mailadmin/internal/mail"
+	"mailadmin/internal/notify"
 	"mailadmin/internal/output"
 	"mailadmin/internal/sys"
 	"mailadmin/internal/valid"
@@ -89,7 +90,7 @@ func newDNSCmd(app *App) *cobra.Command {
 	check.Flags().BoolVar(&checkDeSEC, "desec", false, "compare against the deSEC API (forces provider desec)")
 	check.Flags().BoolVar(&checkMTASTS, "with-mta-sts", false, "include MTA-STS records in the comparison (with --registrar/--njalla/--desec)")
 
-	var driftAll bool
+	var driftAll, driftNotify, driftNotifyHeartbeat bool
 	driftCheck := &cobra.Command{
 		Use:   "drift-check [domain]",
 		Short: "Cron-friendly public-DNS drift check: non-zero exit if anything has drifted",
@@ -106,10 +107,14 @@ func newDNSCmd(app *App) *cobra.Command {
 			if len(args) == 1 {
 				domain = args[0]
 			}
-			return app.dnsDriftCheck(c, domain, driftAll)
+			return app.dnsDriftCheck(c, domain, driftAll, driftNotify, driftNotifyHeartbeat)
 		},
 	}
 	driftCheck.Flags().BoolVar(&driftAll, "all", false, "check every domain instead of a single one")
+	driftCheck.Flags().BoolVar(&driftNotify, "notify", false,
+		"send one ntfy notification if any domain has drifted or could not be checked (requires [notify].url + NTFY_TOKEN; silent on success)")
+	driftCheck.Flags().BoolVar(&driftNotifyHeartbeat, "notify-heartbeat", false,
+		"with --notify, also send a low-priority OK ping when every domain is clean")
 
 	var publishMTASTS, publishDANE bool
 	publish := &cobra.Command{
@@ -717,7 +722,7 @@ func validateDriftCheckArgs(domain string, all bool) error {
 // renders a machine-parseable summary under -o json. It never mutates
 // anything — a thin, exit-code-flavoured wrapper around computeDNSCheck, not
 // a second implementation of the diffing logic.
-func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all bool) error {
+func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify, notifyHeartbeat bool) error {
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -776,6 +781,12 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all bool) erro
 		}
 	}
 
+	if doNotify {
+		if msg, ok := driftCheckNotifyMessage(results, failed, drifted, notifyHeartbeat, hostnameOrUnknown()); ok {
+			a.notifySend(ctx(cmd), msg)
+		}
+	}
+
 	if len(failed) > 0 {
 		return fmt.Errorf("drift-check: %d domain(s) could not be checked: %s", len(failed), strings.Join(failed, "; "))
 	}
@@ -783,6 +794,41 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all bool) erro
 		return fmt.Errorf("drift-check: drift detected in %d of %d domain(s)", drifted, len(results))
 	}
 	return nil
+}
+
+// driftCheckNotifyMessage builds the single ntfy notification for a
+// drift-check run, summarising every domain that drifted or could not be
+// checked — never one per domain. ok is false (nothing to send) on a fully
+// clean run unless heartbeat asks for a low-priority OK ping. Pure and
+// host-injected so it is unit-testable without a real App/config.
+func driftCheckNotifyMessage(results []dnsCheckResult, failed []string, drifted int, heartbeat bool, host string) (notify.Message, bool) {
+	if drifted == 0 && len(failed) == 0 {
+		if !heartbeat {
+			return notify.Message{}, false
+		}
+		return notify.Message{
+			Title:    "mailadmin dns drift-check: all domains clean",
+			Body:     fmt.Sprintf("%d domain(s) checked, 0 drifted, on %s", len(results), host),
+			Priority: notify.PriorityLow,
+			Tags:     "white_check_mark",
+		}, true
+	}
+
+	lines := make([]string, 0, drifted+len(failed))
+	for _, res := range results {
+		if res.Drift > 0 {
+			lines = append(lines, fmt.Sprintf("%s: %d/%d record(s) drifted", res.Domain, res.Drift, res.Total))
+		}
+	}
+	for _, f := range failed {
+		lines = append(lines, "could not check "+f)
+	}
+	return notify.Message{
+		Title:    fmt.Sprintf("mailadmin dns drift-check: %d issue(s) on %s", drifted+len(failed), host),
+		Body:     strings.Join(lines, "\n"),
+		Priority: notify.PriorityHigh,
+		Tags:     "rotating_light",
+	}, true
 }
 
 // registrarCheckProvider resolves the provider name to query for `dns check`,
