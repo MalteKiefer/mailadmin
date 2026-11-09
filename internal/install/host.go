@@ -92,24 +92,36 @@ var ErrExists = errors.New("file already exists")
 
 // writeNew creates path with mode, failing if it exists. A re-run never
 // overwrites config or secrets; --adopt keeps the existing files as they are.
+// The content is written to a temp file and linked to path only when complete,
+// so a crash cannot leave a truncated file under the final name.
 func writeNew(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) // #nosec G304 -- fixed install paths, O_EXCL
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	// link fails if path exists, which is the no-overwrite guarantee.
+	if err := os.Link(name, path); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("%w: %s", ErrExists, path)
 		}
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	// A failed write must not leave a truncated file under its final name, or a later
-	// run would accept it as already existing.
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("close %s: %w", path, err)
+		return fmt.Errorf("install %s: %w", path, err)
 	}
 	return nil
 }
@@ -117,7 +129,8 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 // WriteConfig writes config.toml (0644) and secrets.env (0600) into dir. Both
 // files are attempted, so a crash between the two writes does not leave a rerun
 // without config.toml. Files that already exist are kept. ErrExists is returned
-// only when both already existed.
+// only when both already existed. A missing file next to an existing one is
+// completed on a rerun, which is how an interrupted install recovers.
 func WriteConfig(dir string, a Answers) error {
 	// #nosec G301 -- config dir is deliberately traversable, secrets.env is 0600
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -179,21 +192,29 @@ func EnsureUser(ctx context.Context, x Exec, name, home string, uid int) error {
 }
 
 // EnsureHostDirs creates the directories and sets owner and mode on each. A
-// symlink at any of these paths is refused, since root would otherwise chown or
-// chmod whatever it points to. chown -h changes the link itself, never its target.
+// directory mailadmin owns is refused if it is a symlink, since mailadmin could
+// then point root at any path. Other directories, such as a vmail volume, may
+// legitimately be links to another disk, so they are followed as before.
 func EnsureHostDirs(ctx context.Context, x Exec) error {
 	for _, d := range HostDirs() {
 		if err := os.MkdirAll(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d.Path, err)
 		}
-		if err := refuseSymlink(d.Path); err != nil {
-			return err
+		owned := strings.HasPrefix(d.Owner, "mailadmin:")
+		chown := []string{"chown"}
+		if owned {
+			if err := refuseSymlink(d.Path); err != nil {
+				return err
+			}
+			chown = append(chown, "-h")
 		}
-		if _, err := x.Run(ctx, nil, "chown", "-h", d.Owner, d.Path); err != nil {
+		if _, err := x.Run(ctx, nil, append(chown, d.Owner, d.Path)...); err != nil {
 			return fmt.Errorf("chown %s: %w", d.Path, err)
 		}
-		if err := refuseSymlink(d.Path); err != nil {
-			return err
+		if owned {
+			if err := refuseSymlink(d.Path); err != nil {
+				return err
+			}
 		}
 		if err := os.Chmod(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("chmod %s: %w", d.Path, err)
