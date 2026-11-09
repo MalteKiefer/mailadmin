@@ -240,7 +240,7 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 		_ = os.Remove(name)
 		return fmt.Errorf("close %s: %w", NftPersistPath, err)
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
+	if err := os.Chmod(name, 0o600); err != nil { // root loads this file; nothing else reads it
 		_ = os.Remove(name)
 		return fmt.Errorf("chmod %s: %w", NftPersistPath, err)
 	}
