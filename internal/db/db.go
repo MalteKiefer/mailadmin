@@ -146,6 +146,9 @@ func (d *DB) GetMailbox(ctx context.Context, username, domain string) (Mailbox, 
 	}
 	defer rows.Close()
 	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return Mailbox{}, err
+		}
 		return Mailbox{}, pgx.ErrNoRows
 	}
 	return scanMailbox(rows)

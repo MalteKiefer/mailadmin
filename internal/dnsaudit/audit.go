@@ -289,15 +289,19 @@ func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
 		return Finding{Check: "DANE", Status: Warn, Detail: "MX lookup failed: " + err.Error()}
 	}
 	total, authed := 0, true
-	var published, tlsaHosts []string
+	var tlsaHosts []string
+	perHost := map[string][]string{}
 	for _, h := range hosts {
 		vals, ad, terr := a.conn.tlsa(ctx, "_25._tcp."+h)
-		if terr != nil || len(vals) == 0 {
+		if terr != nil {
+			return Finding{Check: "DANE", Status: Warn, Detail: "TLSA lookup failed for " + h + ": " + terr.Error()}
+		}
+		if len(vals) == 0 {
 			continue
 		}
 		total += len(vals)
 		tlsaHosts = append(tlsaHosts, h)
-		published = append(published, vals...)
+		perHost[h] = vals
 		if !ad {
 			authed = false
 		}
@@ -306,14 +310,18 @@ func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
 	if base.Status != Pass {
 		return base // not deployed / unsigned / no MX — nothing to match
 	}
-	return a.verifyDANEMatch(ctx, tlsaHosts, published, base)
+	return a.verifyDANEMatch(ctx, tlsaHosts, perHost, base)
 }
 
 // verifyDANEMatch confirms the DNSSEC-authenticated TLSA actually matches the
 // live certificate. Only "3 1 1" values are derivable; other usages leave the
 // presence verdict intact. A reachable non-match is a hard Fail (senders bounce);
 // an unreachable host downgrades only to Warn.
-func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string, base Finding) Finding {
+func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts []string, perHost map[string][]string, base Finding) Finding {
+	var published []string
+	for _, h := range hosts {
+		published = append(published, perHost[h]...)
+	}
 	has311 := false
 	for _, v := range published {
 		if strings.HasPrefix(v, "3 1 1 ") {
@@ -328,19 +336,22 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string
 	var lastErr error
 	probed := 0
 	for _, h := range hosts {
+		if !hasUsage311(perHost[h]) {
+			continue
+		}
 		live, err := a.probeCert(ctx, h)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		if !daneMatch(published, live) {
+		if !daneMatch(perHost[h], live) {
 			return Finding{Check: "DANE", Status: Fail, Value: "cert mismatch",
 				Detail: "published TLSA does not match live certificate (" + h +
 					") — stale after key rotation, DANE senders will reject mail"}
 		}
 		probed++
 	}
-	if probed > 0 {
+	if probed > 0 && lastErr == nil {
 		return Finding{Check: "DANE", Status: Pass, Value: base.Value,
 			Detail: base.Detail + "; matches live certificate"}
 	}
@@ -349,6 +360,16 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string
 	}
 	return Finding{Check: "DANE", Status: Warn, Value: base.Value,
 		Detail: "TLSA authenticated but live cert unreachable to confirm match: " + lastErr.Error()}
+}
+
+// hasUsage311 reports whether one host's TLSA values include usage 3 1 1.
+func hasUsage311(vals []string) bool {
+	for _, v := range vals {
+		if strings.HasPrefix(v, "3 1 1 ") {
+			return true
+		}
+	}
+	return false
 }
 
 // classifyDANE turns the gathered MX/TLSA counts into a finding.

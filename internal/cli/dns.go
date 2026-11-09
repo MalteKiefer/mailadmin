@@ -455,6 +455,10 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		return err
 	}
 
+	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
+		return err
+	}
+
 	// Optionally create the zone at the target first (deSEC) and show delegation.
 	if create {
 		zm, ok := target.(dnsprovider.ZoneManager)
@@ -472,10 +476,6 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		if len(info.DS) > 0 {
 			r.Message("DNSSEC — publish DS at parent: %s", strings.Join(info.DS, " | "))
 		}
-	}
-
-	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
-		return err
 	}
 
 	if clean {

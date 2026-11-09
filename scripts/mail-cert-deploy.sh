@@ -43,6 +43,9 @@ set -euo pipefail
 # --- verbatim from docs/DNS.md "Certificate renewal & rollover" -----------
 
 umask 027
+# Keep the served pair so a failed TLSA publish can roll back.
+prev=$(mktemp -d)
+cp -p /etc/ssl/mail/fullchain.pem /etc/ssl/mail/privkey.pem "$prev"/ 2>/dev/null || true
 install -o root -g mail-certs -m 0640 "$SRC_CRT" /etc/ssl/mail/fullchain.pem
 install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem
 
@@ -51,11 +54,17 @@ install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem
 # TLSA stays valid during the overlap. Wait out the TTL so validators see the new
 # TLSA before we switch the served cert, then reload.
 if ! mailadmin --yes dns publish "$DOMAIN" --dane; then
-  echo "mail-cert-deploy: TLSA publish failed, reload skipped (new cert files are installed, services keep the old cert)" >&2
+  if [ -f "$prev/fullchain.pem" ] && [ -f "$prev/privkey.pem" ]; then
+    install -o root -g mail-certs -m 0640 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
+    install -o root -g mail-certs -m 0640 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
+  fi
+  rm -rf "$prev"
+  echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
   exit 1
 else
   sleep 3900            # > TLSA TTL (deSEC minimum is 3600)
 fi
+rm -rf "$prev"
 systemctl reload-or-restart postfix dovecot || true
 
 # --- end verbatim excerpt ---------------------------------------------------
