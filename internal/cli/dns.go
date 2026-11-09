@@ -491,15 +491,19 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		n, cerr := dnsMigrateClean(ctx(cmd), target, domain)
 		// The audit row is written whether the clean finished or stopped midway, so a
 		// partial wipe is on record too.
-		if rec, aerr := a.auditor(ctx(cmd)); aerr == nil {
-			_ = rec.Record(ctx(cmd), "dns.migrate.clean", domain, nil, map[string]any{
-				"target": to, "removed": n, "snapshot": snapPath,
-			})
+		// The request context is cancelled by Ctrl+C, and the audit row is needed most then.
+		auditCtx := context.WithoutCancel(ctx(cmd))
+		if rec, aerr := a.auditor(auditCtx); aerr != nil {
+			r.Message("warning: audit not recorded: %v", aerr)
+		} else if rerr := rec.Record(auditCtx, "dns.migrate.clean", domain, nil, map[string]any{
+			"target": to, "removed": n, "snapshot": snapPath,
+		}); rerr != nil {
+			r.Message("warning: audit not recorded: %v", rerr)
 		}
 		if cerr != nil {
 			// Deletions may already be live without their rectify. Flush them and
 			// report both failures. On success Migrate's deferred flush covers the batch.
-			if ferr := dnsprovider.FlushBatch(ctx(cmd), target, domain); ferr != nil {
+			if ferr := dnsprovider.FlushBatch(context.WithoutCancel(ctx(cmd)), target, domain); ferr != nil {
 				cerr = errors.Join(cerr, ferr)
 			}
 			return fmt.Errorf("dns migrate %s: clean target: %w", domain, cerr)
@@ -1224,6 +1228,11 @@ func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error
 		return err
 	}
 
+	// The snapshot records the provider it was taken from. Restoring it into another
+	// provider would delete the live records there and write foreign ones in.
+	if snap.Provider != "" && snap.Provider != be.provider.Name() {
+		return fmt.Errorf("snapshot was taken at provider %q, but %s uses %q; refusing to restore it there", snap.Provider, domain, be.provider.Name())
+	}
 	rerr := dnsprovider.Restore(ctx(cmd), be.provider, domain, snap)
 	detail := map[string]any{
 		"backup":  backupPath,

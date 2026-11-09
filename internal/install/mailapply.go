@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mailadmin/internal/sys"
 )
 
 // managedMarker is in every file mailadmin renders. A file that carries it was
@@ -229,9 +231,6 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 		return fmt.Errorf("mkdir nftables.d: %w", err)
 	}
 	ssh := SSHPorts()
-	if err := writeAtomic(NftConfPath, []byte(NftConf()), 0o755); err != nil {
-		return err
-	}
 	// The table is checked as a temp file in the persist directory and only renamed
 	// over NftPersistPath once nft accepts it, so a bad table never replaces a good one.
 	tmp, err := os.CreateTemp(filepath.Dir(NftPersistPath), "."+filepath.Base(NftPersistPath)+".*")
@@ -266,8 +265,11 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 		_ = os.Remove(name)
 		return fmt.Errorf("install %s: %w", NftPersistPath, err)
 	}
-	// The table starts with "destroy table", so this replaces the loaded table
-	// instead of adding a second copy of the rules.
+	// The conf only includes the persisted table, so it is written once that table is
+	// in place. Loading the conf replaces the loaded table with the checked version.
+	if err := writeAtomic(NftConfPath, []byte(NftConf()), 0o755); err != nil {
+		return err
+	}
 	if _, err := x.Run(ctx, nil, "nft", "-f", NftConfPath); err != nil {
 		return fmt.Errorf("nft load: %w", err)
 	}
@@ -323,6 +325,12 @@ func WaitForCertificate(ctx context.Context, x Exec, host, domain string, timeou
 		_, err := x.Run(ctx, nil, CertSyncHelperPath, host, domain)
 		if err == nil {
 			return nil
+		}
+		// Only exit 3 means "no certificate yet". Any other failure is final, so the
+		// helper's side effects (TLSA publish, reload) are not repeated for ten minutes.
+		var ee *sys.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode != 3 {
+			return fmt.Errorf("certificate sync for %s: %w", host, err)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("no certificate for %s after %s (check DNS points here and ports 80/443 are reachable): %w",

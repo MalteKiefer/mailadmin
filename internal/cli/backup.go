@@ -366,11 +366,6 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 // chownDKIM gives the restored key directory the owner the installer uses.
 // rspamd runs as _rspamd and cannot read keys that root owns.
 func chownDKIM(dir string) error {
-	// ReadDir and the chown calls below follow a link at dir, so refuse one first.
-	// Root must never change the owner of entries outside the key directory.
-	if err := refuseSymlinkDir(dir); err != nil {
-		return err
-	}
 	owner, err := user.Lookup("mailadmin")
 	if err != nil {
 		return fmt.Errorf("lookup mailadmin: %w", err)
@@ -387,17 +382,41 @@ func chownDKIM(dir string) error {
 	if err != nil {
 		return err
 	}
-	// The DKIM directory is flat (one key and one .pub per domain), so a single
-	// directory read is enough and avoids a recursive walk.
-	entries, err := os.ReadDir(dir)
+	// The root is opened first and checked against the path afterwards. It refers to the
+	// directory that was there at open time, and every later call stays inside it, so a
+	// link swapped in at dir or below it cannot send an owner change to another file.
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
 	}
-	if err := os.Lchown(dir, uid, gid); err != nil {
+	defer func() { _ = root.Close() }()
+	rootInfo, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	pathInfo, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(rootInfo, pathInfo) {
+		return fmt.Errorf("%s changed during restore, refusing to change its owner", dir)
+	}
+	// The DKIM directory is flat (one key and one .pub per domain), so one directory
+	// read is enough. Lchown inside the root never follows a link.
+	dirFile, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := dirFile.ReadDir(-1)
+	_ = dirFile.Close()
+	if err != nil {
+		return err
+	}
+	if err := root.Lchown(".", uid, gid); err != nil {
 		return err
 	}
 	for _, e := range entries {
-		if err := os.Lchown(filepath.Join(dir, e.Name()), uid, gid); err != nil {
+		if err := root.Lchown(e.Name(), uid, gid); err != nil {
 			return err
 		}
 	}
@@ -408,6 +427,9 @@ func chownDKIM(dir string) error {
 // so the link itself is checked rather than its target.
 func refuseSymlinkDir(path string) error {
 	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil // a missing directory is created by the copy
+	}
 	if err != nil {
 		return err
 	}

@@ -10,13 +10,19 @@ import (
 	"testing"
 )
 
-func TestNftTableStartsWithDestroy(t *testing.T) {
+func TestNftTableReplacesItselfPortably(t *testing.T) {
+	// add+delete instead of "destroy": destroy needs nftables 1.0.7 and kernel 6.3,
+	// and Debian 12 ships 1.0.6. The pair works on every release that has tables.
+	const prefix = "add table inet mailadmin\ndelete table inet mailadmin\n"
 	got := NftTableFile(DefaultTCPPorts, nil, []int{22})
-	if !strings.HasPrefix(got, "destroy table inet mailadmin\n") || !strings.Contains(got, "\ntable inet mailadmin {") {
-		t.Fatalf("nft table must start with destroy so a reload replaces it:\n%s", got)
+	if !strings.HasPrefix(got, prefix) || !strings.Contains(got, "\ntable inet mailadmin {") {
+		t.Fatalf("nft table must add and delete itself before its definition:\n%s", got)
 	}
-	if !strings.Contains(FwPortHelper, "echo 'destroy table inet mailadmin'") {
-		t.Fatal("fw-port helper must write the destroy line into the persisted table")
+	if strings.Contains(got, "destroy") || strings.Contains(FwPortHelper, "destroy") {
+		t.Fatal("destroy needs nftables 1.0.7 or newer; the table and the fw-port helper must not use it")
+	}
+	if !strings.Contains(FwPortHelper, "echo 'add table inet mailadmin'; echo 'delete table inet mailadmin'") {
+		t.Fatal("fw-port helper must write the add and delete lines into the persisted table")
 	}
 }
 
