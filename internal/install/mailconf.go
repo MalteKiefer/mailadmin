@@ -344,10 +344,17 @@ case "$domain" in ''|*[!a-z0-9.-]*|.*|*..*) echo "bad domain" >&2; exit 2 ;; esa
 case "$selector" in ''|[!a-z0-9]*|*[!a-z0-9._-]*) echo "bad selector" >&2; exit 2 ;; esac
 dir=` + DKIMDirPath + `
 key="$dir/$domain.$selector.key"
+for f in "$key" "$key.pub"; do
+  # mailadmin can write this directory, so a link here may have been planted.
+  # Remove it so root never writes through it.
+  if [ -L "$f" ]; then rm -f -- "$f"; fi
+done
 [ -e "$key" ] && exit 0
 umask 027
+set -C
 /usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$key" -o dns > "$key.pub"
-chown mailadmin:_rspamd "$key" "$key.pub"
+set +C
+chown -h mailadmin:_rspamd "$key" "$key.pub"
 chmod 0640 "$key" "$key.pub"
 `
 

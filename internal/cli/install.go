@@ -143,6 +143,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return err
 	}
 	pkgs := append(install.DistroPackages(), install.VendorPackages()...)
+	if err := install.CheckDovecotVersion(pctx, x); err != nil {
+		return err
+	}
 	if err := install.AptInstall(pctx, x, pkgs, ans.Hostname); err != nil {
 		return err
 	}
