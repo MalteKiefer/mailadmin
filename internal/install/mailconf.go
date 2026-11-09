@@ -373,7 +373,9 @@ chmod 0640 "$key" "$key.pub"
 // pins the key. The new pair is staged in TLSDir/pending, the TLSA record is
 // republished from it, and the swap happens on a later run once the DNS TTL has
 // passed. Automatic renewal therefore waits for a successful TLSA publish: if the
-// publish fails, the old pair stays in place and the next run retries.
+// publish fails for another reason, the old pair stays in place and the next run
+// retries. A domain without an automated DNS provider cannot publish a TLSA record,
+// so its renewal is installed at once with a warning.
 const CertSyncHelper = `#!/bin/sh
 # Managed by mailadmin install. Root helper: copies the Caddy certificate for one host.
 set -eu
@@ -420,13 +422,26 @@ elif [ -e ` + TLSFullchain + ` ] && ! cmp -s "$crt" ` + TLSFullchain + ` 2>/dev/
 	install -d -m 0750 -o root -g root "$pending"
 	install -o root -g root -m 0600 "$crt" "$pending/fullchain.pem"
 	install -o root -g root -m 0600 "$key" "$pending/privkey.pem"
-	if ! MAILADMIN_MAIL_TLS_CERT="$pending/fullchain.pem" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane >/dev/null; then
+	if out=$(MAILADMIN_MAIL_TLS_CERT="$pending/fullchain.pem" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
+		date +%s > "$pending/since"
+		exit 0
+	fi
+	case "$out" in
+	*"manage its zone manually"*)
+		# No automated DNS provider, so the TLSA record cannot be published from here.
+		# The renewal goes ahead. DANE validation fails for this domain until the operator
+		# publishes the new TLSA record by hand.
+		echo "warning: $domain has no automated DNS provider, installing the renewed certificate without a TLSA update" >&2
+		rm -rf "$pending"
+		install_pair "$crt" "$key"
+		;;
+	*)
+		printf '%s\n' "$out" >&2
 		rm -rf "$pending"
 		echo "TLSA publish failed for $domain, keeping the current certificate" >&2
 		exit 1
-	fi
-	date +%s > "$pending/since"
-	exit 0
+		;;
+	esac
 else
 	# First install, or the certificate is unchanged.
 	rm -rf "$pending"
