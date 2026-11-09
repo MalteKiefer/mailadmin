@@ -24,6 +24,20 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.24.0] - 2026-11-09
+
+### Fixed
+- Root-run paths can no longer be redirected through links: DKIM key generation commits by `mv -T` from a root-owned temp directory, the reload marker is written with noclobber, the DKIM owner change works through an `os.Root`, and owned host directories are changed through `O_NOFOLLOW` descriptors.
+- Snapshot files are created with `O_EXCL|O_NOFOLLOW`.
+- `env` and `runuser` receive absolute paths for the commands they run, so a user-writable `PATH` entry cannot supply `apt-get` or `psql`.
+- The firewall table replaces itself with `add` and `delete` instead of `destroy`, which needs nftables 1.0.7 (Debian 12 ships 1.0.6). `nftables.conf` is written only after the table passes `nft -c`.
+- `dns restore` refuses a snapshot taken at another provider.
+- The certificate wait retries only when the sync helper reports "no certificate yet" (exit 3).
+- Disabled DNS records are matched on normalised content, so a case difference no longer re-adds or re-enables them.
+- The `dns migrate --clean` audit row survives Ctrl+C, and a failed audit write is reported.
+- Restore creates a missing DKIM directory instead of aborting.
+- Hostname and domain are lower-cased before they reach the units and helpers.
+
 ## [v1.23.1] - 2026-11-09
 
 ### Fixed
