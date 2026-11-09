@@ -251,13 +251,24 @@ fi
 # fullchain.pem via mail.tls_cert, so it pins the new key). Additive — the old
 # TLSA stays valid during the overlap. Wait out the TTL so validators see the new
 # TLSA before we switch the served cert, then reload.
-if ! mailadmin --yes dns publish "$DOMAIN" --dane; then
-  restore_prev
-  rm -rf "$prev"
-  echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
-  exit 1
-else
+if out=$(mailadmin --yes dns publish "$DOMAIN" --dane 2>&1); then
   sleep 3900            # > TLSA TTL (deSEC minimum is 3600)
+else
+  case "$out" in
+  *"manage its zone manually"*)
+    # No automated DNS provider: the TLSA record cannot be published from here, so the
+    # renewal goes ahead. DANE validation fails for this domain until the new TLSA
+    # record is published by hand.
+    echo "warning: $DOMAIN has no automated DNS provider, continuing without a TLSA update; publish the new TLSA record by hand" >&2
+    ;;
+  *)
+    printf '%s\n' "$out" >&2
+    restore_prev
+    rm -rf "$prev"
+    echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
+    exit 1
+    ;;
+  esac
 fi
 rm -rf "$prev"
 if ! systemctl reload-or-restart postfix dovecot; then
