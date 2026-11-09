@@ -265,7 +265,8 @@ include "` + NftPersistPath + `"
 // NftTableFile renders the mailadmin table with its port sets. It is used both at
 // install time and as the persisted state the helper writes after each change.
 func NftTableFile(tcp, udp, ssh []int) string {
-	return fmt.Sprintf(`destroy table inet mailadmin
+	return fmt.Sprintf(`add table inet mailadmin
+delete table inet mailadmin
 # Managed by mailadmin install.
 table inet mailadmin {
 %s%s	chain input {
@@ -331,8 +332,8 @@ case "$verb" in
   close) /usr/sbin/nft delete element inet mailadmin "$set_name" "{ $port }" ;;
 esac
 tmp=$(mktemp /etc/nftables.d/.mailadmin.XXXXXX)
-# "destroy" first, so reloading the file replaces the table instead of duplicating it.
-{ echo 'destroy table inet mailadmin'; echo '# Managed by mailadmin install.'; /usr/sbin/nft list table inet mailadmin; } > "$tmp"
+# add and delete come first, so reloading the file replaces the table instead of duplicating it.
+{ echo 'add table inet mailadmin'; echo 'delete table inet mailadmin'; echo '# Managed by mailadmin install.'; /usr/sbin/nft list table inet mailadmin; } > "$tmp"
 chmod 0600 "$tmp"
 mv "$tmp" ` + NftPersistPath + `
 `
@@ -353,22 +354,23 @@ for f in "$key" "$key.pub"; do
   if [ -L "$f" ]; then rm -f -- "$f"; fi
 done
 [ -e "$key" ] && exit 0
-# Generate in a temp dir beside the key directory, then rename both files into place.
-# The temp dir sits in the parent of the key directory, which mailadmin does not own, so
-# root never writes through a path mailadmin controls. The key is renamed last: it is
-# the commit point, so a run that dies midway leaves no key and the next run starts
-# over. Signals go through the EXIT trap as well, which removes the temp dir.
-base=$(dirname "$dir")
-[ "$(stat -c %U "$base")" != mailadmin ] || { echo "refusing: $base is owned by mailadmin" >&2; exit 2; }
-tmp=$(mktemp -d "$base/.dkim-gen.XXXXXX")
+# Generate in a temp dir under /var/lib, then rename both files into place. /var/lib is
+# writable by root only, and the temp dir must share a filesystem with the key directory,
+# so the renames stay atomic. No directory that mailadmin or _rspamd can write sits on the
+# write path, so neither can swap in a link. The key is renamed last: it is the commit
+# point, so a run that dies midway leaves no key and the next run starts over. Signals go
+# through the EXIT trap as well, which removes the temp dir.
+parent=/var/lib
+[ "$(stat -c %d "$parent")" = "$(stat -c %d "$dir")" ] || { echo "refusing: $dir is not on the same filesystem as $parent" >&2; exit 2; }
+tmp=$(mktemp -d "$parent/.mailadmin-dkim.XXXXXX")
 trap 'rc=$?; rm -rf -- "$tmp"; exit "$rc"' EXIT
 trap 'exit 1' HUP INT TERM
 umask 027
 /usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$tmp/key" -o dns > "$tmp/key.pub"
 chown mailadmin:_rspamd "$tmp/key" "$tmp/key.pub"
 chmod 0640 "$tmp/key" "$tmp/key.pub"
-mv -f -- "$tmp/key.pub" "$key.pub"
-mv -f -- "$tmp/key" "$key"
+mv -fT -- "$tmp/key.pub" "$key.pub"
+mv -fT -- "$tmp/key" "$key"
 `
 
 // CertSyncHelper copies the certificate Caddy obtained for the mail host into
@@ -462,7 +464,9 @@ if [ "$changed" = 1 ] || [ -e "$marker" ]; then
 		rm -f "$marker"
 	else
 		rm -f -- "$marker"
+		set -C
 		: > "$marker"
+		set +C
 		echo "reload failed, retrying on next run" >&2
 		exit 4
 	fi

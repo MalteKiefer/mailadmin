@@ -323,8 +323,8 @@ Add this DNS record for %s (selector %s):
 // terminal, a missing required value is a usage error, never a silent default.
 func collectAnswers(app *App, in *installInputs) (install.Answers, error) {
 	a := install.Answers{
-		Hostname: in.hostname,
-		Domain:   in.domain,
+		Hostname: strings.ToLower(in.hostname),
+		Domain:   strings.ToLower(in.domain),
 		IPv4:     in.ipv4,
 		IPv6:     in.ipv6,
 		Selector: in.selector,
