@@ -9,11 +9,13 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -72,12 +74,24 @@ func (d *DB) SetDomainDNSProvider(ctx context.Context, name, provider string) er
 	return err
 }
 
+// ErrExists reports an insert that collided with an existing row.
+var ErrExists = errors.New("already exists")
+
+// duplicateErr maps a unique-key violation (SQLSTATE 23505) to ErrExists.
+func duplicateErr(err error, what, name string) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return fmt.Errorf("%w: %s %s", ErrExists, what, name)
+	}
+	return err
+}
+
 func (d *DB) CreateDomain(ctx context.Context, name, selector string) error {
 	_, err := d.pool.Exec(ctx,
 		`INSERT INTO domain (name, active, dkim_selector) VALUES ($1, true, $2)
-		 ON CONFLICT (name) DO UPDATE SET dkim_selector = EXCLUDED.dkim_selector, active = true`,
+		 `,
 		name, selector)
-	return err
+	return duplicateErr(err, "domain", name)
 }
 
 func (d *DB) SetDomainActive(ctx context.Context, name string, active bool) error {
@@ -158,10 +172,9 @@ func (d *DB) CreateMailbox(ctx context.Context, m Mailbox) error {
 	_, err := d.pool.Exec(ctx,
 		`INSERT INTO mailbox (username, domain, password, quota_bytes, active)
 		 VALUES ($1, $2, $3, $4, true)
-		 ON CONFLICT (username, domain) DO UPDATE
-		   SET password = EXCLUDED.password, quota_bytes = EXCLUDED.quota_bytes, active = true`,
+		 `,
 		m.Username, m.Domain, m.Password, m.QuotaBytes)
-	return err
+	return duplicateErr(err, "mailbox", m.Username+"@"+m.Domain)
 }
 
 func (d *DB) UpdateMailboxPassword(ctx context.Context, username, domain, hash string) error {

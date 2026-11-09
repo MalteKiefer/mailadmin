@@ -258,13 +258,13 @@ func Stale(live, desired []Record, protectApexWeb bool) []Record {
 
 // Reconcile applies a Plan via the provider, returning the mutating changes for
 // the audit log. Deletes run last so a slot is never briefly empty.
-func Reconcile(ctx context.Context, p Provider, domain string, desired []Record) ([]Change, error) {
+func Reconcile(ctx context.Context, p Provider, domain string, desired []Record) (applied []Change, err error) {
+	defer flushInto(ctx, p, domain, &err)
 	live, err := p.ListRecords(ctx, domain)
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", domain, err)
 	}
 	plan := Plan(live, desired)
-	var applied []Change
 	apply := func(only string) error {
 		for _, c := range plan {
 			if c.Op != only {

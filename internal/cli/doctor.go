@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"mailadmin/internal/install"
 	"mailadmin/internal/notify"
 	"mailadmin/internal/output"
 	"mailadmin/internal/services"
@@ -30,9 +31,11 @@ const (
 const tlsCertPath = "/etc/ssl/mail/fullchain.pem"
 
 // expectedPorts are the TCP ports that must be listening for a healthy mail
-// host: SSH (22, 2222), SMTP (25), HTTP/HTTPS (80, 443), submissions (465),
+// host: SSH (as configured), SMTP (25), HTTP/HTTPS (80, 443), submissions (465),
 // IMAPS (993) and ManageSieve (4190). Mirrors the old `mailadmin test` probe.
-var expectedPorts = []int{25, 80, 443, 465, 993, 2222, 4190}
+func expectedPorts() []int {
+	return append([]int{25, 80, 443, 465, 993, 4190}, install.SSHPorts()...)
+}
 
 // checkStatus is the outcome of one health check, kept as a small closed set so
 // output and (future) exit-code decisions stay consistent.
@@ -233,14 +236,14 @@ func portCheck(ctx context.Context, runner *sys.Runner) checkResult {
 	}
 	listening := parseListeningPorts(out)
 	var missing []int
-	for _, p := range expectedPorts {
+	for _, p := range expectedPorts() {
 		if !listening[p] {
 			missing = append(missing, p)
 		}
 	}
 	if len(missing) == 0 {
 		res.Status = statusOK
-		res.Detail = "all expected ports listening: " + joinInts(expectedPorts)
+		res.Detail = "all expected ports listening: " + joinInts(expectedPorts())
 		return res
 	}
 	res.Status = statusFail

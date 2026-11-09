@@ -83,8 +83,8 @@ type TakeoverResult struct {
 // If protectApexWeb is true, existing apex/www A/AAAA/CNAME records are kept
 // (so publishing mail DNS does not knock a website offline). Set false for a
 // pure mail zone.
-func ReplaceAll(ctx context.Context, p Provider, domain, backupDir string, desired []Record, protectApexWeb bool) (TakeoverResult, error) {
-	var res TakeoverResult
+func ReplaceAll(ctx context.Context, p Provider, domain, backupDir string, desired []Record, protectApexWeb bool) (res TakeoverResult, err error) {
+	defer flushInto(ctx, p, domain, &err)
 	snap, err := Backup(ctx, p, domain)
 	if err != nil {
 		return res, fmt.Errorf("backup: %w", err)
@@ -118,7 +118,8 @@ func ReplaceAll(ctx context.Context, p Provider, domain, backupDir string, desir
 
 // Restore wipes the current zone and re-adds every record from a snapshot —
 // the undo for ReplaceAll. Records keep their content; provider assigns new ids.
-func Restore(ctx context.Context, p Provider, domain string, snap Snapshot) error {
+func Restore(ctx context.Context, p Provider, domain string, snap Snapshot) (err error) {
+	defer flushInto(ctx, p, domain, &err)
 	live, err := p.ListRecords(ctx, domain)
 	if err != nil {
 		return err

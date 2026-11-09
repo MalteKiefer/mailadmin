@@ -37,3 +37,12 @@ func validLabel(s string) (string, error) {
 	}
 	return s, nil
 }
+
+// checkNewLabel rejects '+' and '@' in labels being created. They delimit the
+// login user@domain+label. Removal accepts labels created before this rule.
+func checkNewLabel(label string) error {
+	if strings.ContainsAny(label, "+@") {
+		return fmt.Errorf("label must not contain '+' or '@'")
+	}
+	return nil
+}

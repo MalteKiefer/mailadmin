@@ -27,6 +27,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -171,23 +172,23 @@ func TestDomainCRUDAndUpsert(t *testing.T) {
 		t.Fatalf("GetDomain returned %+v", got)
 	}
 
-	// ON CONFLICT DO UPDATE: re-creating with a new selector must update the
-	// selector and re-activate, not insert a duplicate row.
+	// A second insert for the same domain must fail with ErrExists and leave the row unchanged.
+	// The duplicate insert must not overwrite the existing row.
 	if err := d.SetDomainActive(ctx, "example.com", false); err != nil {
 		t.Fatalf("SetDomainActive: %v", err)
 	}
-	if err := d.CreateDomain(ctx, "example.com", "selector2"); err != nil {
-		t.Fatalf("CreateDomain (upsert): %v", err)
+	if err := d.CreateDomain(ctx, "example.com", "selector2"); !errors.Is(err, ErrExists) {
+		t.Fatalf("CreateDomain on existing row: want ErrExists, got %v", err)
 	}
 	got, err = d.GetDomain(ctx, "example.com")
 	if err != nil {
 		t.Fatalf("GetDomain after upsert: %v", err)
 	}
-	if got.DKIMSelector != "selector2" {
-		t.Fatalf("upsert did not refresh dkim_selector: got %q", got.DKIMSelector)
+	if got.DKIMSelector != "selector1" {
+		t.Fatalf("duplicate insert changed dkim_selector: got %q", got.DKIMSelector)
 	}
-	if !got.Active {
-		t.Fatalf("upsert did not re-activate domain")
+	if got.Active {
+		t.Fatalf("duplicate insert re-activated the domain")
 	}
 
 	list, err := d.ListDomains(ctx)
@@ -234,21 +235,21 @@ func TestMailboxCRUDAndUpsert(t *testing.T) {
 		t.Fatalf("GetMailbox returned %+v", got)
 	}
 
-	// Upsert on (username, domain): re-creating refreshes password/quota and
-	// re-activates, without creating a duplicate row.
+	// A second insert for the same (username, domain) must fail with ErrExists.
+	// The existing row stays as it was.
 	if err := d.SetMailboxActive(ctx, "alice", "example.com", false); err != nil {
 		t.Fatalf("SetMailboxActive: %v", err)
 	}
 	m2 := Mailbox{Username: "alice", Domain: "example.com", Password: "hash2", QuotaBytes: 2000}
-	if err := d.CreateMailbox(ctx, m2); err != nil {
-		t.Fatalf("CreateMailbox (upsert): %v", err)
+	if err := d.CreateMailbox(ctx, m2); !errors.Is(err, ErrExists) {
+		t.Fatalf("CreateMailbox on existing row: want ErrExists, got %v", err)
 	}
 	got, err = d.GetMailbox(ctx, "alice", "example.com")
 	if err != nil {
 		t.Fatalf("GetMailbox after upsert: %v", err)
 	}
-	if got.Password != "hash2" || got.QuotaBytes != 2000 || !got.Active {
-		t.Fatalf("upsert did not refresh mailbox fields: %+v", got)
+	if got.Password != "hash1" || got.QuotaBytes != 1000 || got.Active {
+		t.Fatalf("duplicate insert changed the mailbox: %+v", got)
 	}
 
 	n, err := d.CountMailboxesInDomain(ctx, "example.com")

@@ -46,18 +46,27 @@ umask 027
 # Keep the served pair so a failed TLSA publish can roll back.
 prev=$(mktemp -d)
 cp -p /etc/ssl/mail/fullchain.pem /etc/ssl/mail/privkey.pem "$prev"/ 2>/dev/null || true
-install -o root -g mail-certs -m 0640 "$SRC_CRT" /etc/ssl/mail/fullchain.pem
-install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem
+restore_prev() {
+  if [ -f "$prev/fullchain.pem" ] && [ -f "$prev/privkey.pem" ]; then
+    install -o root -g mail-certs -m 0640 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
+    install -o root -g mail-certs -m 0640 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
+  fi
+}
+# A failed copy can leave a mixed pair on disk, so restore the previous pair.
+if ! { install -o root -g mail-certs -m 0640 "$SRC_CRT" /etc/ssl/mail/fullchain.pem &&
+       install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem; }; then
+  restore_prev
+  rm -rf "$prev"
+  echo "mail-cert-deploy: installing the new cert failed, previous cert files restored" >&2
+  exit 1
+fi
 
 # DANE rollover: publish the NEW leaf's TLSA (mailadmin reads the just-installed
 # fullchain.pem via mail.tls_cert, so it pins the new key). Additive — the old
 # TLSA stays valid during the overlap. Wait out the TTL so validators see the new
 # TLSA before we switch the served cert, then reload.
 if ! mailadmin --yes dns publish "$DOMAIN" --dane; then
-  if [ -f "$prev/fullchain.pem" ] && [ -f "$prev/privkey.pem" ]; then
-    install -o root -g mail-certs -m 0640 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
-    install -o root -g mail-certs -m 0640 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
-  fi
+  restore_prev
   rm -rf "$prev"
   echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
   exit 1

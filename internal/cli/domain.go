@@ -331,7 +331,9 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 	if err != nil {
 		return err
 	}
-	if err := database.CreateDomain(ctx(c), name, selector); err != nil {
+	if err := database.CreateDomain(ctx(c), name, selector); errors.Is(err, db.ErrExists) {
+		return fmt.Errorf("%w: domain %s already exists, use domain set-provider to change its DNS provider", ErrUsage, name)
+	} else if err != nil {
 		return err
 	}
 	if err := database.SetDomainDNSProvider(ctx(c), name, provider); err != nil {
@@ -727,11 +729,14 @@ func runDomainSetBIMI(app *App, c *cobra.Command, rawDomain, logoURL, logoFile, 
 		return err
 	}
 	applied, err := dnsprovider.Reconcile(ctx(c), be.provider, domain, desired)
-	if err != nil {
+	if err != nil && len(applied) == 0 {
 		return fmt.Errorf("domain set-bimi %s: %w", domain, err)
 	}
-	if err := be.rec.Record(ctx(c), "domain.set-bimi", domain, nil, changeSummary(applied)); err != nil {
-		return err
+	if rerr := be.rec.Record(ctx(c), "domain.set-bimi", domain, nil, changeSummary(applied)); rerr != nil && err == nil {
+		return rerr
+	}
+	if err != nil {
+		return fmt.Errorf("domain set-bimi %s: %w", domain, err)
 	}
 	r.Message("published BIMI record for %s at %s", domain, be.provider.Name())
 	return r.Table(changesTable(applied))
@@ -835,6 +840,10 @@ func runDomainDKIMRotateStart(app *App, c *cobra.Command, rawDomain, rawSelector
 	}
 	applied, err := dnsprovider.Reconcile(ctx(c), be.provider, domain, desired)
 	if err != nil {
+		if len(applied) > 0 {
+			r.Message("partially published DKIM selector %s for %s at %s", newSelector, domain, be.provider.Name())
+			_ = r.Table(changesTable(applied))
+		}
 		return fmt.Errorf("domain dkim-rotate-start %s: %w", domain, err)
 	}
 	r.Message("published DKIM selector %s for %s at %s — still signing with %s", newSelector, domain, be.provider.Name(), before.DKIMSelector)
@@ -939,9 +948,16 @@ func removeDKIMDNSRecord(ctx context.Context, p dnsprovider.Provider, domain, se
 			continue
 		}
 		if err := p.RemoveRecord(ctx, domain, rec.ID); err != nil {
+			// Earlier removals in this loop are already live. Rectify them before returning.
+			if ferr := dnsprovider.FlushBatch(ctx, p, domain); ferr != nil {
+				return fmt.Errorf("%w; rectify: %v", err, ferr)
+			}
 			return err
 		}
 		removed++
+	}
+	if ferr := dnsprovider.FlushBatch(ctx, p, domain); ferr != nil {
+		return ferr
 	}
 	if removed == 0 {
 		return fmt.Errorf("no DNS record found at %s", name)
