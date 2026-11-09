@@ -23,6 +23,8 @@ type Servfail struct {
 	apiKey string
 	server string // primary NS id, e.g. "ns1.servfail.network."
 	client *http.Client
+	// rectifyPending holds zones with writes since the last Flush.
+	rectifyPending map[string]bool
 }
 
 // NewServfail builds a client. apiKey and server (the primary-NS server id) must
@@ -197,12 +199,33 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 		return err
 	}
 	// Signed zones need their NSEC/RRSIG chain rebuilt. When the zone does not
-	// auto-rectify, trigger it explicitly. A failed rectify leaves the chain
+	// rectify is off, so the rebuild is queued for Flush. A failed rectify leaves the chain
 	// stale, so the error is returned (rectify runs only for DNSSEC zones).
 	if z.DNSSEC && !z.APIRectify {
-		if err := s.do(ctx, http.MethodPut, s.zonePath(domain)+"/rectify", nil, nil); err != nil {
-			return fmt.Errorf("servfail rectify: %w", err)
-		}
+		s.markRectify(domain)
+	}
+	return nil
+}
+
+// markRectify records that a DNSSEC zone needs its NSEC/RRSIG chain rebuilt
+// once the current batch of RRset writes is done.
+func (s *Servfail) markRectify(domain string) {
+	if s.rectifyPending == nil {
+		s.rectifyPending = map[string]bool{}
+	}
+	s.rectifyPending[domain] = true
+}
+
+// Flush rebuilds the NSEC/RRSIG chain once for a zone with writes since the last
+// Flush. Writes defer the rectify so a batch costs one PUT, and a failed rectify
+// no longer hides changes that already reached the zone.
+func (s *Servfail) Flush(ctx context.Context, domain string) error {
+	if !s.rectifyPending[domain] {
+		return nil
+	}
+	delete(s.rectifyPending, domain)
+	if err := s.do(ctx, http.MethodPut, s.zonePath(domain)+"/rectify", nil, nil); err != nil {
+		return fmt.Errorf("rectify: %w", err)
 	}
 	return nil
 }

@@ -286,6 +286,7 @@ func NewRootCmd() *cobra.Command {
 		newDoctorCmd(app),
 		newConfigCmd(app),
 		newVersionCmd(app),
+		newInstallCmd(app),
 		newUpdateCmd(app),
 		newCompletionCmd(root),
 	)
