@@ -57,6 +57,9 @@ var PolicyRCPath = "/usr/sbin/policy-rc.d"
 // with this line is ours to replace and remove.
 const policyMarker = "# managed by mailadmin install"
 
+// policyDenied is the exit code a policy-rc.d uses to refuse a service start.
+const policyDenied = 101
+
 // AptInstall installs packages. Postfix debconf answers are preseeded first.
 // Services are not started by the maintainer scripts: postfix and dovecot would
 // otherwise listen on the network with distribution defaults before mailadmin
@@ -69,7 +72,7 @@ func AptInstall(ctx context.Context, x Exec, pkgs []string, hostname string) err
 	if _, err := x.Run(ctx, PostfixPreseed(hostname), "debconf-set-selections"); err != nil {
 		return fmt.Errorf("preseed postfix: %w", err)
 	}
-	created, err := denyServiceStarts()
+	created, err := denyServiceStarts(ctx, x)
 	if err != nil {
 		return err
 	}
@@ -85,10 +88,16 @@ func AptInstall(ctx context.Context, x Exec, pkgs []string, hostname string) err
 // denyServiceStarts installs a policy-rc.d that refuses service starts. A policy
 // file without the mailadmin marker belongs to someone else and is left alone.
 // It reports whether this run owns the file, so only install removes it again.
-func denyServiceStarts() (bool, error) {
+func denyServiceStarts(ctx context.Context, x Exec) (bool, error) {
 	data, err := os.ReadFile(PolicyRCPath) // #nosec G304 -- fixed apt hook path
 	switch {
 	case err == nil && !strings.Contains(string(data), policyMarker):
+		// Not ours, so it is left alone. Probe it instead: apt must not start daemons
+		// under a policy that allows starts.
+		res, _ := x.Run(ctx, nil, PolicyRCPath, "mailadmin-probe", "start")
+		if res.ExitCode != policyDenied {
+			return false, fmt.Errorf("%s exists and does not deny service starts (exit %d): remove it or make it exit %d", PolicyRCPath, res.ExitCode, policyDenied)
+		}
 		return false, nil
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return false, fmt.Errorf("read %s: %w", PolicyRCPath, err)

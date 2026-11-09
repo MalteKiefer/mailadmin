@@ -1,11 +1,21 @@
 package install
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mailadmin/internal/sys"
 )
+
+// probeExec answers every command with a fixed exit code, for the policy probe.
+type probeExec struct{ code int }
+
+func (p probeExec) Run(_ context.Context, _ []byte, _ ...string) (sys.Result, error) {
+	return sys.Result{ExitCode: p.code}, nil
+}
 
 func TestStatusInstalledReadsLastField(t *testing.T) {
 	cases := map[string]bool{
@@ -26,9 +36,10 @@ func TestDenyServiceStartsOwnsOnlyMarkedFiles(t *testing.T) {
 	orig := PolicyRCPath
 	t.Cleanup(func() { PolicyRCPath = orig })
 	dir := t.TempDir()
+	ctx := context.Background()
 
 	PolicyRCPath = filepath.Join(dir, "absent")
-	created, err := denyServiceStarts()
+	created, err := denyServiceStarts(ctx, probeExec{})
 	if err != nil || !created {
 		t.Fatalf("missing file: created=%v err=%v", created, err)
 	}
@@ -38,7 +49,7 @@ func TestDenyServiceStartsOwnsOnlyMarkedFiles(t *testing.T) {
 	}
 
 	// Our own file from an earlier run is taken over and rewritten.
-	created, err = denyServiceStarts()
+	created, err = denyServiceStarts(ctx, probeExec{})
 	if err != nil || !created {
 		t.Fatalf("own file: created=%v err=%v", created, err)
 	}
@@ -48,9 +59,15 @@ func TestDenyServiceStartsOwnsOnlyMarkedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	PolicyRCPath = foreign
-	created, err = denyServiceStarts()
+
+	// A foreign policy that lets starts through is refused, and it is not modified.
+	if _, err := denyServiceStarts(ctx, probeExec{code: 0}); err == nil {
+		t.Fatal("foreign policy that allows starts must be refused")
+	}
+	// A foreign policy that denies starts is accepted and left alone.
+	created, err = denyServiceStarts(ctx, probeExec{code: policyDenied})
 	if err != nil || created {
-		t.Fatalf("foreign file: created=%v err=%v, want false and nil", created, err)
+		t.Fatalf("foreign denying policy: created=%v err=%v, want false and nil", created, err)
 	}
 	after, _ := os.ReadFile(foreign)
 	if string(after) != "#!/bin/sh\nexit 0\n" {
