@@ -50,7 +50,8 @@ func (a Answers) Validate() error {
 // RenderConfig returns config.toml in the layout ARCHITECTURE.md documents.
 // Non-secret values only; tokens and the rspamd password go to secrets.env.
 func RenderConfig(a Answers) []byte {
-	return []byte(fmt.Sprintf(`[postgres]
+	return []byte(fmt.Sprintf(`# Managed by mailadmin install.
+[postgres]
 service      = %q
 service_file = %q
 
@@ -91,26 +92,45 @@ var ErrExists = errors.New("file already exists")
 
 // writeNew creates path with mode, failing if it exists. A re-run never
 // overwrites config or secrets; --adopt keeps the existing files as they are.
+// The content is written to a temp file and linked to path only when complete,
+// so a crash cannot leave a truncated file under the final name.
 func writeNew(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode) // #nosec G304 -- fixed install paths, O_EXCL
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	// link fails if path exists, which is the no-overwrite guarantee.
+	if err := os.Link(name, path); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("%w: %s", ErrExists, path)
 		}
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
+		return fmt.Errorf("install %s: %w", path, err)
 	}
 	return nil
 }
 
-// WriteConfig writes config.toml (0644) and secrets.env (0600) into dir.
-// Existing files are kept, and ErrExists is returned for the first one found.
+// WriteConfig writes config.toml (0644) and secrets.env (0600) into dir. Both
+// files are attempted, so a crash between the two writes does not leave a rerun
+// without config.toml. Files that already exist are kept. ErrExists is returned
+// only when both already existed. A missing file next to an existing one is
+// completed on a rerun, which is how an interrupted install recovers.
 func WriteConfig(dir string, a Answers) error {
 	// #nosec G301 -- config dir is deliberately traversable, secrets.env is 0600
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -120,10 +140,18 @@ func WriteConfig(dir string, a Answers) error {
 	if err != nil {
 		return err
 	}
-	if err := writeNew(filepath.Join(dir, "secrets.env"), secrets, 0o600); err != nil {
-		return err
+	secErr := writeNew(filepath.Join(dir, "secrets.env"), secrets, 0o600)
+	if secErr != nil && !errors.Is(secErr, ErrExists) {
+		return secErr
 	}
-	return writeNew(filepath.Join(dir, "config.toml"), RenderConfig(a), 0o644)
+	cfgErr := writeNew(filepath.Join(dir, "config.toml"), RenderConfig(a), 0o644)
+	if cfgErr != nil && !errors.Is(cfgErr, ErrExists) {
+		return cfgErr
+	}
+	if secErr != nil && cfgErr != nil {
+		return secErr
+	}
+	return nil
 }
 
 // HostDir is one directory the mail stack needs, with its owner and mode.
@@ -163,18 +191,46 @@ func EnsureUser(ctx context.Context, x Exec, name, home string, uid int) error {
 	return nil
 }
 
-// EnsureHostDirs creates the directories and sets owner and mode on each.
+// EnsureHostDirs creates the directories and sets owner and mode on each. A
+// directory mailadmin owns is refused if it is a symlink, since mailadmin could
+// then point root at any path. Other directories, such as a vmail volume, may
+// legitimately be links to another disk, so they are followed as before.
 func EnsureHostDirs(ctx context.Context, x Exec) error {
 	for _, d := range HostDirs() {
 		if err := os.MkdirAll(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d.Path, err)
 		}
-		if _, err := x.Run(ctx, nil, "chown", d.Owner, d.Path); err != nil {
+		owned := strings.HasPrefix(d.Owner, "mailadmin:")
+		chown := []string{"chown"}
+		if owned {
+			if err := refuseSymlink(d.Path); err != nil {
+				return err
+			}
+			chown = append(chown, "-h")
+		}
+		if _, err := x.Run(ctx, nil, append(chown, d.Owner, d.Path)...); err != nil {
 			return fmt.Errorf("chown %s: %w", d.Path, err)
+		}
+		if owned {
+			if err := refuseSymlink(d.Path); err != nil {
+				return err
+			}
 		}
 		if err := os.Chmod(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("chmod %s: %w", d.Path, err)
 		}
+	}
+	return nil
+}
+
+// refuseSymlink returns an error when path is a symbolic link.
+func refuseSymlink(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink, refusing to change its owner or mode", path)
 	}
 	return nil
 }

@@ -482,7 +482,20 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		if err := a.confirm(fmt.Sprintf("Delete existing records (except NS/SOA) at %s for %s first?", to, domain)); err != nil {
 			return err
 		}
+		// The records about to go are saved first, as takeover does, so the wipe can be undone.
+		snapPath, serr := snapshotForClean(ctx(cmd), target, domain, cfg.Backup.DNSBackupDir)
+		if serr != nil {
+			return fmt.Errorf("dns migrate %s: %w", domain, serr)
+		}
+		r.Message("saved %s before the clean", snapPath)
 		n, cerr := dnsMigrateClean(ctx(cmd), target, domain)
+		// The audit row is written whether the clean finished or stopped midway, so a
+		// partial wipe is on record too.
+		if rec, aerr := a.auditor(ctx(cmd)); aerr == nil {
+			_ = rec.Record(ctx(cmd), "dns.migrate.clean", domain, nil, map[string]any{
+				"target": to, "removed": n, "snapshot": snapPath,
+			})
+		}
 		if cerr != nil {
 			// Deletions may already be live without their rectify. Flush them and
 			// report both failures. On success Migrate's deferred flush covers the batch.
@@ -549,6 +562,30 @@ func splitDelegation(recs []dnsprovider.Record) (keep, dropped []dnsprovider.Rec
 		keep = append(keep, rec)
 	}
 	return keep, dropped
+}
+
+// hasRecord reports whether recs holds want: same type, name and content.
+func hasRecord(recs []dnsprovider.Record, want dnsprovider.Record) bool {
+	for _, r := range recs {
+		if r.Type == want.Type && strings.EqualFold(r.Name, want.Name) && strings.EqualFold(r.Content, want.Content) {
+			return true
+		}
+	}
+	return false
+}
+
+// snapshotForClean saves the target's records to dir, so a clean can be undone
+// from the file. It returns the path of the snapshot.
+func snapshotForClean(ctx context.Context, target dnsprovider.Provider, domain, dir string) (string, error) {
+	snap, err := dnsprovider.Backup(ctx, target, domain)
+	if err != nil {
+		return "", fmt.Errorf("backup target: %w", err)
+	}
+	path, err := dnsprovider.WriteSnapshot(dir, snap)
+	if err != nil {
+		return "", fmt.Errorf("save snapshot: %w", err)
+	}
+	return path, nil
 }
 
 // dnsMigrateClean deletes every record at the target except NS/SOA, so a zone
@@ -1001,16 +1038,17 @@ func (a *App) dnsPublish(cmd *cobra.Command, rawDomain string, withMTASTS bool) 
 	}
 
 	applied, err := dnsprovider.Reconcile(ctx(cmd), be.provider, domain, desired)
-	if err != nil && len(applied) > 0 {
+	// A partial apply is audited too, so the changes that reached the zone stay on record.
+	if len(applied) > 0 || err == nil {
 		if rerr := be.rec.Record(ctx(cmd), "dns.publish", domain, nil, changeSummary(applied)); rerr != nil {
-			return fmt.Errorf("dns publish %s: %w (audit also failed: %v)", domain, err, rerr)
+			if err != nil {
+				return fmt.Errorf("dns publish %s: %w (audit also failed: %v)", domain, err, rerr)
+			}
+			return rerr
 		}
 	}
 	if err != nil {
 		return fmt.Errorf("dns publish %s: %w", domain, err)
-	}
-	if err := be.rec.Record(ctx(cmd), "dns.publish", domain, nil, changeSummary(applied)); err != nil {
-		return err
 	}
 	r.Message("published %d change(s) for %s", len(applied), domain)
 	return r.Table(changesTable(applied))
@@ -1075,7 +1113,16 @@ func (a *App) dnsPublishDANE(cmd *cobra.Command, rawDomain string) error {
 	if err := a.confirm(fmt.Sprintf("Publish TLSA %s (%s) at %s?", rec.Name, rec.Content, be.provider.Name())); err != nil {
 		return err
 	}
-	addErr := be.provider.AddRecord(ctx(cmd), domain, rec)
+	// A retry after a failed audit write finds the record already live. Adding it
+	// again fails on providers that reject duplicates, so an identical record is skipped.
+	live, lerr := be.provider.ListRecords(ctx(cmd), domain)
+	if lerr != nil {
+		return fmt.Errorf("dns publish %s: list records: %w", domain, lerr)
+	}
+	var addErr error
+	if !hasRecord(live, rec) {
+		addErr = be.provider.AddRecord(ctx(cmd), domain, rec)
+	}
 	if addErr != nil {
 		return fmt.Errorf("dns publish %s: %w", domain, addErr)
 	}

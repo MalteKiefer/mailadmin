@@ -223,3 +223,19 @@ func TestResolveMakesPathsAbsolute(t *testing.T) {
 		t.Fatalf("argv[0] = %q, want absolute path", got)
 	}
 }
+
+// A crash between the two writes leaves only secrets.env. A rerun must still
+// create config.toml instead of stopping at the existing secrets file.
+func TestWriteConfigCreatesMissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "secrets.env"), []byte("RSPAMD_CONTROLLER_PW=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := Answers{Hostname: "mx.example.com", Domain: "example.com", IPv4: "192.0.2.10", Selector: "mail2026"}
+	if err := WriteConfig(dir, a); err != nil {
+		t.Fatalf("WriteConfig with only secrets.env: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.toml")); err != nil {
+		t.Fatalf("config.toml not created: %v", err)
+	}
+}

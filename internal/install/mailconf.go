@@ -182,7 +182,7 @@ func PostfixSubmissionServices() [][]string {
 // PostfixPgsqlMaps returns the three lookup tables. They connect as the postfix
 // role over the unix socket (peer auth), so no password is stored.
 func PostfixPgsqlMaps() map[string]string {
-	common := "hosts = unix:/var/run/postgresql\ndbname = mail\nuser = postfix\n"
+	common := "# Managed by mailadmin install.\nhosts = unix:/var/run/postgresql\ndbname = mail\nuser = postfix\n"
 	return map[string]string{
 		PostfixMapDir + "/pgsql-virtual-domains.cf": common +
 			"query = SELECT name FROM domain WHERE name = '%s' AND active\n",
@@ -227,7 +227,7 @@ path = "%s/$domain.$selector.key";
 // RspamdSelectorMapContent renders "domain selector" lines for signing.
 func RspamdSelectorMapContent(pairs [][2]string) string {
 	var b strings.Builder
-	b.WriteString("# Managed by mailadmin: domain selector\n")
+	b.WriteString("# Managed by mailadmin install: domain selector\n")
 	for _, p := range pairs {
 		fmt.Fprintf(&b, "%s %s\n", p[0], p[1])
 	}
@@ -265,7 +265,9 @@ include "` + NftPersistPath + `"
 // NftTableFile renders the mailadmin table with its port sets. It is used both at
 // install time and as the persisted state the helper writes after each change.
 func NftTableFile(tcp, udp, ssh []int) string {
-	return fmt.Sprintf(`table inet mailadmin {
+	return fmt.Sprintf(`destroy table inet mailadmin
+# Managed by mailadmin install.
+table inet mailadmin {
 %s%s	chain input {
 		type filter hook input priority 0; policy drop;
 		ct state established,related accept
@@ -329,8 +331,9 @@ case "$verb" in
   close) /usr/sbin/nft delete element inet mailadmin "$set_name" "{ $port }" ;;
 esac
 tmp=$(mktemp /etc/nftables.d/.mailadmin.XXXXXX)
-/usr/sbin/nft list table inet mailadmin > "$tmp"
-chmod 0644 "$tmp"
+# "destroy" first, so reloading the file replaces the table instead of duplicating it.
+{ echo 'destroy table inet mailadmin'; echo '# Managed by mailadmin install.'; /usr/sbin/nft list table inet mailadmin; } > "$tmp"
+chmod 0600 "$tmp"
 mv "$tmp" ` + NftPersistPath + `
 `
 
@@ -350,41 +353,116 @@ for f in "$key" "$key.pub"; do
   if [ -L "$f" ]; then rm -f -- "$f"; fi
 done
 [ -e "$key" ] && exit 0
+# Generate in a temp dir beside the key directory, then rename both files into place.
+# The temp dir sits in the parent of the key directory, which mailadmin does not own, so
+# root never writes through a path mailadmin controls. The key is renamed last: it is
+# the commit point, so a run that dies midway leaves no key and the next run starts
+# over. Signals go through the EXIT trap as well, which removes the temp dir.
+base=$(dirname "$dir")
+[ "$(stat -c %U "$base")" != mailadmin ] || { echo "refusing: $base is owned by mailadmin" >&2; exit 2; }
+tmp=$(mktemp -d "$base/.dkim-gen.XXXXXX")
+trap 'rc=$?; rm -rf -- "$tmp"; exit "$rc"' EXIT
+trap 'exit 1' HUP INT TERM
 umask 027
-set -C
-/usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$key" -o dns > "$key.pub"
-set +C
-chown -h mailadmin:_rspamd "$key" "$key.pub"
-chmod 0640 "$key" "$key.pub"
+/usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$tmp/key" -o dns > "$tmp/key.pub"
+chown mailadmin:_rspamd "$tmp/key" "$tmp/key.pub"
+chmod 0640 "$tmp/key" "$tmp/key.pub"
+mv -f -- "$tmp/key.pub" "$key.pub"
+mv -f -- "$tmp/key" "$key"
 `
 
 // CertSyncHelper copies the certificate Caddy obtained for the mail host into
 // /etc/ssl/mail, and reloads postfix and dovecot only when the files changed.
+//
+// A changed certificate is swapped in two phases, because the DANE TLSA record
+// pins the key. The new pair is staged in TLSDir/pending, the TLSA record is
+// republished from it, and the swap happens on a later run once the DNS TTL has
+// passed. Automatic renewal therefore waits for a successful TLSA publish: if the
+// publish fails for another reason, the old pair stays in place and the next run
+// retries. A domain without an automated DNS provider cannot publish a TLSA record,
+// so its renewal is installed at once with a warning.
 const CertSyncHelper = `#!/bin/sh
 # Managed by mailadmin install. Root helper: copies the Caddy certificate for one host.
 set -eu
-host=${1:-}
+host=${1:-}; domain=${2:-}
 case "$host" in ''|*[!a-z0-9.-]*) echo "bad host" >&2; exit 2 ;; esac
+case "$domain" in ''|*[!a-z0-9.-]*|.*|*..*) echo "bad domain" >&2; exit 2 ;; esac
 install -d -m 0750 -o root -g root ` + TLSDir + `
-crt=$(find ` + CaddyCertStore + ` -type f -name "$host.crt" 2>/dev/null | head -n 1)
-key=$(find ` + CaddyCertStore + ` -type f -name "$host.key" 2>/dev/null | head -n 1)
-[ -n "$crt" ] && [ -n "$key" ] || { echo "no certificate for $host yet" >&2; exit 3; }
+pending=` + TLSDir + `/pending
+marker=/var/lib/mailadmin/.cert-reload-pending
 changed=0
-for pair in "$crt:` + TLSFullchain + `" "$key:` + TLSPrivkey + `"; do
-	src=${pair%%:*}; dst=${pair#*:}
-	if ! cmp -s "$src" "$dst" 2>/dev/null; then
-		install -o root -g root -m 0600 "$src" "$dst.new"
-		mv "$dst.new" "$dst"
-		changed=1
+
+# install_pair copies a certificate and key into place and records any change. Both files
+# are staged first, so a failed copy leaves the live pair alone. Only then are they renamed,
+# which keeps a copy error from leaving the new certificate next to the old key.
+install_pair() {
+	fc_new=0; pk_new=0
+	if ! cmp -s "$1" ` + TLSFullchain + ` 2>/dev/null; then
+		install -o root -g root -m 0600 "$1" ` + TLSFullchain + `.new; fc_new=1
 	fi
-done
-pending=/var/lib/mailadmin/.cert-reload-pending
-if [ "$changed" = 1 ] || [ -e "$pending" ]; then
+	if ! cmp -s "$2" ` + TLSPrivkey + ` 2>/dev/null; then
+		install -o root -g root -m 0600 "$2" ` + TLSPrivkey + `.new; pk_new=1
+	fi
+	if [ "$fc_new" = 1 ]; then mv ` + TLSFullchain + `.new ` + TLSFullchain + `; changed=1; fi
+	if [ "$pk_new" = 1 ]; then mv ` + TLSPrivkey + `.new ` + TLSPrivkey + `; changed=1; fi
+}
+
+# The newest <host>.crt under the Caddy store. Its key is taken from the same directory.
+crt=$(find ` + CaddyCertStore + ` -type f -name "$host.crt" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
+[ -n "$crt" ] || { echo "no certificate for $host yet" >&2; exit 3; }
+key=$(dirname "$crt")/$host.key
+[ -f "$key" ] || { echo "no key for $host next to its certificate" >&2; exit 3; }
+
+if [ -e "$pending/since" ]; then
+	# Phase two: install the pair that the TLSA record already pins, once the TTL has passed.
+	since=$(cat "$pending/since")
+	# A corrupt marker restarts the wait. It never skips it.
+case "$since" in ''|*[!0-9]*) since=$(date +%s); date +%s > "$pending/since" ;; esac
+	if [ $(( $(date +%s) - since )) -lt 3900 ]; then
+		echo "pending certificate for $host waits for the DNS TTL" >&2
+	else
+		install_pair "$pending/fullchain.pem" "$pending/privkey.pem"
+		rm -rf "$pending"
+	fi
+elif [ -e ` + TLSFullchain + ` ] && ! cmp -s "$crt" ` + TLSFullchain + ` 2>/dev/null; then
+	# Phase one: stage the new pair and pin its TLSA record. The old pair stays in use.
+	rm -rf "$pending"
+	install -d -m 0750 -o root -g root "$pending"
+	install -o root -g root -m 0600 "$crt" "$pending/fullchain.pem"
+	install -o root -g root -m 0600 "$key" "$pending/privkey.pem"
+	if out=$(MAILADMIN_MAIL_TLS_CERT="$pending/fullchain.pem" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
+		date +%s > "$pending/since"
+		exit 0
+	fi
+	case "$out" in
+	*"manage its zone manually"*)
+		# No automated DNS provider, so the TLSA record cannot be published from here.
+		# The renewal goes ahead. DANE validation fails for this domain until the operator
+		# publishes the new TLSA record by hand.
+		echo "warning: $domain has no automated DNS provider, installing the renewed certificate without a TLSA update" >&2
+		rm -rf "$pending"
+		install_pair "$crt" "$key"
+		;;
+	*)
+		printf '%s\n' "$out" >&2
+		rm -rf "$pending"
+		echo "TLSA publish failed for $domain, keeping the current certificate" >&2
+		exit 1
+		;;
+	esac
+else
+	# First install, or the certificate is unchanged.
+	rm -rf "$pending"
+	install_pair "$crt" "$key"
+fi
+
+if [ "$changed" = 1 ] || [ -e "$marker" ]; then
 	# A failed reload leaves the marker, so the next run retries it.
 	if /usr/bin/systemctl reload-or-restart postfix dovecot rspamd >/dev/null 2>&1; then
-		rm -f "$pending"
+		rm -f "$marker"
 	else
-		: > "$pending"
+		rm -f -- "$marker"
+		: > "$marker"
 		echo "reload failed, retrying on next run" >&2
 		exit 4
 	fi
@@ -392,17 +470,20 @@ fi
 `
 
 // CertSyncUnits returns the systemd service and timer that keep the mail
-// certificate in sync with Caddy's renewals.
-func CertSyncUnits(hostname string) (service, timer string) {
-	service = fmt.Sprintf(`[Unit]
+// certificate in sync with Caddy's renewals. The service gets the host and the
+// primary domain, the domain is needed to republish the TLSA record.
+func CertSyncUnits(hostname, domain string) (service, timer string) {
+	service = fmt.Sprintf(`# Managed by mailadmin install.
+[Unit]
 Description=Copy the Caddy certificate for %s into /etc/ssl/mail
 After=caddy.service
 
 [Service]
 Type=oneshot
-ExecStart=%s %s
-`, hostname, CertSyncHelperPath, hostname)
-	timer = `[Unit]
+ExecStart=%s %s %s
+`, hostname, CertSyncHelperPath, hostname, domain)
+	timer = `# Managed by mailadmin install.
+[Unit]
 Description=Sync the mail certificate from Caddy every six hours
 
 [Timer]
@@ -423,6 +504,7 @@ WantedBy=timers.target
 func AutoconfigFiles(hostname string) map[string]string {
 	return map[string]string{
 		webserver.DefaultAutoconfigRoot + "/mail/config-v1.1.xml": `<?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by mailadmin install. -->
 <clientConfig version="1.1">
   <emailProvider id="{{ trimPrefix "autoconfig." .Host }}">
     <domain>{{ trimPrefix "autoconfig." .Host }}</domain>
@@ -445,6 +527,7 @@ func AutoconfigFiles(hostname string) map[string]string {
 </clientConfig>
 `,
 		webserver.DefaultAutodiscoverRoot + "/autodiscover.xml": `<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed by mailadmin install. -->
 <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006">
   <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a">
     <Account>

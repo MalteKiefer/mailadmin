@@ -24,6 +24,20 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.23.1] - 2026-11-09
+
+### Fixed
+- Backup restore refuses a symlinked DKIM directory, and the owner change no longer reaches entries behind a link.
+- Backup copy reads its source through an `os.Root`, so a directory swapped for a symlink during the backup cannot leak files from outside the tree.
+- DKIM keys are generated in a root-owned temp directory and renamed into place, key last. A killed run leaves no partial key that later runs accept.
+- The install refuses symlinks only on directories mailadmin owns. Other links, such as a vmail volume, work as before.
+- `secrets.env`, `config.toml`, `pg_hba.conf`, `pg_ident.conf` and the nftables persist file are written atomically and synced, so a crash never leaves them truncated.
+- The cert sync stages both certificate and key before renaming either, so a failed copy no longer leaves the new certificate next to the old key.
+- `dns publish --dane` does not add a TLSA record that is already live.
+- `dns migrate --clean` saves a snapshot first and writes an audit row, also when the clean stops midway.
+- DNS record replacement keeps disabled records disabled instead of switching them back on.
+- Bare command names are resolved in fixed system directories, not through `PATH`.
+
 ## [v1.23.0] - 2026-11-09
 
 ### Added
@@ -38,6 +52,31 @@ providers need.
 - Backup restore skips the dkim component for bundles without a dkim directory.
 - `scripts/mail-cert-deploy.sh` restores the previous certificate pair when installing the new one fails.
 - `config init` sets the file mode explicitly, so a umask no longer narrows `config.toml`.
+
+## [v1.22.0] - 2026-08-30
+
+### Added
+- Rspamd ratelimit and greylist tuning in the security CLI.
+- Push alerting: `doctor` and `dns drift-check` report via ntfy.
+- Audit list filters by actor, action, target, since and until.
+- CI runs the internal/db integration tests against a real Postgres service.
+
+### Fixed
+- App-password `last_used` is no longer presented as tracked data.
+- `mailbox` queries include the password column (lint and gosec findings from the merge).
+
+## [v1.21.0] - 2026-08-30
+
+### Added
+- Rspamd Bayes feedback loop (`learn-spam`, `learn-ham`).
+- `queue bounces` and log-derived rspamd and Postfix statistics.
+- Sieve `vacation` and `vacation-off` autoresponder commands.
+- Backup and restore commands with a DR runbook and a baseline migration.
+- BIMI provisioning, two-step DKIM rotation and a cron-friendly DNS drift check.
+- `valid.PathUnder` for realpath-confined path validation.
+
+### Fixed
+- Lint findings from merged branches (errorlint, gofmt, duplicate fuzz targets).
 
 ## [v1.20.3] - 2026-08-30
 

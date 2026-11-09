@@ -23,8 +23,6 @@ type Servfail struct {
 	apiKey string
 	server string // primary NS id, e.g. "ns1.servfail.network."
 	client *http.Client
-	// rectifyPending holds zones with writes since the last Flush.
-	rectifyPending map[string]bool
 }
 
 // NewServfail builds a client. apiKey and server (the primary-NS server id) must
@@ -159,8 +157,7 @@ func (s *Servfail) RemoveRecord(ctx context.Context, domain, id string) error {
 }
 
 // writeSet applies a single-value change to the (fqdn,type) RRset via a REPLACE
-// (or DELETE when the set becomes empty) PATCH, then rectifies if the zone is
-// DNSSEC-signed without auto-rectify.
+// (or DELETE when the set becomes empty) PATCH. The DNSSEC rectify runs in Flush.
 func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, ttl int, oldVal, newVal string) error {
 	z, err := s.getZone(ctx, domain)
 	if err != nil {
@@ -168,11 +165,17 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	}
 	name := withDot(fqdnName)
 	var values []string
+	// disabled keeps the records the zone holds switched off. REPLACE sends the whole
+	// set back, so a record missing from this map would be switched on again.
+	disabled := map[string]bool{}
 	curTTL := ttl
 	for _, rs := range z.RRsets {
 		if strings.EqualFold(rs.Name, name) && strings.EqualFold(rs.Type, typ) {
 			for _, rec := range rs.Records {
 				values = append(values, rec.Content)
+				if rec.Disabled {
+					disabled[rec.Content] = true
+				}
 			}
 			if rs.TTL > 0 {
 				curTTL = rs.TTL
@@ -181,6 +184,10 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	}
 	if oldVal != "" {
 		values = removeValue(values, oldVal)
+	}
+	// The value being published is enabled, even if the zone held it disabled.
+	if newVal != "" {
+		delete(disabled, newVal)
 	}
 	if newVal != "" && !containsValue(values, newVal) {
 		values = append(values, newVal)
@@ -192,38 +199,23 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	} else {
 		rrset.ChangeType = "REPLACE"
 		for _, v := range values {
-			rrset.Records = append(rrset.Records, pdnsRecord{Content: v})
+			rrset.Records = append(rrset.Records, pdnsRecord{Content: v, Disabled: disabled[v]})
 		}
 	}
-	if err := s.do(ctx, http.MethodPatch, s.zonePath(domain), map[string]any{"rrsets": []pdnsRRset{rrset}}, nil); err != nil {
+	return s.do(ctx, http.MethodPatch, s.zonePath(domain), map[string]any{"rrsets": []pdnsRRset{rrset}}, nil)
+}
+
+// Flush rebuilds the NSEC/RRSIG chain of a DNSSEC zone that does not rectify
+// through the API. The zone state is read on every call, so a rectify that
+// failed earlier is retried on the next run even when no records changed.
+func (s *Servfail) Flush(ctx context.Context, domain string) error {
+	z, err := s.getZone(ctx, domain)
+	if err != nil {
 		return err
 	}
-	// Signed zones need their NSEC/RRSIG chain rebuilt. When the zone does not
-	// rectify is off, so the rebuild is queued for Flush. A failed rectify leaves the chain
-	// stale, so the error is returned (rectify runs only for DNSSEC zones).
-	if z.DNSSEC && !z.APIRectify {
-		s.markRectify(domain)
-	}
-	return nil
-}
-
-// markRectify records that a DNSSEC zone needs its NSEC/RRSIG chain rebuilt
-// once the current batch of RRset writes is done.
-func (s *Servfail) markRectify(domain string) {
-	if s.rectifyPending == nil {
-		s.rectifyPending = map[string]bool{}
-	}
-	s.rectifyPending[domain] = true
-}
-
-// Flush rebuilds the NSEC/RRSIG chain once for a zone with writes since the last
-// Flush. Writes defer the rectify so a batch costs one PUT, and a failed rectify
-// no longer hides changes that already reached the zone.
-func (s *Servfail) Flush(ctx context.Context, domain string) error {
-	if !s.rectifyPending[domain] {
+	if !z.DNSSEC || z.APIRectify {
 		return nil
 	}
-	delete(s.rectifyPending, domain)
 	if err := s.do(ctx, http.MethodPut, s.zonePath(domain)+"/rectify", nil, nil); err != nil {
 		return fmt.Errorf("rectify: %w", err)
 	}

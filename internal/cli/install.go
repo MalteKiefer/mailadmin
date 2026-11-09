@@ -106,7 +106,7 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return err
 	}
 	if err := ans.Validate(); err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 
 	printInstallPlan(out, distro, ans, conflicts)
@@ -186,12 +186,12 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.EnablePeerMap(pctx, x); err != nil {
 		return err
 	}
-	if err := install.WritePgServiceFile(pctx, x, install.PgServiceFile); err != nil {
+	if err := install.WritePgServiceFile(install.PgServiceFile); err != nil {
 		return err
 	}
 
 	if err := install.WriteConfig(installConfigDir, ans); err != nil {
-		if !(in.adopt && errors.Is(err, install.ErrExists)) {
+		if !in.adopt || !errors.Is(err, install.ErrExists) {
 			return err
 		}
 		_, _ = fmt.Fprintln(out, "kept existing config (--adopt)")
@@ -218,7 +218,7 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.ApplyDovecot(pctx, x); err != nil {
 		return err
 	}
-	if err := install.InstallHelpers(pctx, x, ans.Hostname); err != nil {
+	if err := install.InstallHelpers(pctx, x, ans.Hostname, ans.Domain); err != nil {
 		return err
 	}
 
@@ -253,13 +253,14 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		return err
 	}
 	var pairs [][2]string
-	var names []string
+	var names, active []string
 	for _, d := range domains {
+		names = append(names, d.Name)
 		if !d.Active {
 			continue
 		}
 		pairs = append(pairs, [2]string{d.Name, d.DKIMSelector})
-		names = append(names, d.Name)
+		active = append(active, d.Name)
 	}
 	if err := install.ApplyRspamd(pctx, x, secrets.RspamdControllerPW(), pairs); err != nil {
 		return err
@@ -280,11 +281,18 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := wm.Sync(pctx, names); err != nil {
 		return fmt.Errorf("autodiscovery include: %w", err)
 	}
-	if err := wm.SyncMTASTS(pctx, names); err != nil {
+	// Autodiscovery covers every domain. MTA-STS advertises an enforce policy, so only active domains get it.
+	// The policy file must exist before the vhost serves it, or the endpoint answers 404.
+	if len(active) > 0 {
+		if err := wm.WriteMTASTSPolicy(ans.Hostname); err != nil {
+			return fmt.Errorf("mta-sts policy: %w", err)
+		}
+	}
+	if err := wm.SyncMTASTS(pctx, active); err != nil {
 		return fmt.Errorf("mta-sts include: %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "waiting for a certificate for %s\n", ans.Hostname)
-	if err := install.WaitForCertificate(pctx, x, ans.Hostname, 10*time.Minute, 15*time.Second); err != nil {
+	if err := install.WaitForCertificate(pctx, x, ans.Hostname, ans.Domain, 10*time.Minute, 15*time.Second); err != nil {
 		return err
 	}
 	for _, unit := range []string{"postfix", "dovecot", "rspamd"} {

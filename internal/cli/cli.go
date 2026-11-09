@@ -215,7 +215,18 @@ func (a *App) syncMTASTS(c context.Context) error {
 			names = append(names, dom.Name)
 		}
 	}
-	return a.webserver().SyncMTASTS(c, names)
+	cfg, _, err := a.Config()
+	if err != nil {
+		return err
+	}
+	ws := a.webserver()
+	// Without the policy file the endpoint answers 404 even with a valid certificate.
+	if len(names) > 0 {
+		if err := ws.WriteMTASTSPolicy(cfg.Mail.Hostname); err != nil {
+			return err
+		}
+	}
+	return ws.SyncMTASTS(c, names)
 }
 
 // closeBackends releases pooled resources. Safe to call when nothing was opened.

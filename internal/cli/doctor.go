@@ -236,14 +236,15 @@ func portCheck(ctx context.Context, runner *sys.Runner) checkResult {
 	}
 	listening := parseListeningPorts(out)
 	var missing []int
-	for _, p := range expectedPorts() {
+	ports := expectedPorts()
+	for _, p := range ports {
 		if !listening[p] {
 			missing = append(missing, p)
 		}
 	}
 	if len(missing) == 0 {
 		res.Status = statusOK
-		res.Detail = "all expected ports listening: " + joinInts(expectedPorts())
+		res.Detail = "all expected ports listening: " + joinInts(ports)
 		return res
 	}
 	res.Status = statusFail
