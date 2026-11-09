@@ -1001,16 +1001,17 @@ func (a *App) dnsPublish(cmd *cobra.Command, rawDomain string, withMTASTS bool) 
 	}
 
 	applied, err := dnsprovider.Reconcile(ctx(cmd), be.provider, domain, desired)
-	if err != nil && len(applied) > 0 {
+	// A partial apply is audited too, so the changes that reached the zone stay on record.
+	if len(applied) > 0 || err == nil {
 		if rerr := be.rec.Record(ctx(cmd), "dns.publish", domain, nil, changeSummary(applied)); rerr != nil {
-			return fmt.Errorf("dns publish %s: %w (audit also failed: %v)", domain, err, rerr)
+			if err != nil {
+				return fmt.Errorf("dns publish %s: %w (audit also failed: %v)", domain, err, rerr)
+			}
+			return rerr
 		}
 	}
 	if err != nil {
 		return fmt.Errorf("dns publish %s: %w", domain, err)
-	}
-	if err := be.rec.Record(ctx(cmd), "dns.publish", domain, nil, changeSummary(applied)); err != nil {
-		return err
 	}
 	r.Message("published %d change(s) for %s", len(applied), domain)
 	return r.Table(changesTable(applied))

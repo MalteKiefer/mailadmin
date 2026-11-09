@@ -39,6 +39,31 @@ providers need.
 - `scripts/mail-cert-deploy.sh` restores the previous certificate pair when installing the new one fails.
 - `config init` sets the file mode explicitly, so a umask no longer narrows `config.toml`.
 
+## [v1.22.0] - 2026-08-30
+
+### Added
+- Rspamd ratelimit and greylist tuning in the security CLI.
+- Push alerting: `doctor` and `dns drift-check` report via ntfy.
+- Audit list filters by actor, action, target, since and until.
+- CI runs the internal/db integration tests against a real Postgres service.
+
+### Fixed
+- App-password `last_used` is no longer presented as tracked data.
+- `mailbox` queries include the password column (lint and gosec findings from the merge).
+
+## [v1.21.0] - 2026-08-30
+
+### Added
+- Rspamd Bayes feedback loop (`learn-spam`, `learn-ham`).
+- `queue bounces` and log-derived rspamd and Postfix statistics.
+- Sieve `vacation` and `vacation-off` autoresponder commands.
+- Backup and restore commands with a DR runbook and a baseline migration.
+- BIMI provisioning, two-step DKIM rotation and a cron-friendly DNS drift check.
+- `valid.PathUnder` for realpath-confined path validation.
+
+### Fixed
+- Lint findings from merged branches (errorlint, gofmt, duplicate fuzz targets).
+
 ## [v1.20.3] - 2026-08-30
 
 ### Fixed

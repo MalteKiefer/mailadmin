@@ -2,7 +2,9 @@ package install
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +50,12 @@ func AptUpdate(ctx context.Context, x Exec) error {
 
 // PolicyRCPath is Debian's policy hook that decides whether package
 // maintainer scripts may start a service. install denies starts while it runs.
-const PolicyRCPath = "/usr/sbin/policy-rc.d"
+// It is a variable so tests can point it at a temp file.
+var PolicyRCPath = "/usr/sbin/policy-rc.d"
+
+// policyMarker is the second line of a policy-rc.d that install wrote. Only a file
+// with this line is ours to replace and remove.
+const policyMarker = "# managed by mailadmin install"
 
 // AptInstall installs packages. Postfix debconf answers are preseeded first.
 // Services are not started by the maintainer scripts: postfix and dovecot would
@@ -75,22 +82,39 @@ func AptInstall(ctx context.Context, x Exec, pkgs []string, hostname string) err
 	return nil
 }
 
-// denyServiceStarts installs a policy-rc.d that refuses service starts. It
-// reports whether it created the file, so only install removes it again.
+// denyServiceStarts installs a policy-rc.d that refuses service starts. A policy
+// file without the mailadmin marker belongs to someone else and is left alone.
+// It reports whether this run owns the file, so only install removes it again.
 func denyServiceStarts() (bool, error) {
-	if _, err := os.Stat(PolicyRCPath); err == nil {
+	data, err := os.ReadFile(PolicyRCPath) // #nosec G304 -- fixed apt hook path
+	switch {
+	case err == nil && !strings.Contains(string(data), policyMarker):
 		return false, nil
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return false, fmt.Errorf("read %s: %w", PolicyRCPath, err)
 	}
-	if err := os.WriteFile(PolicyRCPath, []byte("#!/bin/sh\nexit 101\n"), 0o755); err != nil { // #nosec G306 -- must be executable for apt
+	policy := "#!/bin/sh\n" + policyMarker + "\nexit 101\n"
+	if err := os.WriteFile(PolicyRCPath, []byte(policy), 0o755); err != nil { // #nosec G306 -- must be executable for apt
 		return false, fmt.Errorf("write %s: %w", PolicyRCPath, err)
 	}
 	return true, nil
 }
 
-// PackageInstalled reports whether dpkg has pkg installed.
+// PackageInstalled reports whether dpkg has pkg installed. The status is read
+// from its last field, so "hold ok installed" counts and "install ok half-configured"
+// does not.
 func PackageInstalled(ctx context.Context, x Exec, pkg string) bool {
 	res, err := x.Run(ctx, nil, "dpkg-query", "-W", "-f=${Status}", pkg)
-	return err == nil && strings.Contains(string(res.Stdout), "install ok installed")
+	if err != nil {
+		return false
+	}
+	return statusInstalled(string(res.Stdout))
+}
+
+// statusInstalled reports whether a dpkg Status string ends in "installed".
+func statusInstalled(status string) bool {
+	fields := strings.Fields(status)
+	return len(fields) > 0 && fields[len(fields)-1] == "installed"
 }
 
 // Conflicts lists mail-stack state already present under root or in dpkg.

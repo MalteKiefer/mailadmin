@@ -139,21 +139,16 @@ func ApplyMigrations(ctx context.Context, x Exec, adopt bool) error {
 // PgServiceFileContent is the libpq service entry: peer authentication as the
 // mailadmin OS user, so no password is stored anywhere.
 func PgServiceFileContent() []byte {
-	return []byte(fmt.Sprintf("[%s]\ndbname=%s\nuser=mailadmin\n", PgService, PgDatabase))
+	return []byte(fmt.Sprintf("# Managed by mailadmin install.\n[%s]\ndbname=%s\nuser=mailadmin\n", PgService, PgDatabase))
 }
 
-// WritePgServiceFile writes the service file mode 0600, owned by mailadmin.
-func WritePgServiceFile(ctx context.Context, x Exec, path string) error {
+// WritePgServiceFile writes the service file mode 0600, owned by mailadmin. It is
+// renamed into place, so a planted symlink at path is replaced and never followed.
+func WritePgServiceFile(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil { // #nosec G301 -- mailadmin state dir
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, PgServiceFileContent(), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if _, err := x.Run(ctx, nil, "chown", "mailadmin:mailadmin", path); err != nil {
-		return fmt.Errorf("chown %s: %w", path, err)
-	}
-	return nil
+	return writeAtomicOwned(path, PgServiceFileContent(), 0o600, "mailadmin", "mailadmin")
 }
 
 // PeerMapName is the pg_ident map that lets OS user root reach the mailadmin
@@ -175,7 +170,11 @@ func EnablePeerMap(ctx context.Context, x Exec) error {
 	if err != nil {
 		return fmt.Errorf("locate pg_ident.conf: %w", err)
 	}
+	// root for the CLI, mailadmin for the libpq service file (PgServiceFile).
 	if err := ensureLine(identPath, fmt.Sprintf("%s root mailadmin", PeerMapName), false); err != nil {
+		return err
+	}
+	if err := ensureLine(identPath, fmt.Sprintf("%s mailadmin mailadmin", PeerMapName), false); err != nil {
 		return err
 	}
 	if err := ensureLine(hbaPath, fmt.Sprintf("local   %s   mailadmin   peer map=%s", PgDatabase, PeerMapName), true); err != nil {
@@ -207,7 +206,7 @@ func ensureLine(path, line string, prepend bool) error {
 		}
 		out += line + "\n"
 	}
-	if err := os.WriteFile(path, []byte(out), 0); err != nil { // mode 0 keeps the existing file mode
+	if err := os.WriteFile(path, []byte(out), 0); err != nil { // #nosec G703 -- fixed installer paths (hba, ident, fstab, sshd), never user input; mode 0 keeps the existing mode
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

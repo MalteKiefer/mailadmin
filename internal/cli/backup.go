@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -379,12 +378,21 @@ func chownDKIM(dir string) error {
 	if err != nil {
 		return err
 	}
-	return filepath.WalkDir(dir, func(p string, _ fs.DirEntry, werr error) error {
-		if werr != nil {
-			return werr
+	// The DKIM directory is flat (one key and one .pub per domain), so a single
+	// directory read is enough and avoids a recursive walk.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if err := os.Lchown(dir, uid, gid); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.Lchown(filepath.Join(dir, e.Name()), uid, gid); err != nil {
+			return err
 		}
-		return os.Lchown(p, uid, gid)
-	})
+	}
+	return nil
 }
 
 // restoreSieve replaces and reactivates the managed Sieve script for every
