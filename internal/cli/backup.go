@@ -146,7 +146,9 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	if err != nil {
 		return fmt.Errorf("backup create: dkim: %w", err)
 	}
-	components = append(components, backup.ComponentDKIM)
+	if _, serr := os.Stat(cfg.Mail.DKIMDir); serr == nil {
+		components = append(components, backup.ComponentDKIM)
+	}
 
 	// 3. Every mailbox's active Sieve script (addressed the same way
 	// `sieve show`/`sieve set` address one: local@domain via doveadm -u).

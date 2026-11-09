@@ -326,6 +326,7 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string
 		return base
 	}
 	var lastErr error
+	probed := 0
 	for _, h := range hosts {
 		live, err := a.probeCert(ctx, h)
 		if err != nil {
@@ -337,6 +338,9 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts, published []string
 				Detail: "published TLSA does not match live certificate (" + h +
 					") — stale after key rotation, DANE senders will reject mail"}
 		}
+		probed++
+	}
+	if probed > 0 {
 		return Finding{Check: "DANE", Status: Pass, Value: base.Value,
 			Detail: base.Detail + "; matches live certificate"}
 	}

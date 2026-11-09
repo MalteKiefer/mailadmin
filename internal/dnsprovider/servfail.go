@@ -197,10 +197,12 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 		return err
 	}
 	// Signed zones need their NSEC/RRSIG chain rebuilt. When the zone does not
-	// auto-rectify, trigger it explicitly (no-op/served error on unsigned zones,
-	// which we ignore since rectify only applies to DNSSEC zones).
+	// auto-rectify, trigger it explicitly. A failed rectify leaves the chain
+	// stale, so the error is returned (rectify runs only for DNSSEC zones).
 	if z.DNSSEC && !z.APIRectify {
-		_ = s.do(ctx, http.MethodPut, s.zonePath(domain)+"/rectify", nil, nil)
+		if err := s.do(ctx, http.MethodPut, s.zonePath(domain)+"/rectify", nil, nil); err != nil {
+			return fmt.Errorf("servfail rectify: %w", err)
+		}
 	}
 	return nil
 }
