@@ -234,13 +234,13 @@ prev=$(mktemp -d)
 cp -p /etc/ssl/mail/fullchain.pem /etc/ssl/mail/privkey.pem "$prev"/ 2>/dev/null || true
 restore_prev() {
   if [ -f "$prev/fullchain.pem" ] && [ -f "$prev/privkey.pem" ]; then
-    install -o root -g mail-certs -m 0640 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
-    install -o root -g mail-certs -m 0640 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
+    install -o root -g root -m 0600 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
+    install -o root -g root -m 0600 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
   fi
 }
 # A failed copy can leave a mixed pair on disk, so restore the previous pair.
-if ! { install -o root -g mail-certs -m 0640 "$SRC_CRT" /etc/ssl/mail/fullchain.pem &&
-       install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem; }; then
+if ! { install -o root -g root -m 0600 "$SRC_CRT" /etc/ssl/mail/fullchain.pem &&
+       install -o root -g root -m 0600 "$SRC_KEY" /etc/ssl/mail/privkey.pem; }; then
   restore_prev
   rm -rf "$prev"
   echo "mail-cert-deploy: installing the new cert failed, previous cert files restored" >&2
@@ -251,16 +251,30 @@ fi
 # fullchain.pem via mail.tls_cert, so it pins the new key). Additive — the old
 # TLSA stays valid during the overlap. Wait out the TTL so validators see the new
 # TLSA before we switch the served cert, then reload.
-if ! mailadmin --yes dns publish "$DOMAIN" --dane; then
-  restore_prev
-  rm -rf "$prev"
-  echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
-  exit 1
-else
+if out=$(mailadmin --yes dns publish "$DOMAIN" --dane 2>&1); then
   sleep 3900            # > TLSA TTL (deSEC minimum is 3600)
+else
+  case "$out" in
+  *"manage its zone manually"*)
+    # No automated DNS provider: the TLSA record cannot be published from here, so the
+    # renewal goes ahead. DANE validation fails for this domain until the new TLSA
+    # record is published by hand.
+    echo "warning: $DOMAIN has no automated DNS provider, continuing without a TLSA update; publish the new TLSA record by hand" >&2
+    ;;
+  *)
+    printf '%s\n' "$out" >&2
+    restore_prev
+    rm -rf "$prev"
+    echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
+    exit 1
+    ;;
+  esac
 fi
 rm -rf "$prev"
-systemctl reload-or-restart postfix dovecot || true
+if ! systemctl reload-or-restart postfix dovecot; then
+  echo "mail-cert-deploy: reload failed, postfix and dovecot still serve the old certificate; reload them by hand" >&2
+  exit 1
+fi
 ```
 
 Because the script sleeps out the TTL, give the oneshot service an unbounded start

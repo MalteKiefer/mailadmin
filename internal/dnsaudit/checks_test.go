@@ -3,6 +3,7 @@ package dnsaudit
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -168,6 +169,8 @@ type daneFakeConn struct {
 	hosts    []string
 	tlsaVals []string
 	ad       bool
+	// byName overrides tlsaVals per TLSA owner name when set.
+	byName map[string][]string
 }
 
 func (f daneFakeConn) txt(context.Context, string) ([]string, error) { return nil, nil }
@@ -175,7 +178,10 @@ func (f daneFakeConn) dnssec(context.Context, string) (bool, bool, bool, error) 
 	return false, false, false, nil
 }
 func (f daneFakeConn) mx(context.Context, string) ([]string, error) { return f.hosts, nil }
-func (f daneFakeConn) tlsa(context.Context, string) ([]string, bool, error) {
+func (f daneFakeConn) tlsa(_ context.Context, name string) ([]string, bool, error) {
+	if vals, ok := f.byName[name]; ok {
+		return vals, f.ad, nil
+	}
 	return f.tlsaVals, f.ad, nil
 }
 
@@ -219,3 +225,44 @@ func TestEvalDANENon311SkipsMatch(t *testing.T) {
 
 // rsa2048 is the base64 SubjectPublicKeyInfo of a 2048-bit RSA key (test-only).
 const rsa2048 = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAutMr4fhaKrvoRdnSkQ50wUvakIxhyJEydgP3bXfmuCJ0bcGuHJ3EZQZkDcUV4g2t04rF7x+XdE1cTDAVm7hCH1sTsOxKm9CW039ApesPZNNMVr5kdECfBSFdY/Q264UPForgcGhseB4o7FVv15N2LF01FglRI5JQSvBQ+gQCOYoVOTtfxxE/C5gAu69fycqEyYQsJTx2GOCaa9jIika1DYjr5PHeJn/8UVOuairQCMX2oOkfPGsZQgOzaTv+ep81TFrV0VhphU55CE9taiovu7Gsu1kDQIxHkeiyKVJMBxK+WXywdV7q2qJhVhBOHM9vo/alBsSoIN+5DGg0BY+6lwIDAQAB"
+
+func TestEvalDANEMultiHost(t *testing.T) {
+	cases := []struct {
+		name       string
+		byName     map[string][]string
+		wantStatus Status
+		wantProbed []string
+	}{
+		{
+			name:       "one 3 1 1 host matches, 2 0 1 host skipped",
+			byName:     map[string][]string{"_25._tcp.mx1.example.": {"3 1 1 abc"}, "_25._tcp.mx2.example.": {"2 0 1 def"}},
+			wantStatus: Pass,
+			wantProbed: []string{"mx1.example."},
+		},
+		{
+			name:       "no 3 1 1 at all is not applicable",
+			byName:     map[string][]string{"_25._tcp.mx1.example.": {"2 0 1 abc"}, "_25._tcp.mx2.example.": {"2 0 1 def"}},
+			wantStatus: Pass,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := daneFakeConn{hosts: []string{"mx1.example.", "mx2.example."}, ad: true, byName: tc.byName}
+			var mu sync.Mutex
+			var probed []string
+			a := &Auditor{conn: conn, probeCert: func(_ context.Context, host string) (string, error) {
+				mu.Lock()
+				probed = append(probed, host)
+				mu.Unlock()
+				return "3 1 1 abc", nil
+			}}
+			f := a.evalDANE(context.Background(), "example.com")
+			if f.Status != tc.wantStatus {
+				t.Fatalf("status=%s want %s (detail %q)", f.Status, tc.wantStatus, f.Detail)
+			}
+			if len(probed) != len(tc.wantProbed) || (len(probed) == 1 && probed[0] != tc.wantProbed[0]) {
+				t.Fatalf("probed=%v want %v", probed, tc.wantProbed)
+			}
+		})
+	}
+}
