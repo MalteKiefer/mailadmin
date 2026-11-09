@@ -249,7 +249,7 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 	}
 
 	if _, gerr := d.GetMailbox(c, local, dom); gerr == nil {
-		return fmt.Errorf("%w: mailbox %s@%s already exists, use mailbox passwd, set-quota or enable", ErrUsage, local, dom)
+		return alreadyExistsErr("mailbox", local+"@"+dom, "use mailbox passwd, set-quota or enable")
 	} else if !errors.Is(gerr, pgx.ErrNoRows) {
 		return fmt.Errorf("get mailbox: %w", gerr)
 	}
@@ -269,7 +269,7 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 
 	mb := db.Mailbox{Username: local, Domain: dom, Password: hash, QuotaBytes: quotaBytes}
 	if err := d.CreateMailbox(c, mb); errors.Is(err, db.ErrExists) {
-		return fmt.Errorf("%w: mailbox %s@%s already exists, use mailbox passwd, set-quota or enable", ErrUsage, local, dom)
+		return alreadyExistsErr("mailbox", local+"@"+dom, "use mailbox passwd, set-quota or enable")
 	} else if err != nil {
 		return fmt.Errorf("create mailbox: %w", err)
 	}

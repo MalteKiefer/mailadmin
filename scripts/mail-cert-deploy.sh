@@ -31,7 +31,7 @@
 #   - $DOMAIN is the mail domain whose DANE record is rolled (also not
 #     documented as to how it's supplied — likely a fixed value or argv on
 #     a single-domain mail host).
-#   - `set -euo pipefail` and the `mail-certs` group are standard hardening
+#   - `set -euo pipefail` and root-only key files (0600) match the cert-sync helper
 #     choices consistent with the rest of this repo's privileged scripts,
 #     not literally quoted in docs/DNS.md.
 set -euo pipefail
@@ -48,13 +48,13 @@ prev=$(mktemp -d)
 cp -p /etc/ssl/mail/fullchain.pem /etc/ssl/mail/privkey.pem "$prev"/ 2>/dev/null || true
 restore_prev() {
   if [ -f "$prev/fullchain.pem" ] && [ -f "$prev/privkey.pem" ]; then
-    install -o root -g mail-certs -m 0640 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
-    install -o root -g mail-certs -m 0640 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
+    install -o root -g root -m 0600 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
+    install -o root -g root -m 0600 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
   fi
 }
 # A failed copy can leave a mixed pair on disk, so restore the previous pair.
-if ! { install -o root -g mail-certs -m 0640 "$SRC_CRT" /etc/ssl/mail/fullchain.pem &&
-       install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem; }; then
+if ! { install -o root -g root -m 0600 "$SRC_CRT" /etc/ssl/mail/fullchain.pem &&
+       install -o root -g root -m 0600 "$SRC_KEY" /etc/ssl/mail/privkey.pem; }; then
   restore_prev
   rm -rf "$prev"
   echo "mail-cert-deploy: installing the new cert failed, previous cert files restored" >&2

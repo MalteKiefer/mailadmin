@@ -6,14 +6,45 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
+// managedMarker is in every file mailadmin renders. A file that carries it was
+// written by mailadmin before, so it is never kept as a distribution original.
+const managedMarker = "mailadmin install"
+
 // writeAtomic writes data to path through a temp file in the same directory, so
 // a half-written config is never visible to a running daemon.
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
+	return writeAtomicWith(path, data, mode, nil)
+}
+
+// writeAtomicOwned is writeAtomic with an owner. The temp file gets its owner and
+// group before the rename, so the final file never exists with the wrong owner.
+func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group string) error {
+	uid, err := lookupUID(owner)
+	if err != nil {
+		return err
+	}
+	gid, err := lookupGID(group)
+	if err != nil {
+		return err
+	}
+	return writeAtomicWith(path, data, mode, func(name string) error {
+		if err := os.Chown(name, uid, gid); err != nil {
+			return fmt.Errorf("chown %s: %w", path, err)
+		}
+		return nil
+	})
+}
+
+// writeAtomicWith is the shared temp-file-and-rename path. prepare, when set, runs
+// on the temp file before it is renamed into place.
+func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(name string) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- config directories
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
@@ -31,6 +62,12 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		_ = os.Remove(name)
 		return fmt.Errorf("close %s: %w", path, err)
 	}
+	if prepare != nil {
+		if err := prepare(name); err != nil {
+			_ = os.Remove(name)
+			return err
+		}
+	}
 	if err := os.Chmod(name, mode); err != nil {
 		_ = os.Remove(name)
 		return fmt.Errorf("chmod %s: %w", path, err)
@@ -42,9 +79,39 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
+// lookupUID resolves a user name or a numeric uid.
+func lookupUID(name string) (int, error) {
+	if n, err := strconv.Atoi(name); err == nil {
+		return n, nil
+	}
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, fmt.Errorf("user %s: %w", name, err)
+	}
+	return strconv.Atoi(u.Uid)
+}
+
+// lookupGID resolves a group name or a numeric gid.
+func lookupGID(name string) (int, error) {
+	if n, err := strconv.Atoi(name); err == nil {
+		return n, nil
+	}
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, fmt.Errorf("group %s: %w", name, err)
+	}
+	return strconv.Atoi(g.Gid)
+}
+
 // writeManaged writes a file mailadmin fully owns. When a distribution file is
 // replaced for the first time, the original is kept as <path>.mailadmin-orig.
 func writeManaged(path string, data []byte, mode os.FileMode) error {
+	return writeManagedOwned(path, data, mode, "", "")
+}
+
+// writeManagedOwned is writeManaged with an owner. An empty owner leaves the
+// ownership to the default of a root process.
+func writeManagedOwned(path string, data []byte, mode os.FileMode, owner, group string) error {
 	if _, err := os.Stat(path); err == nil {
 		orig := path + ".mailadmin-orig"
 		if _, serr := os.Stat(orig); errors.Is(serr, fs.ErrNotExist) {
@@ -52,12 +119,18 @@ func writeManaged(path string, data []byte, mode os.FileMode) error {
 			if rerr != nil {
 				return fmt.Errorf("read %s: %w", path, rerr)
 			}
-			if werr := writeAtomic(orig, cur, 0o600); werr != nil {
-				return werr
+			// Only a file that is not already mailadmin's own gets a backup.
+			if !strings.Contains(string(cur), managedMarker) {
+				if werr := writeAtomic(orig, cur, 0o600); werr != nil {
+					return werr
+				}
 			}
 		}
 	}
-	return writeAtomic(path, data, mode)
+	if owner == "" {
+		return writeAtomic(path, data, mode)
+	}
+	return writeAtomicOwned(path, data, mode, owner, group)
 }
 
 // ApplyPostfix writes the lookup maps, sets the main.cf keys with postconf and
@@ -67,12 +140,9 @@ func ApplyPostfix(ctx context.Context, x Exec, hostname string) error {
 		return err
 	}
 	for path, content := range PostfixPgsqlMaps() {
-		if err := writeManaged(path, []byte(content), 0o640); err != nil {
-			return err
-		}
 		// The postfix lookup processes run as the postfix user and must read the map.
-		if _, err := x.Run(ctx, nil, "chown", "root:postfix", path); err != nil {
-			return fmt.Errorf("chown %s: %w", path, err)
+		if err := writeManagedOwned(path, []byte(content), 0o640, "root", "postfix"); err != nil {
+			return err
 		}
 	}
 	for _, s := range PostfixSettings(hostname) {
@@ -118,13 +188,10 @@ func ApplyRspamd(ctx context.Context, x Exec, controllerPW string, selectors [][
 			return err
 		}
 	}
-	if err := writeManaged(RspamdSelectorMap, []byte(RspamdSelectorMapContent(selectors)), 0o640); err != nil {
-		return err
-	}
 	// rspamd reads the map as its own user. An unreadable map is silently empty,
 	// and every message is then signed with the default selector or not at all.
-	if _, err := x.Run(ctx, nil, "chown", "root:_rspamd", RspamdSelectorMap); err != nil {
-		return fmt.Errorf("chown %s: %w", RspamdSelectorMap, err)
+	if err := writeManagedOwned(RspamdSelectorMap, []byte(RspamdSelectorMapContent(selectors)), 0o640, "root", "_rspamd"); err != nil {
+		return err
 	}
 	if _, err := x.Run(ctx, nil, "rspamadm", "configtest"); err != nil {
 		return fmt.Errorf("rspamd configtest: %w", err)
@@ -154,18 +221,39 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 		return fmt.Errorf("mkdir nftables.d: %w", err)
 	}
 	ssh := SSHPorts()
-	if err := writeAtomic(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o644); err != nil {
-		return err
-	}
 	if err := writeAtomic(NftConfPath, []byte(NftConf()), 0o755); err != nil {
 		return err
 	}
-	if _, err := x.Run(ctx, nil, "nft", "-c", "-f", NftConfPath); err != nil {
+	// The table is checked as a temp file in the persist directory and only renamed
+	// over NftPersistPath once nft accepts it, so a bad table never replaces a good one.
+	tmp, err := os.CreateTemp(filepath.Dir(NftPersistPath), "."+filepath.Base(NftPersistPath)+".*")
+	if err != nil {
+		return fmt.Errorf("temp for %s: %w", NftPersistPath, err)
+	}
+	name := tmp.Name()
+	if _, err := tmp.WriteString(NftTableFile(DefaultTCPPorts, nil, ssh)); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return fmt.Errorf("write %s: %w", NftPersistPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("close %s: %w", NftPersistPath, err)
+	}
+	if err := os.Chmod(name, 0o644); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("chmod %s: %w", NftPersistPath, err)
+	}
+	if _, err := x.Run(ctx, nil, "nft", "-c", "-f", name); err != nil {
+		_ = os.Remove(name)
 		return fmt.Errorf("nft check: %w", err)
 	}
-	// Load the ruleset exactly once. The service unit reloads the same file, so a
-	// second load would duplicate the rules. The table is replaced on each run.
-	_, _ = x.Run(ctx, nil, "nft", "delete", "table", "inet", "mailadmin")
+	if err := os.Rename(name, NftPersistPath); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("install %s: %w", NftPersistPath, err)
+	}
+	// The table starts with "destroy table", so this replaces the loaded table
+	// instead of adding a second copy of the rules.
 	if _, err := x.Run(ctx, nil, "nft", "-f", NftConfPath); err != nil {
 		return fmt.Errorf("nft load: %w", err)
 	}
@@ -176,7 +264,8 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 }
 
 // InstallHelpers writes the three root helpers and the certificate sync units.
-func InstallHelpers(ctx context.Context, x Exec, hostname string) error {
+// domain is the primary mail domain the certificate sync publishes TLSA records for.
+func InstallHelpers(ctx context.Context, x Exec, hostname, domain string) error {
 	helpers := map[string]string{
 		FwPortHelperPath:   FwPortHelper,
 		DKIMGenHelperPath:  DKIMGenHelper,
@@ -187,7 +276,7 @@ func InstallHelpers(ctx context.Context, x Exec, hostname string) error {
 			return err
 		}
 	}
-	service, timer := CertSyncUnits(hostname)
+	service, timer := CertSyncUnits(hostname, domain)
 	if err := writeAtomic(CertSyncServicePath, []byte(service), 0o644); err != nil {
 		return err
 	}
@@ -214,10 +303,10 @@ func EnableUnit(ctx context.Context, x Exec, unit string) error {
 
 // WaitForCertificate runs the certificate sync helper until Caddy has issued a
 // certificate for host, or until timeout. It returns an error if none appeared.
-func WaitForCertificate(ctx context.Context, x Exec, host string, timeout, interval time.Duration) error {
+func WaitForCertificate(ctx context.Context, x Exec, host, domain string, timeout, interval time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		_, err := x.Run(ctx, nil, CertSyncHelperPath, host)
+		_, err := x.Run(ctx, nil, CertSyncHelperPath, host, domain)
 		if err == nil {
 			return nil
 		}

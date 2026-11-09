@@ -46,3 +46,9 @@ func checkNewLabel(label string) error {
 	}
 	return nil
 }
+
+// alreadyExistsErr is the usage error for an add that hits an existing row.
+// what is the object kind, name its identifier and hint the next step.
+func alreadyExistsErr(what, name, hint string) error {
+	return fmt.Errorf("%w: %s %s already exists: %s", ErrUsage, what, name, hint)
+}

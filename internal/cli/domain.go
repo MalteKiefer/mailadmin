@@ -311,7 +311,7 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 		return err
 	}
 	if _, gerr := database.GetDomain(ctx(c), name); gerr == nil {
-		return fmt.Errorf("%w: domain %s already exists, use domain set-provider to change its DNS provider", ErrUsage, name)
+		return alreadyExistsErr("domain", name, "use domain set-provider to change its DNS provider, or domain enable if it is disabled")
 	} else if !errors.Is(gerr, pgx.ErrNoRows) {
 		return fmt.Errorf("get domain: %w", gerr)
 	}
@@ -332,7 +332,7 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 		return err
 	}
 	if err := database.CreateDomain(ctx(c), name, selector); errors.Is(err, db.ErrExists) {
-		return fmt.Errorf("%w: domain %s already exists, use domain set-provider to change its DNS provider", ErrUsage, name)
+		return alreadyExistsErr("domain", name, "use domain set-provider to change its DNS provider, or domain enable if it is disabled")
 	} else if err != nil {
 		return err
 	}

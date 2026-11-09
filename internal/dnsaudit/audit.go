@@ -10,11 +10,11 @@ package dnsaudit
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -318,33 +318,45 @@ func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
 // presence verdict intact. A reachable non-match is a hard Fail (senders bounce);
 // an unreachable host downgrades only to Warn.
 func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts []string, perHost map[string][]string, base Finding) Finding {
-	var published []string
+	// Only hosts with a 3 1 1 value are probed; other usages are skipped.
+	var cands []string
 	for _, h := range hosts {
-		published = append(published, perHost[h]...)
-	}
-	has311 := false
-	for _, v := range published {
-		if strings.HasPrefix(v, "3 1 1 ") {
-			has311 = true
-			break
+		if hasUsage311(perHost[h]) {
+			cands = append(cands, h)
 		}
 	}
-	if !has311 {
+	if len(cands) == 0 {
 		base.Detail += "; TLSA is not 3 1 1 — live-cert match not checked"
 		return base
 	}
+
+	// Probe concurrently; results stay in host order so the verdict is deterministic.
+	type probe struct {
+		live string
+		err  error
+	}
+	results := make([]probe, len(cands))
+	var wg sync.WaitGroup
+	for i, h := range cands {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i].live, results[i].err = a.probeCert(ctx, h)
+		}()
+	}
+	wg.Wait()
+
+	// Every candidate ends in a mismatch (returned), an error (lastErr set) or a
+	// match (probed++). So with no error recorded, probed is at least one and the
+	// Warn branch always has a non-nil lastErr.
 	var lastErr error
 	probed := 0
-	for _, h := range hosts {
-		if !hasUsage311(perHost[h]) {
+	for i, h := range cands {
+		if results[i].err != nil {
+			lastErr = results[i].err
 			continue
 		}
-		live, err := a.probeCert(ctx, h)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if !daneMatch(perHost[h], live) {
+		if !daneMatch(perHost[h], results[i].live) {
 			return Finding{Check: "DANE", Status: Fail, Value: "cert mismatch",
 				Detail: "published TLSA does not match live certificate (" + h +
 					") — stale after key rotation, DANE senders will reject mail"}
@@ -354,9 +366,6 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts []string, perHost m
 	if probed > 0 && lastErr == nil {
 		return Finding{Check: "DANE", Status: Pass, Value: base.Value,
 			Detail: base.Detail + "; matches live certificate"}
-	}
-	if lastErr == nil {
-		lastErr = errors.New("no mail host could be probed")
 	}
 	return Finding{Check: "DANE", Status: Warn, Value: base.Value,
 		Detail: "TLSA authenticated but live cert unreachable to confirm match: " + lastErr.Error()}

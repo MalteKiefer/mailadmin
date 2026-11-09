@@ -80,15 +80,21 @@ func CopyTree(src, dst string) (CopyResult, error) {
 // component must not be a symlink (O_NOFOLLOW), and root refuses any path that
 // would leave dst.
 func copyIntoRoot(root *os.Root, src, rel string) (int64, error) {
-	info, err := os.Stat(src)
-	if err != nil {
-		return 0, err
-	}
-	in, err := os.Open(src) // #nosec G304 -- path from an operator-configured tree, see CopyTree
+	// The walk classified src earlier, so it can have been swapped since. O_NOFOLLOW
+	// refuses a symlink, and O_NONBLOCK keeps a swapped-in FIFO from blocking the open.
+	// The regular-file check runs on the opened descriptor, so it covers what is read.
+	in, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- path from an operator-configured tree, see CopyTree
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = in.Close() }()
+	info, err := in.Stat()
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular file", src)
+	}
 
 	out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, info.Mode().Perm())
 	if err != nil {

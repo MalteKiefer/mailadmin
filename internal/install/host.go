@@ -50,7 +50,8 @@ func (a Answers) Validate() error {
 // RenderConfig returns config.toml in the layout ARCHITECTURE.md documents.
 // Non-secret values only; tokens and the rspamd password go to secrets.env.
 func RenderConfig(a Answers) []byte {
-	return []byte(fmt.Sprintf(`[postgres]
+	return []byte(fmt.Sprintf(`# Managed by mailadmin install.
+[postgres]
 service      = %q
 service_file = %q
 
@@ -109,8 +110,10 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-// WriteConfig writes config.toml (0644) and secrets.env (0600) into dir.
-// Existing files are kept, and ErrExists is returned for the first one found.
+// WriteConfig writes config.toml (0644) and secrets.env (0600) into dir. Both
+// files are attempted, so a crash between the two writes does not leave a rerun
+// without config.toml. Files that already exist are kept. ErrExists is returned
+// only when both already existed.
 func WriteConfig(dir string, a Answers) error {
 	// #nosec G301 -- config dir is deliberately traversable, secrets.env is 0600
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -120,10 +123,18 @@ func WriteConfig(dir string, a Answers) error {
 	if err != nil {
 		return err
 	}
-	if err := writeNew(filepath.Join(dir, "secrets.env"), secrets, 0o600); err != nil {
-		return err
+	secErr := writeNew(filepath.Join(dir, "secrets.env"), secrets, 0o600)
+	if secErr != nil && !errors.Is(secErr, ErrExists) {
+		return secErr
 	}
-	return writeNew(filepath.Join(dir, "config.toml"), RenderConfig(a), 0o644)
+	cfgErr := writeNew(filepath.Join(dir, "config.toml"), RenderConfig(a), 0o644)
+	if cfgErr != nil && !errors.Is(cfgErr, ErrExists) {
+		return cfgErr
+	}
+	if secErr != nil && cfgErr != nil {
+		return secErr
+	}
+	return nil
 }
 
 // HostDir is one directory the mail stack needs, with its owner and mode.
@@ -163,18 +174,38 @@ func EnsureUser(ctx context.Context, x Exec, name, home string, uid int) error {
 	return nil
 }
 
-// EnsureHostDirs creates the directories and sets owner and mode on each.
+// EnsureHostDirs creates the directories and sets owner and mode on each. A
+// symlink at any of these paths is refused, since root would otherwise chown or
+// chmod whatever it points to. chown -h changes the link itself, never its target.
 func EnsureHostDirs(ctx context.Context, x Exec) error {
 	for _, d := range HostDirs() {
 		if err := os.MkdirAll(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d.Path, err)
 		}
-		if _, err := x.Run(ctx, nil, "chown", d.Owner, d.Path); err != nil {
+		if err := refuseSymlink(d.Path); err != nil {
+			return err
+		}
+		if _, err := x.Run(ctx, nil, "chown", "-h", d.Owner, d.Path); err != nil {
 			return fmt.Errorf("chown %s: %w", d.Path, err)
+		}
+		if err := refuseSymlink(d.Path); err != nil {
+			return err
 		}
 		if err := os.Chmod(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("chmod %s: %w", d.Path, err)
 		}
+	}
+	return nil
+}
+
+// refuseSymlink returns an error when path is a symbolic link.
+func refuseSymlink(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink, refusing to change its owner or mode", path)
 	}
 	return nil
 }
