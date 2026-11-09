@@ -244,6 +244,11 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 		}
 		return fmt.Errorf("config init: create %s: %w", path, err)
 	}
+	// The umask can narrow the mode given to OpenFile, so set it explicitly.
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("config init: chmod %s: %w", path, err)
+	}
 	if _, werr := f.Write(data); werr != nil {
 		_ = f.Close()
 		return fmt.Errorf("config init: write %s: %w", path, werr)
