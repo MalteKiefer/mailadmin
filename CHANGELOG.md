@@ -24,6 +24,21 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.23.0] - 2026-11-09
+
+### Added
+- `mailadmin install` for Ubuntu and Debian. It installs PostgreSQL and Caddy from their vendor repositories (key fingerprints must match), the mail packages, and configures Postfix, Dovecot 2.4, rspamd, Caddy, nftables and the certificate sync. It refuses existing mail state unless `--adopt` is given.
+
+### Fixed
+- Firewall reads the sshd ports (`Port` and `ListenAddress`) instead of a fixed port 22, so a host on another SSH port is not locked out.
+- DNS takeover, migrate, restore, set-bimi and dkim-rotate-start record audit and output when a rectify fails after the change is live. `migrate --clean` and DKIM record removal flush correctly.
+- DKIM selectors accept the characters `valid.Selector` allows. `--adopt` keeps the stored selector. The key helper no longer writes through planted symlinks.
+- rspamd no longer signs for a From domain that differs from the login. `mail.tls_cert` is written so the TLSA rollover reads the new certificate.
+- The cert sync retries a failed reload. App-password labels with `+` or `@` can be revoked.
+- Backup restore skips the dkim component for bundles without a dkim directory.
+- `scripts/mail-cert-deploy.sh` restores the previous certificate pair when installing the new one fails.
+- `config init` sets the file mode explicitly, so a umask no longer narrows `config.toml`.
+
 ## [v1.20.3] - 2026-08-30
 
 ### Fixed
