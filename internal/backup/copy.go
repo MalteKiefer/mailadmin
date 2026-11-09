@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // CopyResult reports what CopyTree copied.
@@ -91,7 +92,7 @@ func CopyFile(src, dst string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return 0, err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm()) // #nosec G304 -- destination under an operator-configured bundle/target directory
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, info.Mode().Perm()) // #nosec G304 -- destination under an operator-configured bundle/target directory
 	if err != nil {
 		return 0, err
 	}

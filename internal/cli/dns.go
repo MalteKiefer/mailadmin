@@ -474,6 +474,10 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		}
 	}
 
+	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
+		return err
+	}
+
 	if clean {
 		if err := a.confirm(fmt.Sprintf("Delete existing records (except NS/SOA) at %s for %s first?", to, domain)); err != nil {
 			return err
@@ -485,9 +489,6 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		r.Message("cleaned %d record(s) at %s", n, to)
 	}
 
-	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
-		return err
-	}
 	res, err := dnsprovider.Migrate(ctx(cmd), target, domain, records)
 	if err != nil {
 		return fmt.Errorf("dns migrate %s: %w", domain, err)

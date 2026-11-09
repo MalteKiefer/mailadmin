@@ -50,7 +50,10 @@ install -o root -g mail-certs -m 0640 "$SRC_KEY" /etc/ssl/mail/privkey.pem
 # fullchain.pem via mail.tls_cert, so it pins the new key). Additive — the old
 # TLSA stays valid during the overlap. Wait out the TTL so validators see the new
 # TLSA before we switch the served cert, then reload.
-if mailadmin --yes dns publish "$DOMAIN" --dane; then
+if ! mailadmin --yes dns publish "$DOMAIN" --dane; then
+  echo "mail-cert-deploy: TLSA publish failed, reload skipped (new cert files are installed, services keep the old cert)" >&2
+  exit 1
+else
   sleep 3900            # > TLSA TTL (deSEC minimum is 3600)
 fi
 systemctl reload-or-restart postfix dovecot || true

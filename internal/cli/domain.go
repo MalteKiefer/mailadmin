@@ -320,6 +320,11 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 		return err
 	}
 
+	if _, gerr := database.GetDomain(ctx(c), name); gerr == nil {
+		return fmt.Errorf("%w: domain %s already exists, change it with the domain or dns commands", ErrUsage, name)
+	} else if !errors.Is(gerr, pgx.ErrNoRows) {
+		return fmt.Errorf("get domain: %w", gerr)
+	}
 	// Generate the DKIM key first so a publishable record exists before the row
 	// is written; the helper is idempotent (only creates a missing key).
 	key, err := mgr.GenerateDKIM(ctx(c), name, selector)
