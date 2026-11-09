@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"mailadmin/internal/valid"
@@ -50,7 +51,7 @@ func WriteSnapshot(dir string, s Snapshot) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := writeNewFile(path, b); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -151,4 +152,19 @@ func isApexWeb(r Record) bool {
 		return true
 	}
 	return false
+}
+
+// writeNewFile creates path with mode 0600 and fails if anything already exists there,
+// including a link. Snapshot names are predictable and the directory is owned by
+// mailadmin, so root must never follow a link to write a snapshot.
+func writeNewFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- name validated by the caller
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"mailadmin/internal/valid"
 )
@@ -191,34 +192,57 @@ func EnsureUser(ctx context.Context, x Exec, name, home string, uid int) error {
 	return nil
 }
 
-// EnsureHostDirs creates the directories and sets owner and mode on each. A
-// directory mailadmin owns is refused if it is a symlink, since mailadmin could
-// then point root at any path. Other directories, such as a vmail volume, may
-// legitimately be links to another disk, so they are followed as before.
+// EnsureHostDirs creates the directories and sets owner and mode on each. A directory
+// mailadmin owns is opened without following links, so a link swapped in at its path
+// is refused, and owner and mode are set on the open descriptor. Other directories,
+// such as a vmail volume, may be links to another disk, so they are followed as before.
 func EnsureHostDirs(ctx context.Context, x Exec) error {
 	for _, d := range HostDirs() {
 		if err := os.MkdirAll(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d.Path, err)
 		}
-		owned := strings.HasPrefix(d.Owner, "mailadmin:")
-		chown := []string{"chown"}
-		if owned {
-			if err := refuseSymlink(d.Path); err != nil {
+		if strings.HasPrefix(d.Owner, "mailadmin:") {
+			if err := setOwnedDir(d); err != nil {
 				return err
 			}
-			chown = append(chown, "-h")
+			continue
 		}
-		if _, err := x.Run(ctx, nil, append(chown, d.Owner, d.Path)...); err != nil {
+		if _, err := x.Run(ctx, nil, "chown", d.Owner, d.Path); err != nil {
 			return fmt.Errorf("chown %s: %w", d.Path, err)
-		}
-		if owned {
-			if err := refuseSymlink(d.Path); err != nil {
-				return err
-			}
 		}
 		if err := os.Chmod(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("chmod %s: %w", d.Path, err)
 		}
+	}
+	return nil
+}
+
+// setOwnedDir sets owner and mode on a directory mailadmin owns. The directory is
+// opened with O_DIRECTORY|O_NOFOLLOW, so a link at the path fails the open, and the
+// owner and mode are applied to the descriptor, so a later swap cannot redirect them.
+func setOwnedDir(d HostDir) error {
+	user, group, ok := strings.Cut(d.Owner, ":")
+	if !ok {
+		return fmt.Errorf("owner %q: want user:group", d.Owner)
+	}
+	uid, err := lookupUID(user)
+	if err != nil {
+		return err
+	}
+	gid, err := lookupGID(group)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(d.Path, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- fixed host paths
+	if err != nil {
+		return fmt.Errorf("open %s (a symlink here is refused): %w", d.Path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Chown(uid, gid); err != nil {
+		return fmt.Errorf("chown %s: %w", d.Path, err)
+	}
+	if err := f.Chmod(d.Mode); err != nil {
+		return fmt.Errorf("chmod %s: %w", d.Path, err)
 	}
 	return nil
 }

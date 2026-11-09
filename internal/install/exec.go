@@ -39,6 +39,9 @@ func (r resolvingExec) Run(ctx context.Context, stdin []byte, argv ...string) (s
 
 // lookTrusted returns the first regular executable named name in trustedDirs.
 func lookTrusted(name string) (string, error) {
+	if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return "", fmt.Errorf("%q is not a bare command name", name)
+	}
 	for _, dir := range trustedDirs {
 		p := filepath.Join(dir, name)
 		fi, err := os.Stat(p)
@@ -47,4 +50,14 @@ func lookTrusted(name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s: not found in %s", name, strings.Join(trustedDirs, ":"))
+}
+
+// trustedBin returns the absolute path of name in trustedDirs. Wrappers such as env and
+// runuser look up their inner command through the inherited PATH, so the inner command
+// is passed as an absolute path. A name outside trustedDirs is returned unchanged.
+func trustedBin(name string) string {
+	if p, err := lookTrusted(name); err == nil {
+		return p
+	}
+	return name
 }

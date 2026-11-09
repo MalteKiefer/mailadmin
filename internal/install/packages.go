@@ -37,12 +37,12 @@ func PostfixPreseed(hostname string) []byte {
 
 // aptEnv runs apt-get without prompts.
 func aptEnv(args ...string) []string {
-	return append([]string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-y", "--no-install-recommends"}, args...)
+	return append([]string{"env", "DEBIAN_FRONTEND=noninteractive", trustedBin("apt-get"), "-y", "--no-install-recommends"}, args...)
 }
 
 // AptUpdate refreshes the package index.
 func AptUpdate(ctx context.Context, x Exec) error {
-	if _, err := x.Run(ctx, nil, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update"); err != nil {
+	if _, err := x.Run(ctx, nil, "env", "DEBIAN_FRONTEND=noninteractive", trustedBin("apt-get"), "update"); err != nil {
 		return fmt.Errorf("apt-get update: %w", err)
 	}
 	return nil

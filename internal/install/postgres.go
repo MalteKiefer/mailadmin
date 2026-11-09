@@ -39,6 +39,10 @@ func checkIdent(name string) error {
 // asPostgres runs a command as the postgres OS user, which has peer-auth access
 // to the cluster through the unix socket.
 func asPostgres(argv ...string) []string {
+	// runuser looks up its command through PATH, so the command is passed as an absolute path.
+	if len(argv) > 0 {
+		argv = append([]string{trustedBin(argv[0])}, argv[1:]...)
+	}
 	return append([]string{"runuser", "-u", "postgres", "--"}, argv...)
 }
 

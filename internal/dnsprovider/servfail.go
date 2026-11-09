@@ -174,7 +174,7 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 			for _, rec := range rs.Records {
 				values = append(values, rec.Content)
 				if rec.Disabled {
-					disabled[rec.Content] = true
+					disabled[contentKey(rec.Content)] = true
 				}
 			}
 			if rs.TTL > 0 {
@@ -187,7 +187,7 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	}
 	// The value being published is enabled, even if the zone held it disabled.
 	if newVal != "" {
-		delete(disabled, newVal)
+		delete(disabled, contentKey(newVal))
 	}
 	if newVal != "" && !containsValue(values, newVal) {
 		values = append(values, newVal)
@@ -199,7 +199,7 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	} else {
 		rrset.ChangeType = "REPLACE"
 		for _, v := range values {
-			rrset.Records = append(rrset.Records, pdnsRecord{Content: v, Disabled: disabled[v]})
+			rrset.Records = append(rrset.Records, pdnsRecord{Content: v, Disabled: disabled[contentKey(v)]})
 		}
 	}
 	return s.do(ctx, http.MethodPatch, s.zonePath(domain), map[string]any{"rrsets": []pdnsRRset{rrset}}, nil)
@@ -264,3 +264,7 @@ func withDot(s string) string {
 
 // compile-time assertion.
 var _ Provider = (*Servfail)(nil)
+
+// contentKey normalises record content the way containsValue and removeValue compare
+// it (case and surrounding space), so a disabled record is found whatever its spelling.
+func contentKey(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
