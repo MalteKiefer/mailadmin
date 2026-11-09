@@ -353,6 +353,10 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("backup restore: dkim: %w", err)
 	}
+	// Checked before the copy: a link here would send the keys into another directory.
+	if err := refuseSymlinkDir(cfg.Mail.DKIMDir); err != nil {
+		return fmt.Errorf("backup restore: dkim: %w", err)
+	}
 	if _, err := backup.CopyTree(src, cfg.Mail.DKIMDir); err != nil {
 		return fmt.Errorf("backup restore: dkim: %w", err)
 	}
@@ -362,6 +366,11 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 // chownDKIM gives the restored key directory the owner the installer uses.
 // rspamd runs as _rspamd and cannot read keys that root owns.
 func chownDKIM(dir string) error {
+	// ReadDir and the chown calls below follow a link at dir, so refuse one first.
+	// Root must never change the owner of entries outside the key directory.
+	if err := refuseSymlinkDir(dir); err != nil {
+		return err
+	}
 	owner, err := user.Lookup("mailadmin")
 	if err != nil {
 		return fmt.Errorf("lookup mailadmin: %w", err)
@@ -391,6 +400,19 @@ func chownDKIM(dir string) error {
 		if err := os.Lchown(filepath.Join(dir, e.Name()), uid, gid); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// refuseSymlinkDir returns an error when path is a symbolic link. Lstat is used,
+// so the link itself is checked rather than its target.
+func refuseSymlinkDir(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink, refusing", path)
 	}
 	return nil
 }

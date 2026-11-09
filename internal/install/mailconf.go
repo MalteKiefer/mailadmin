@@ -353,17 +353,22 @@ for f in "$key" "$key.pub"; do
   if [ -L "$f" ]; then rm -f -- "$f"; fi
 done
 [ -e "$key" ] && exit 0
-# A failed run must not leave a partial key or a stub .pub behind. A stub would make
-# every later run fail on noclobber, and a truncated key would be accepted as done.
-trap 'rc=$?; if [ "$rc" -ne 0 ]; then rm -f -- "$key" "$key.pub"; fi' EXIT
+# Generate in a temp dir beside the key directory, then rename both files into place.
+# The temp dir sits in the parent of the key directory, which mailadmin does not own, so
+# root never writes through a path mailadmin controls. The key is renamed last: it is
+# the commit point, so a run that dies midway leaves no key and the next run starts
+# over. Signals go through the EXIT trap as well, which removes the temp dir.
+base=$(dirname "$dir")
+[ "$(stat -c %U "$base")" != mailadmin ] || { echo "refusing: $base is owned by mailadmin" >&2; exit 2; }
+tmp=$(mktemp -d "$base/.dkim-gen.XXXXXX")
+trap 'rc=$?; rm -rf -- "$tmp"; exit "$rc"' EXIT
+trap 'exit 1' HUP INT TERM
 umask 027
-rm -f -- "$key.pub"
-set -C
-/usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$key" -o dns > "$key.pub"
-set +C
-trap - EXIT
-chown -h mailadmin:_rspamd "$key" "$key.pub"
-chmod 0640 "$key" "$key.pub"
+/usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$tmp/key" -o dns > "$tmp/key.pub"
+chown mailadmin:_rspamd "$tmp/key" "$tmp/key.pub"
+chmod 0640 "$tmp/key" "$tmp/key.pub"
+mv -f -- "$tmp/key.pub" "$key.pub"
+mv -f -- "$tmp/key" "$key"
 `
 
 // CertSyncHelper copies the certificate Caddy obtained for the mail host into
@@ -387,16 +392,19 @@ pending=` + TLSDir + `/pending
 marker=/var/lib/mailadmin/.cert-reload-pending
 changed=0
 
-# install_pair copies a certificate and key into place and records any change.
+# install_pair copies a certificate and key into place and records any change. Both files
+# are staged first, so a failed copy leaves the live pair alone. Only then are they renamed,
+# which keeps a copy error from leaving the new certificate next to the old key.
 install_pair() {
-	for pair in "$1:` + TLSFullchain + `" "$2:` + TLSPrivkey + `"; do
-		src=${pair%%:*}; dst=${pair#*:}
-		if ! cmp -s "$src" "$dst" 2>/dev/null; then
-			install -o root -g root -m 0600 "$src" "$dst.new"
-			mv "$dst.new" "$dst"
-			changed=1
-		fi
-	done
+	fc_new=0; pk_new=0
+	if ! cmp -s "$1" ` + TLSFullchain + ` 2>/dev/null; then
+		install -o root -g root -m 0600 "$1" ` + TLSFullchain + `.new; fc_new=1
+	fi
+	if ! cmp -s "$2" ` + TLSPrivkey + ` 2>/dev/null; then
+		install -o root -g root -m 0600 "$2" ` + TLSPrivkey + `.new; pk_new=1
+	fi
+	if [ "$fc_new" = 1 ]; then mv ` + TLSFullchain + `.new ` + TLSFullchain + `; changed=1; fi
+	if [ "$pk_new" = 1 ]; then mv ` + TLSPrivkey + `.new ` + TLSPrivkey + `; changed=1; fi
 }
 
 # The newest <host>.crt under the Caddy store. Its key is taken from the same directory.

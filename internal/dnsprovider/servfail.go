@@ -165,11 +165,17 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	}
 	name := withDot(fqdnName)
 	var values []string
+	// disabled keeps the records the zone holds switched off. REPLACE sends the whole
+	// set back, so a record missing from this map would be switched on again.
+	disabled := map[string]bool{}
 	curTTL := ttl
 	for _, rs := range z.RRsets {
 		if strings.EqualFold(rs.Name, name) && strings.EqualFold(rs.Type, typ) {
 			for _, rec := range rs.Records {
 				values = append(values, rec.Content)
+				if rec.Disabled {
+					disabled[rec.Content] = true
+				}
 			}
 			if rs.TTL > 0 {
 				curTTL = rs.TTL
@@ -178,6 +184,10 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	}
 	if oldVal != "" {
 		values = removeValue(values, oldVal)
+	}
+	// The value being published is enabled, even if the zone held it disabled.
+	if newVal != "" {
+		delete(disabled, newVal)
 	}
 	if newVal != "" && !containsValue(values, newVal) {
 		values = append(values, newVal)
@@ -189,7 +199,7 @@ func (s *Servfail) writeSet(ctx context.Context, domain, fqdnName, typ string, t
 	} else {
 		rrset.ChangeType = "REPLACE"
 		for _, v := range values {
-			rrset.Records = append(rrset.Records, pdnsRecord{Content: v})
+			rrset.Records = append(rrset.Records, pdnsRecord{Content: v, Disabled: disabled[v]})
 		}
 	}
 	return s.do(ctx, http.MethodPatch, s.zonePath(domain), map[string]any{"rrsets": []pdnsRRset{rrset}}, nil)

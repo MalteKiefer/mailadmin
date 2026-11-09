@@ -44,6 +44,13 @@ func CopyTree(src, dst string) (CopyResult, error) {
 		return res, fmt.Errorf("backup: open %s: %w", dst, err)
 	}
 	defer func() { _ = root.Close() }()
+	// Sources are opened through a root too, so a directory swapped for a link
+	// after the walk cannot make the copy read a path outside src.
+	srcRoot, err := os.OpenRoot(src)
+	if err != nil {
+		return res, fmt.Errorf("backup: open %s: %w", src, err)
+	}
+	defer func() { _ = srcRoot.Close() }()
 
 	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -61,7 +68,7 @@ func CopyTree(src, dst string) (CopyResult, error) {
 		case !d.Type().IsRegular():
 			return nil // sockets, devices, etc.: not meaningful to back up
 		default:
-			n, cerr := copyIntoRoot(root, path, rel)
+			n, cerr := copyIntoRoot(root, srcRoot, rel)
 			if cerr != nil {
 				return cerr
 			}
@@ -76,24 +83,23 @@ func CopyTree(src, dst string) (CopyResult, error) {
 	return res, nil
 }
 
-// copyIntoRoot copies the regular file src to rel inside root. The final path
-// component must not be a symlink (O_NOFOLLOW), and root refuses any path that
-// would leave dst.
-func copyIntoRoot(root *os.Root, src, rel string) (int64, error) {
-	// The walk classified src earlier, so it can have been swapped since. O_NOFOLLOW
-	// refuses a symlink, and O_NONBLOCK keeps a swapped-in FIFO from blocking the open.
-	// The regular-file check runs on the opened descriptor, so it covers what is read.
-	in, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- path from an operator-configured tree, see CopyTree
+// copyIntoRoot copies the file rel from srcRoot to rel inside root. Both roots
+// refuse any path that would leave their tree, including through a symlink that
+// was swapped in after the walk classified it. O_NOFOLLOW keeps a final link
+// from being followed, and O_NONBLOCK keeps a swapped-in FIFO from blocking.
+func copyIntoRoot(root, srcRoot *os.Root, rel string) (int64, error) {
+	in, err := srcRoot.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = in.Close() }()
+	// The regular-file check runs on the opened descriptor, so it covers what is read.
 	info, err := in.Stat()
 	if err != nil {
 		return 0, err
 	}
 	if !info.Mode().IsRegular() {
-		return 0, fmt.Errorf("%s is not a regular file", src)
+		return 0, fmt.Errorf("%s is not a regular file", rel)
 	}
 
 	out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, info.Mode().Perm())

@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"mailadmin/migrations"
 )
@@ -206,7 +208,17 @@ func ensureLine(path, line string, prepend bool) error {
 		}
 		out += line + "\n"
 	}
-	if err := os.WriteFile(path, []byte(out), 0); err != nil { // #nosec G703 -- fixed installer paths (hba, ident, fstab, sshd), never user input; mode 0 keeps the existing mode
+	// The file is replaced through a temp file, never truncated in place: a kill or a full
+	// disk midway must not leave the live auth file empty. Owner and mode are kept.
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("stat %s: no owner information", path)
+	}
+	if err := writeAtomicOwned(path, []byte(out), fi.Mode().Perm(), strconv.Itoa(int(st.Uid)), strconv.Itoa(int(st.Gid))); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

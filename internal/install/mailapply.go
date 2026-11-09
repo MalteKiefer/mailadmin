@@ -72,6 +72,10 @@ func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(f 
 	if err := tmp.Chmod(mode); err != nil {
 		return fail(fmt.Errorf("chmod %s: %w", path, err))
 	}
+	// Data must reach the disk before the rename, or a power loss can leave an empty file under the final name.
+	if err := tmp.Sync(); err != nil {
+		return fail(fmt.Errorf("sync %s: %w", path, err))
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
 		return fmt.Errorf("close %s: %w", path, err)
@@ -239,6 +243,12 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 		_ = tmp.Close()
 		_ = os.Remove(name)
 		return fmt.Errorf("write %s: %w", NftPersistPath, err)
+	}
+	// Synced before the rename, or a power loss can leave an empty table file at boot.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return fmt.Errorf("sync %s: %w", NftPersistPath, err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
