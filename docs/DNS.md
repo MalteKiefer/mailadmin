@@ -260,7 +260,10 @@ else
   sleep 3900            # > TLSA TTL (deSEC minimum is 3600)
 fi
 rm -rf "$prev"
-systemctl reload-or-restart postfix dovecot || true
+if ! systemctl reload-or-restart postfix dovecot; then
+  echo "mail-cert-deploy: reload failed, postfix and dovecot still serve the old certificate; reload them by hand" >&2
+  exit 1
+fi
 ```
 
 Because the script sleeps out the TTL, give the oneshot service an unbounded start

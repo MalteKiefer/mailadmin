@@ -12,6 +12,9 @@ func TestParseSSHPorts(t *testing.T) {
 	}{
 		{"default", "PermitRootLogin no\n", []int{22}},
 		{"port line", "Port 2222\n", []int{2222}},
+		{"port with equals", "Port=2222\n", []int{2222}},
+		{"port with spaced equals", "Port = 2222\n", []int{2222}},
+		{"listen address with equals", "ListenAddress = 0.0.0.0:2200\n", []int{2200}},
 		{"listen address with port", "ListenAddress 0.0.0.0:2200\n", []int{2200}},
 		{"listen address ipv6 with port", "ListenAddress [::]:2201\n", []int{2201}},
 		{"bare ipv6 listen address keeps default", "ListenAddress ::\n", []int{22}},

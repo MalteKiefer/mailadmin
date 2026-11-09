@@ -36,7 +36,8 @@ func parseSSHPorts(config string) []int {
 		}
 	}
 	for _, line := range strings.Split(config, "\n") {
-		fields := strings.Fields(line)
+		// sshd accepts "Keyword value" and "Keyword=value", with optional blanks around "=".
+		fields := strings.Fields(strings.Replace(line, "=", " ", 1))
 		if len(fields) != 2 {
 			continue
 		}

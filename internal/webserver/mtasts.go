@@ -8,11 +8,10 @@ import (
 
 // MTASTSPolicy renders the policy served at /.well-known/mta-sts.txt. Every
 // hosted domain delivers to the same mail host, so one policy covers them all.
-// The mode is "testing": receivers report failures instead of refusing mail,
-// so a broken TLS setup does not block delivery. Switch to "enforce" once the
-// reports look clean.
+// The mode is "enforce", the same mode that mtaStsReady and the doctor check
+// require before an _mta-sts record is published.
 func MTASTSPolicy(mxHost string) string {
-	return fmt.Sprintf("version: STSv1\nmode: testing\nmx: %s\nmax_age: 604800\n", mxHost)
+	return fmt.Sprintf("version: STSv1\nmode: enforce\nmx: %s\nmax_age: 604800\n", mxHost)
 }
 
 // WriteMTASTSPolicy writes the policy file under the MTA-STS web root that the

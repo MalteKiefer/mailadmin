@@ -282,6 +282,12 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		return fmt.Errorf("autodiscovery include: %w", err)
 	}
 	// Autodiscovery covers every domain. MTA-STS advertises an enforce policy, so only active domains get it.
+	// The policy file must exist before the vhost serves it, or the endpoint answers 404.
+	if len(active) > 0 {
+		if err := wm.WriteMTASTSPolicy(ans.Hostname); err != nil {
+			return fmt.Errorf("mta-sts policy: %w", err)
+		}
+	}
 	if err := wm.SyncMTASTS(pctx, active); err != nil {
 		return fmt.Errorf("mta-sts include: %w", err)
 	}

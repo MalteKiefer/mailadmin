@@ -100,11 +100,15 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 		}
 		return fmt.Errorf("create %s: %w", path, err)
 	}
+	// A failed write must not leave a truncated file under its final name, or a later
+	// run would accept it as already existing.
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
+		_ = os.Remove(path)
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return fmt.Errorf("close %s: %w", path, err)
 	}
 	return nil

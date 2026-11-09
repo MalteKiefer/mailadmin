@@ -333,7 +333,7 @@ esac
 tmp=$(mktemp /etc/nftables.d/.mailadmin.XXXXXX)
 # "destroy" first, so reloading the file replaces the table instead of duplicating it.
 { echo 'destroy table inet mailadmin'; echo '# Managed by mailadmin install.'; /usr/sbin/nft list table inet mailadmin; } > "$tmp"
-chmod 0644 "$tmp"
+chmod 0600 "$tmp"
 mv "$tmp" ` + NftPersistPath + `
 `
 
@@ -353,10 +353,15 @@ for f in "$key" "$key.pub"; do
   if [ -L "$f" ]; then rm -f -- "$f"; fi
 done
 [ -e "$key" ] && exit 0
+# A failed run must not leave a partial key or a stub .pub behind. A stub would make
+# every later run fail on noclobber, and a truncated key would be accepted as done.
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then rm -f -- "$key" "$key.pub"; fi' EXIT
 umask 027
+rm -f -- "$key.pub"
 set -C
 /usr/bin/rspamadm dkim_keygen -d "$domain" -s "$selector" -b 2048 -k "$key" -o dns > "$key.pub"
 set +C
+trap - EXIT
 chown -h mailadmin:_rspamd "$key" "$key.pub"
 chmod 0640 "$key" "$key.pub"
 `
@@ -401,7 +406,8 @@ key=$(dirname "$crt")/$host.key
 if [ -e "$pending/since" ]; then
 	# Phase two: install the pair that the TLSA record already pins, once the TTL has passed.
 	since=$(cat "$pending/since")
-	case "$since" in ''|*[!0-9]*) since=0 ;; esac
+	# A corrupt marker restarts the wait. It never skips it.
+case "$since" in ''|*[!0-9]*) since=$(date +%s); date +%s > "$pending/since" ;; esac
 	if [ $(( $(date +%s) - since )) -lt 3900 ]; then
 		echo "pending certificate for $host waits for the DNS TTL" >&2
 	else
@@ -432,6 +438,7 @@ if [ "$changed" = 1 ] || [ -e "$marker" ]; then
 	if /usr/bin/systemctl reload-or-restart postfix dovecot rspamd >/dev/null 2>&1; then
 		rm -f "$marker"
 	else
+		rm -f -- "$marker"
 		: > "$marker"
 		echo "reload failed, retrying on next run" >&2
 		exit 4

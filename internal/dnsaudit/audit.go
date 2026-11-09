@@ -341,7 +341,12 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts []string, perHost m
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i].live, results[i].err = a.probeCert(ctx, h)
+			// Each probe has its own deadline. A host that accepts TCP but never sends the
+			// greeting must not block the audit, and dane.certFromSTARTTLS only sets a
+			// read deadline when the context carries one.
+			pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			results[i].live, results[i].err = a.probeCert(pctx, h)
+			cancel()
 		}()
 	}
 	wg.Wait()

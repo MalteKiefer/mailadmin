@@ -9,7 +9,7 @@ import (
 
 func TestMTASTSPolicyContent(t *testing.T) {
 	got := MTASTSPolicy("mail.example.com")
-	for _, want := range []string{"version: STSv1", "mode: testing", "mx: mail.example.com", "max_age: 604800"} {
+	for _, want := range []string{"version: STSv1", "mode: enforce", "mx: mail.example.com", "max_age: 604800"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("policy missing %q:\n%s", want, got)
 		}

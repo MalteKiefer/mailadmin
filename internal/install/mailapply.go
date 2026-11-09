@@ -34,8 +34,10 @@ func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group s
 	if err != nil {
 		return err
 	}
-	return writeAtomicWith(path, data, mode, func(name string) error {
-		if err := os.Chown(name, uid, gid); err != nil {
+	// Owner is set on the open descriptor, so a link swapped in at the temp name
+	// cannot redirect the chown to another file.
+	return writeAtomicWith(path, data, mode, func(f *os.File) error {
+		if err := f.Chown(uid, gid); err != nil {
 			return fmt.Errorf("chown %s: %w", path, err)
 		}
 		return nil
@@ -44,7 +46,7 @@ func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group s
 
 // writeAtomicWith is the shared temp-file-and-rename path. prepare, when set, runs
 // on the temp file before it is renamed into place.
-func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(name string) error) error {
+func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(f *os.File) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- config directories
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
@@ -53,24 +55,26 @@ func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(na
 		return fmt.Errorf("temp for %s: %w", path, err)
 	}
 	name := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
+	fail := func(err error) error {
 		_ = tmp.Close()
 		_ = os.Remove(name)
-		return fmt.Errorf("write %s: %w", path, err)
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fail(fmt.Errorf("write %s: %w", path, err))
+	}
+	// prepare and the mode change act on the open descriptor, never on the name.
+	if prepare != nil {
+		if err := prepare(tmp); err != nil {
+			return fail(err)
+		}
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		return fail(fmt.Errorf("chmod %s: %w", path, err))
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
 		return fmt.Errorf("close %s: %w", path, err)
-	}
-	if prepare != nil {
-		if err := prepare(name); err != nil {
-			_ = os.Remove(name)
-			return err
-		}
-	}
-	if err := os.Chmod(name, mode); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("chmod %s: %w", path, err)
 	}
 	if err := os.Rename(name, path); err != nil {
 		_ = os.Remove(name)
