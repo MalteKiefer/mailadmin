@@ -17,3 +17,6 @@ secrets.env
 .DS_Store
 *.swp
 .worktrees/
+
+# Claude Code local state (checkpoints, settings)
+.claude/

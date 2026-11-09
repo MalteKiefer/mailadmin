@@ -161,7 +161,8 @@ type MigrateResult struct {
 // Migrate creates every record from `records` at the target provider, skipping
 // any that already exist there. NS/SOA are never copied — delegation belongs to
 // the target zone. It never deletes. Returns per-record outcomes.
-func Migrate(ctx context.Context, target Provider, domain string, records []Record) (MigrateResult, error) {
+func Migrate(ctx context.Context, target Provider, domain string, records []Record) (res MigrateResult, err error) {
+	defer flushInto(ctx, target, domain, &err)
 	live, err := target.ListRecords(ctx, domain)
 	if err != nil {
 		return MigrateResult{}, fmt.Errorf("list target %s: %w", domain, err)
@@ -170,7 +171,6 @@ func Migrate(ctx context.Context, target Provider, domain string, records []Reco
 	for _, r := range live {
 		present[r.identity()+"\x00"+strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.Content), "."))] = struct{}{}
 	}
-	var res MigrateResult
 	for _, r := range records {
 		if r.Type == "NS" || r.Type == "SOA" {
 			continue

@@ -455,6 +455,10 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		return err
 	}
 
+	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
+		return err
+	}
+
 	// Optionally create the zone at the target first (deSEC) and show delegation.
 	if create {
 		zm, ok := target.(dnsprovider.ZoneManager)
@@ -480,18 +484,21 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		}
 		n, cerr := dnsMigrateClean(ctx(cmd), target, domain)
 		if cerr != nil {
+			// Deletions may already be live without their rectify. Flush them and
+			// report both failures. On success Migrate's deferred flush covers the batch.
+			if ferr := dnsprovider.FlushBatch(ctx(cmd), target, domain); ferr != nil {
+				cerr = errors.Join(cerr, ferr)
+			}
 			return fmt.Errorf("dns migrate %s: clean target: %w", domain, cerr)
 		}
 		r.Message("cleaned %d record(s) at %s", n, to)
 	}
 
-	if err := a.confirm(fmt.Sprintf("Copy %d record(s) into %s at %s?", len(records), domain, to)); err != nil {
-		return err
-	}
 	res, err := dnsprovider.Migrate(ctx(cmd), target, domain, records)
-	if err != nil {
+	if err != nil && len(res.Created) == 0 {
 		return fmt.Errorf("dns migrate %s: %w", domain, err)
 	}
+	// Records created before a failed rectify are live, so audit and report them first.
 	if rec, aerr := a.auditor(ctx(cmd)); aerr == nil {
 		_ = rec.Record(ctx(cmd), "dns.migrate", domain, nil, map[string]any{
 			"target": to, "created": len(res.Created), "skipped": len(res.Skipped), "failed": len(res.Failed),
@@ -499,6 +506,9 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 	}
 	r.Message("migrated to %s: %d created, %d already present, %d failed",
 		to, len(res.Created), len(res.Skipped), len(res.Failed))
+	if err != nil {
+		return fmt.Errorf("dns migrate %s: %w", domain, err)
+	}
 
 	// Offer to point the domain at the target so `dns publish` (and DANE) manage
 	// it going forward — migrate only copies records, it never changes the row.
@@ -930,18 +940,27 @@ func (a *App) offerStaleDelete(cmd *cobra.Command, be *dnsBackends, domain strin
 		return err
 	}
 	deleted := make([]dnsprovider.Record, 0, len(sel))
+	var loopErr error
 	for _, i := range sel {
 		rec := stale[i]
 		if rec.ID == "" {
 			continue
 		}
 		if err := be.provider.RemoveRecord(ctx(cmd), domain, rec.ID); err != nil {
-			return fmt.Errorf("delete %s %s: %w", rec.Type, rec.Name, err)
+			loopErr = fmt.Errorf("delete %s %s: %w", rec.Type, rec.Name, err)
+			break
 		}
 		deleted = append(deleted, rec)
 	}
+	flushErr := dnsprovider.FlushBatch(ctx(cmd), be.provider, domain)
+	if loopErr == nil {
+		loopErr = flushErr
+	}
 	if err := be.rec.Record(ctx(cmd), "dns.prune", domain, deleted, nil); err != nil {
 		return err
+	}
+	if loopErr != nil {
+		return loopErr
 	}
 	r.Message("deleted %d stale record(s) from %s", len(deleted), domain)
 	return nil
@@ -982,6 +1001,11 @@ func (a *App) dnsPublish(cmd *cobra.Command, rawDomain string, withMTASTS bool) 
 	}
 
 	applied, err := dnsprovider.Reconcile(ctx(cmd), be.provider, domain, desired)
+	if err != nil && len(applied) > 0 {
+		if rerr := be.rec.Record(ctx(cmd), "dns.publish", domain, nil, changeSummary(applied)); rerr != nil {
+			return fmt.Errorf("dns publish %s: %w (audit also failed: %v)", domain, err, rerr)
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("dns publish %s: %w", domain, err)
 	}
@@ -1051,11 +1075,16 @@ func (a *App) dnsPublishDANE(cmd *cobra.Command, rawDomain string) error {
 	if err := a.confirm(fmt.Sprintf("Publish TLSA %s (%s) at %s?", rec.Name, rec.Content, be.provider.Name())); err != nil {
 		return err
 	}
-	if err := be.provider.AddRecord(ctx(cmd), domain, rec); err != nil {
-		return fmt.Errorf("dns publish %s: %w", domain, err)
+	addErr := be.provider.AddRecord(ctx(cmd), domain, rec)
+	if addErr != nil {
+		return fmt.Errorf("dns publish %s: %w", domain, addErr)
 	}
+	flushErr := dnsprovider.FlushBatch(ctx(cmd), be.provider, domain)
 	if err := be.rec.Record(ctx(cmd), "dns.publish.dane", domain, nil, map[string]any{"name": rec.Name, "value": rec.Content}); err != nil {
 		return err
+	}
+	if flushErr != nil {
+		return fmt.Errorf("dns publish %s: TLSA is live but rectify failed: %w", domain, flushErr)
 	}
 	r.Message("published TLSA %s at %s (stale TLSA, if any, remove after one TTL)", rec.Name, be.provider.Name())
 	return r.TypeTable(recordsTable([]dnsprovider.Record{rec}), 0)
@@ -1100,11 +1129,18 @@ func (a *App) dnsTakeover(cmd *cobra.Command, rawDomain string, keepWeb, withMTA
 	}
 
 	res, err := dnsprovider.ReplaceAll(ctx(cmd), be.provider, domain, be.cfg.Backup.DNSBackupDir, desired, keepWeb)
-	if err != nil {
+	if err != nil && len(res.Removed)+len(res.Added) == 0 {
 		return fmt.Errorf("dns takeover %s: %w", domain, err)
 	}
-	if err := be.rec.Record(ctx(cmd), "dns.takeover", domain, nil, res); err != nil {
-		return err
+	// The zone may already be changed when the rectify fails. The audit row and
+	// the backup path are written before the error is returned.
+	if rerr := be.rec.Record(ctx(cmd), "dns.takeover", domain, nil, res); rerr != nil && err == nil {
+		return rerr
+	}
+	if err != nil {
+		r.Message("takeover of %s incomplete: removed %d, added %d, backup %s",
+			domain, len(res.Removed), len(res.Added), res.BackupPath)
+		return fmt.Errorf("dns takeover %s: %w", domain, err)
 	}
 	r.Message("takeover of %s complete: removed %d, added %d, backup %s",
 		domain, len(res.Removed), len(res.Added), res.BackupPath)
@@ -1141,14 +1177,19 @@ func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error
 		return err
 	}
 
-	if err := dnsprovider.Restore(ctx(cmd), be.provider, domain, snap); err != nil {
-		return fmt.Errorf("dns restore %s: %w", domain, err)
-	}
-	if err := be.rec.Record(ctx(cmd), "dns.restore", domain, nil, map[string]any{
+	rerr := dnsprovider.Restore(ctx(cmd), be.provider, domain, snap)
+	detail := map[string]any{
 		"backup":  backupPath,
 		"records": len(snap.Records),
-	}); err != nil {
+	}
+	if rerr != nil {
+		detail["error"] = rerr.Error()
+	}
+	if err := be.rec.Record(ctx(cmd), "dns.restore", domain, nil, detail); err != nil && rerr == nil {
 		return err
+	}
+	if rerr != nil {
+		return fmt.Errorf("dns restore %s: %w", domain, rerr)
 	}
 	r.Message("restored %d record(s) for %s from %s", len(snap.Records), domain, backupPath)
 	return r.Table(recordsTable(snap.Records))

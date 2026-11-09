@@ -248,6 +248,11 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 		return fmt.Errorf("get domain: %w", gerr)
 	}
 
+	if _, gerr := d.GetMailbox(c, local, dom); gerr == nil {
+		return fmt.Errorf("%w: mailbox %s@%s already exists, use mailbox passwd, set-quota or enable", ErrUsage, local, dom)
+	} else if !errors.Is(gerr, pgx.ErrNoRows) {
+		return fmt.Errorf("get mailbox: %w", gerr)
+	}
 	if a.flags.dryRun {
 		r.Message("dry-run: would add mailbox %s@%s (quota %d bytes)", local, dom, quotaBytes)
 		return nil
@@ -263,7 +268,9 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 	}
 
 	mb := db.Mailbox{Username: local, Domain: dom, Password: hash, QuotaBytes: quotaBytes}
-	if err := d.CreateMailbox(c, mb); err != nil {
+	if err := d.CreateMailbox(c, mb); errors.Is(err, db.ErrExists) {
+		return fmt.Errorf("%w: mailbox %s@%s already exists, use mailbox passwd, set-quota or enable", ErrUsage, local, dom)
+	} else if err != nil {
 		return fmt.Errorf("create mailbox: %w", err)
 	}
 
@@ -688,6 +695,9 @@ func (a *App) appPasswordAdd(cmd *cobra.Command, address, label string) error {
 		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
 	label, verr = validLabel(label)
+	if verr == nil {
+		verr = checkNewLabel(label)
+	}
 	if verr != nil {
 		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
@@ -730,6 +740,7 @@ func (a *App) appPasswordAdd(cmd *cobra.Command, address, label string) error {
 		_ = rec.Record(c, "mailbox.app-password.add", local+"@"+dom, nil, map[string]any{"label": label})
 	}
 
+	r.Message("login: %s+%s", m.Address(), label)
 	res := appPasswordResult{Address: m.Address(), Label: label, Password: plaintext}
 	if r.Format() != output.FormatJSON {
 		r.Message("app password for %s (label: %s):", m.Address(), label)

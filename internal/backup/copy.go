@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // CopyResult reports what CopyTree copied.
@@ -21,7 +22,8 @@ type CopyResult struct {
 //
 // Symlinks and other non-regular entries are skipped, never followed: a
 // crafted symlink under a key or config directory must not let a copy read or
-// overwrite a path outside src/dst.
+// overwrite a path outside src/dst. All writes go through an os.Root on dst, so
+// a symlinked directory inside dst cannot redirect a write outside it either.
 func CopyTree(src, dst string) (CopyResult, error) {
 	var res CopyResult
 	info, err := os.Lstat(src)
@@ -34,6 +36,14 @@ func CopyTree(src, dst string) (CopyResult, error) {
 	if !info.IsDir() {
 		return res, fmt.Errorf("backup: %s is not a directory", src)
 	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return res, fmt.Errorf("backup: copy %s: %w", src, err)
+	}
+	root, err := os.OpenRoot(dst)
+	if err != nil {
+		return res, fmt.Errorf("backup: open %s: %w", dst, err)
+	}
+	defer func() { _ = root.Close() }()
 
 	err = filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -43,16 +53,15 @@ func CopyTree(src, dst string) (CopyResult, error) {
 		if rerr != nil {
 			return rerr
 		}
-		target := filepath.Join(dst, rel)
 		switch {
 		case d.IsDir():
-			return os.MkdirAll(target, 0o700)
+			return root.MkdirAll(rel, 0o700)
 		case d.Type()&os.ModeSymlink != 0:
 			return nil // never follow symlinks into or out of the tree
 		case !d.Type().IsRegular():
 			return nil // sockets, devices, etc.: not meaningful to back up
 		default:
-			n, cerr := CopyFile(path, target)
+			n, cerr := copyIntoRoot(root, path, rel)
 			if cerr != nil {
 				return cerr
 			}
@@ -67,10 +76,47 @@ func CopyTree(src, dst string) (CopyResult, error) {
 	return res, nil
 }
 
+// copyIntoRoot copies the regular file src to rel inside root. The final path
+// component must not be a symlink (O_NOFOLLOW), and root refuses any path that
+// would leave dst.
+func copyIntoRoot(root *os.Root, src, rel string) (int64, error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return 0, err
+	}
+	in, err := os.Open(src) // #nosec G304 -- path from an operator-configured tree, see CopyTree
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, info.Mode().Perm())
+	if err != nil {
+		return 0, err
+	}
+	n, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return n, copyErr
+	}
+	return n, closeErr
+}
+
 // CopyFile copies one regular file from src to dst, preserving src's file
-// mode and creating dst's parent directory (0700) if needed. It returns the
-// number of bytes copied.
+// mode and creating dst's parent directory (0700) if needed. A symlink at dst
+// is refused. It returns the number of bytes copied.
 func CopyFile(src, dst string) (int64, error) {
+	return copyFile(src, dst, syscall.O_NOFOLLOW)
+}
+
+// CopyFileFollow is CopyFile for an operator-owned target that may legitimately
+// be a symlink, such as a config file managed through a link. The write follows
+// the link. Use CopyFile for anything inside a backup tree.
+func CopyFileFollow(src, dst string) (int64, error) {
+	return copyFile(src, dst, 0)
+}
+
+func copyFile(src, dst string, extraFlags int) (int64, error) {
 	info, err := os.Stat(src)
 	if err != nil {
 		return 0, fmt.Errorf("backup: stat %s: %w", src, err)
@@ -91,7 +137,7 @@ func CopyFile(src, dst string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return 0, err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm()) // #nosec G304 -- destination under an operator-configured bundle/target directory
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|extraFlags, info.Mode().Perm()) // #nosec G304 -- destination under an operator-configured bundle/target directory
 	if err != nil {
 		return 0, err
 	}

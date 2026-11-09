@@ -3,7 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -146,7 +148,9 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	if err != nil {
 		return fmt.Errorf("backup create: dkim: %w", err)
 	}
-	components = append(components, backup.ComponentDKIM)
+	if _, serr := os.Stat(cfg.Mail.DKIMDir); serr == nil {
+		components = append(components, backup.ComponentDKIM)
+	}
 
 	// 3. Every mailbox's active Sieve script (addressed the same way
 	// `sieve show`/`sieve set` address one: local@domain via doveadm -u).
@@ -236,6 +240,19 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		components = []string{component}
 	}
 
+	// A bundle from a host without a DKIM directory lists dkim but has no dkim/.
+	// Skip that component so the other components still restore.
+	var kept []string
+	for _, comp := range components {
+		if comp == backup.ComponentDKIM {
+			if _, serr := os.Stat(filepath.Join(bundlePath, backup.DKIMDir)); serr != nil {
+				r.Message("warning: bundle %s has no %s directory, skipping dkim", bundlePath, backup.DKIMDir)
+				continue
+			}
+		}
+		kept = append(kept, comp)
+	}
+	components = kept
 	r.Message("bundle %s — taken %s, mailadmin %s", bundlePath, man.CreatedAt.Format(time.RFC3339), man.MailadminVersion)
 	if len(man.Domains) > 0 {
 		r.Message("  domains: %s", strings.Join(man.Domains, ", "))
@@ -340,7 +357,34 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 	if _, err := backup.CopyTree(src, cfg.Mail.DKIMDir); err != nil {
 		return fmt.Errorf("backup restore: dkim: %w", err)
 	}
-	return nil
+	return chownDKIM(cfg.Mail.DKIMDir)
+}
+
+// chownDKIM gives the restored key directory the owner the installer uses.
+// rspamd runs as _rspamd and cannot read keys that root owns.
+func chownDKIM(dir string) error {
+	owner, err := user.Lookup("mailadmin")
+	if err != nil {
+		return fmt.Errorf("lookup mailadmin: %w", err)
+	}
+	group, err := user.LookupGroup("_rspamd")
+	if err != nil {
+		return fmt.Errorf("lookup _rspamd: %w", err)
+	}
+	uid, err := strconv.Atoi(owner.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(group.Gid)
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(dir, func(p string, _ fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		return os.Lchown(p, uid, gid)
+	})
 }
 
 // restoreSieve replaces and reactivates the managed Sieve script for every
@@ -369,7 +413,7 @@ func (a *App) restoreSieve(cmd *cobra.Command, bundlePath string, man backup.Man
 // restoreConfig overwrites the live config.toml with the bundle's copy.
 func (a *App) restoreConfig(_ *cobra.Command, cfg *config.Config, bundlePath string) error {
 	src := filepath.Join(bundlePath, backup.ConfigFile)
-	if _, err := backup.CopyFile(src, cfg.Path); err != nil {
+	if _, err := backup.CopyFileFollow(src, cfg.Path); err != nil {
 		return fmt.Errorf("backup restore: config: %w", err)
 	}
 	return nil
