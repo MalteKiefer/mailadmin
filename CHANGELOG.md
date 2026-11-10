@@ -24,6 +24,17 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.30.1] - 2026-11-10
+
+### Added
+- `mailadmin webmail-passwd <address>`: the password helper for the webmail. It reads the current and the new password from stdin, checks the current password against the stored hash, then changes it and writes an audit entry. alps calls it through a sudoers rule that allows only this command for the `alps` user.
+- Dovecot creates and advertises the default folders Drafts, Sent, Junk, Trash and Archive (SPECIAL-USE), so webmail clients show them.
+
+### Changed
+- `[webmail]` takes `url` (the alps binary, https) and `sha256` of that binary instead of `version` and the release zip. The alps binary is the upstream main commit 18c1877, which has the `trusted_origins` CSRF option that the v1 release lacks.
+- The alps config lists every plugin explicitly, because one plugin section switches off the plugins it does not name.
+- `sudo` is an installed package.
+
 ## [v1.30.0] - 2026-11-10
 
 ### Added

@@ -60,6 +60,32 @@ protocol imap {
   imap_metadata = yes
 }
 
+# Default folders for clients. Each is created at the first login of a mailbox and
+# advertised with its SPECIAL-USE attribute, so webmail clients find them.
+namespace inbox {
+  inbox = yes
+  mailbox Drafts {
+    special_use = \Drafts
+    auto = subscribe
+  }
+  mailbox Sent {
+    special_use = \Sent
+    auto = subscribe
+  }
+  mailbox Junk {
+    special_use = \Junk
+    auto = subscribe
+  }
+  mailbox Trash {
+    special_use = \Trash
+    auto = subscribe
+  }
+  mailbox Archive {
+    special_use = \Archive
+    auto = subscribe
+  }
+}
+
 ssl = required
 ssl_server {
   cert_file = ` + TLSFullchain + `

@@ -348,6 +348,7 @@ func NewRootCmd() *cobra.Command {
 		newVersionCmd(app),
 		newInstallCmd(app),
 		newUpdateCmd(app),
+		newWebmailPasswdCmd(app),
 		newCompletionCmd(root),
 	)
 	return root

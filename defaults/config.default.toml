@@ -90,10 +90,10 @@ url = ""
 
 [webmail]
 # alps webmail client (https://github.com/migadu/alps), served on domain through Caddy.
-# Off by default. The release zip is refused unless its checksum matches sha256.
+# Off by default. The binary is refused unless its checksum matches sha256.
 enabled = false
 domain = "webmail.example.com"
-version = "v1"
+url = "https://github.com/MalteKiefer/mailadmin/releases/download/v1.30.1/alps-linux-amd64"
 sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 # Local address alps listens on. Caddy proxies the domain to it.
 listen = "127.0.0.1:8081"

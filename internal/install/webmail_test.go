@@ -1,11 +1,7 @@
 package install
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,35 +14,11 @@ import (
 )
 
 func testWebmail() config.Webmail {
-	return config.Webmail{Enabled: true, Domain: "webmail.kiefer-networks.de", Version: "v1",
-		SHA256: strings.Repeat("0", 64), Listen: "127.0.0.1:8081"}
+	return config.Webmail{Enabled: true, Domain: "webmail.kiefer-networks.de",
+		URL: "https://example.org/alps", SHA256: strings.Repeat("0", 64), Listen: "127.0.0.1:8081"}
 }
 
-// releaseZip builds a zip shaped like the upstream release: the binary plus a
-// macOS metadata entry that must be ignored.
-func releaseZip(t *testing.T, bin []byte) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for name, body := range map[string][]byte{
-		"__MACOSX/._alps-linux-amd64": []byte("meta"),
-		"alps-linux-amd64":            bin,
-	} {
-		w, err := zw.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := w.Write(body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func TestAlpsConfPointsAtLocalMail(t *testing.T) {
+func TestAlpsConfPointsAtLocalMailAndHelper(t *testing.T) {
 	var got struct {
 		Server struct {
 			Addr           string   `toml:"addr"`
@@ -60,6 +32,7 @@ func TestAlpsConfPointsAtLocalMail(t *testing.T) {
 		Smtp struct {
 			Server string `toml:"server"`
 		} `toml:"smtp"`
+		Plugin map[string]map[string]any `toml:"plugin"`
 	}
 	if _, err := toml.Decode(AlpsConf(testWebmail(), "mail.kiefer-networks.de"), &got); err != nil {
 		t.Fatalf("alps config is not valid TOML: %v", err)
@@ -73,6 +46,29 @@ func TestAlpsConfPointsAtLocalMail(t *testing.T) {
 	if got.Provider.Imap.Server != "imaps://mail.kiefer-networks.de:993" || got.Smtp.Server != "smtps://mail.kiefer-networks.de:465" {
 		t.Fatalf("mail endpoints = %q, %q", got.Provider.Imap.Server, got.Smtp.Server)
 	}
+	for _, name := range []string{"base", "caldav", "carddav", "gpg", "managesieve", "password"} {
+		if on, _ := got.Plugin[name]["enabled"].(bool); !on {
+			t.Fatalf("plugin %s must stay enabled once plugin sections exist", name)
+		}
+	}
+	pw, _ := got.Plugin["password"]["options"].(map[string]any)
+	cmd, _ := pw["command"].([]any)
+	if len(cmd) != 5 || cmd[0] != "/usr/bin/sudo" || cmd[4] != "{email}" || cmd[3] != "webmail-passwd" {
+		t.Fatalf("password command = %v", cmd)
+	}
+	if stdin, _ := pw["stdin"].(string); stdin != "{old_password}\n{new_password}\n" {
+		t.Fatalf("password stdin = %q", stdin)
+	}
+}
+
+func TestSudoersAllowsOnlyTheHelper(t *testing.T) {
+	out := AlpsSudoersFile()
+	if !strings.Contains(out, "alps ALL=(root) NOPASSWD: "+PasswordHelper+" webmail-passwd *") {
+		t.Fatalf("sudoers rule:\n%s", out)
+	}
+	if strings.Count(out, "NOPASSWD") != 1 {
+		t.Fatalf("more than one rule:\n%s", out)
+	}
 }
 
 func TestCaddyWebmailRoutesDomain(t *testing.T) {
@@ -82,32 +78,13 @@ func TestCaddyWebmailRoutesDomain(t *testing.T) {
 	}
 }
 
-func TestExtractAlpsChecksumAndEntry(t *testing.T) {
-	zipData := releaseZip(t, []byte("ALPS-BINARY"))
-	sum := sha256Hex(zipData)
-	bin, err := ExtractAlps(zipData, sum)
-	if err != nil {
-		t.Fatalf("ExtractAlps: %v", err)
-	}
-	if string(bin) != "ALPS-BINARY" {
-		t.Fatalf("binary = %q", bin)
-	}
-	if _, err := ExtractAlps(zipData, strings.Repeat("f", 64)); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
-		t.Fatalf("wrong checksum must be refused, got %v", err)
-	}
-}
-
 func TestApplyWebmailRefusesBadChecksumBeforeAnyChange(t *testing.T) {
-	zipData := releaseZip(t, []byte("ALPS-BINARY"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(zipData)
+		_, _ = w.Write([]byte("not the pinned binary"))
 	}))
 	defer srv.Close()
-	old := alpsReleaseBase
-	alpsReleaseBase = srv.URL
-	defer func() { alpsReleaseBase = old }()
-
-	w := testWebmail() // pinned sum is all zeros, so the real release never matches
+	w := testWebmail()
+	w.URL = srv.URL + "/alps"
 	x := &fakeExec{}
 	err := ApplyWebmail(context.Background(), x, w, "mail.kiefer-networks.de")
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
@@ -131,15 +108,20 @@ func TestApplyWebmailDisabledDoesNothing(t *testing.T) {
 	}
 }
 
-func sha256Hex(b []byte) string {
-	s := sha256.Sum256(b)
-	return hex.EncodeToString(s[:])
-}
-
-// The webmail needs IMAP METADATA; the managed Dovecot config must enable it.
+// The managed Dovecot config enables IMAP METADATA, which alps needs.
 func TestDovecotConfEnablesMetadata(t *testing.T) {
 	conf := DovecotConf(nil)
 	for _, want := range []string{"mail_attribute {", "path = %{home}/dovecot-attributes", "imap_metadata = yes"} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("managed dovecot config lacks %q", want)
+		}
+	}
+}
+
+// Clients need the default folders with their SPECIAL-USE attributes.
+func TestDovecotConfCreatesDefaultFolders(t *testing.T) {
+	conf := DovecotConf(nil)
+	for _, want := range []string{"namespace inbox {", "mailbox Sent {", "special_use = \\Sent", "special_use = \\Drafts", "special_use = \\Archive"} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("managed dovecot config lacks %q", want)
 		}
