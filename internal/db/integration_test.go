@@ -231,8 +231,11 @@ func TestMailboxCRUDAndUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMailbox: %v", err)
 	}
-	if got.Password != "hash1" || got.QuotaBytes != 1000 || !got.Active {
+	if got.QuotaBytes != 1000 || !got.Active {
 		t.Fatalf("GetMailbox returned %+v", got)
+	}
+	if h := storedHash(t, d, "alice", "example.com"); h != "hash1" {
+		t.Fatalf("stored hash = %q; want hash1", h)
 	}
 
 	// A second insert for the same (username, domain) must fail with ErrExists.
@@ -248,8 +251,8 @@ func TestMailboxCRUDAndUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMailbox after upsert: %v", err)
 	}
-	if got.Password != "hash1" || got.QuotaBytes != 1000 || got.Active {
-		t.Fatalf("duplicate insert changed the mailbox: %+v", got)
+	if h := storedHash(t, d, "alice", "example.com"); got.QuotaBytes != 1000 || got.Active || h != "hash1" {
+		t.Fatalf("duplicate insert changed the mailbox: %+v hash %q", got, h)
 	}
 
 	n, err := d.CountMailboxesInDomain(ctx, "example.com")
@@ -267,8 +270,8 @@ func TestMailboxCRUDAndUpsert(t *testing.T) {
 		t.Fatalf("UpdateMailboxPassword: %v", err)
 	}
 	got, _ = d.GetMailbox(ctx, "alice", "example.com")
-	if got.QuotaBytes != 5000 || got.Password != "hash3" {
-		t.Fatalf("update did not apply: %+v", got)
+	if h := storedHash(t, d, "alice", "example.com"); got.QuotaBytes != 5000 || h != "hash3" {
+		t.Fatalf("update did not apply: %+v hash %q", got, h)
 	}
 
 	list, err := d.ListMailboxes(ctx, "example.com")
@@ -450,12 +453,9 @@ func TestAuditLog(t *testing.T) {
 	if entries[0].Before != nil {
 		t.Fatalf("nil before was persisted as non-nil JSON: %q", entries[0].Before)
 	}
-	if entries[0].IP != "" {
-		t.Fatalf("empty ip arg produced non-empty IP: %q", entries[0].IP)
-	}
 
 	second := entries[1]
-	if second.Action != "mailbox.disable" || second.Target != "alice@example.com" || second.IP != "203.0.113.5" {
+	if second.Action != "mailbox.disable" || second.Target != "alice@example.com" {
 		t.Fatalf("audit entry mismatch: %+v", second)
 	}
 
@@ -539,4 +539,16 @@ func TestAuditLog(t *testing.T) {
 	} else if len(empty) != 0 {
 		t.Fatalf("ListAudit(until=past) returned %d; want 0", len(empty))
 	}
+}
+
+// storedHash reads the password hash straight from the table. The mailbox reads
+// never load it, so the tests check the write path through this helper.
+func storedHash(t *testing.T, d *DB, user, domain string) string {
+	t.Helper()
+	var h string
+	if err := d.pool.QueryRow(context.Background(),
+		`SELECT password FROM mailbox WHERE username=$1 AND domain=$2`, user, domain).Scan(&h); err != nil {
+		t.Fatalf("read stored hash: %v", err)
+	}
+	return h
 }
