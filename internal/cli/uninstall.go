@@ -88,7 +88,8 @@ func runUninstall(app *App, c *cobra.Command, noBackup bool) error {
 		r.Message("backup verified: %s", dir)
 	}
 
-	x := install.Resolve(app.sysRunner())
+	// Package and cluster operations take minutes: the runner gets the long timeout.
+	x := install.Resolve(sys.New(dbToolTimeout, nil))
 	errs := install.Uninstall(ctx(c), x, m, func(msg string) { r.Message("  %s", msg) })
 	if err := os.Remove(installBinaryPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, fmt.Errorf("remove %s: %w", installBinaryPath, err))

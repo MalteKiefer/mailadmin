@@ -39,7 +39,7 @@ func Summary(m *Manifest) []string {
 		out = append(out, "packages: none recorded")
 	}
 	if m.Database != "" {
-		out = append(out, fmt.Sprintf("database %s dropped with roles %s; the PostgreSQL cluster is removed", m.Database, strings.Join(m.Roles, ", ")))
+		out = append(out, fmt.Sprintf("PostgreSQL cluster removed (database %s and roles %s go with it)", m.Database, strings.Join(m.Roles, ", ")))
 	}
 	if len(m.Users) > 0 {
 		out = append(out, "users removed: "+strings.Join(m.Users, ", "))
@@ -95,20 +95,18 @@ func Uninstall(ctx context.Context, x Exec, m *Manifest, report func(string)) []
 		step("delete nftables table inet mailadmin", run("nft", "delete", "table", "inet", "mailadmin"))
 	}
 
-	// 6. Database, while PostgreSQL still runs.
-	if m.Database != "" {
-		step("start postgresql", run("systemctl", "start", "postgresql"))
-		step("drop database "+m.Database, run(asPostgres("dropdb", "--if-exists", m.Database)...))
-		for _, r := range m.Roles {
-			step("drop role "+r, run(asPostgres("dropuser", "--if-exists", r)...))
-		}
-	}
+	// 6. Database cluster. Roles and databases are cluster-wide, so dropping the
+	//    cluster removes database mail and the roles with it. The backup was taken
+	//    before this point. Dropping them one by one fails on objects they own.
 	for _, c := range clusterDirs() {
-		step("drop cluster "+c.version+"/"+c.name, run("pg_dropcluster", "--stop", c.version, c.name))
+		step("drop cluster "+c.version+"/"+c.name+" (database "+m.Database+" and roles)",
+			run("pg_dropcluster", "--stop", c.version, c.name))
 	}
 
-	// 7. Packages install installed. Base packages are never in the list.
+	// 7. Packages install installed. Base packages are never in the list. A purge
+	//    interrupted earlier leaves dpkg half configured, so it is repaired first.
 	if len(m.Packages) > 0 {
+		step("repair dpkg", run("dpkg", "--configure", "-a"))
 		step("purge packages", run(aptEnv(append([]string{"purge"}, m.Packages...)...)...))
 		step("autoremove", run(aptEnv("autoremove", "--purge")...))
 	}
@@ -118,9 +116,9 @@ func Uninstall(ctx context.Context, x Exec, m *Manifest, report func(string)) []
 	for _, d := range ownedDirs {
 		step("remove "+d, os.RemoveAll(d))
 	}
+	// userdel also removes the user's primary group.
 	for _, u := range m.Users {
 		step("remove user "+u, run("userdel", u))
-		step("remove group "+u, run("groupdel", u))
 	}
 
 	// 9. Helpers and the state dir last: the saved originals are read from it above.
