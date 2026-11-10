@@ -283,6 +283,10 @@ func TestCheckReportsState(t *testing.T) {
 	if err := os.WriteFile(secPath, []byte("NJALLA_TOKEN=t\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The config file holds the secrets since v1.28: the check reads its mode.
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[mail]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	c := validConfig()
 	c.Path = filepath.Join(dir, "config.toml")

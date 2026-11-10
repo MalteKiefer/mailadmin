@@ -185,7 +185,11 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	components = append(components, backup.ComponentSieve)
 
 	// 4. mailadmin's own config.toml, never secrets.env.
-	if _, err := backup.CopyFile(cfg.Path, filepath.Join(bundleDir, backup.ConfigFile)); err != nil {
+	redacted, err := config.WithoutSecrets(cfg.Path)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(bundleDir, backup.ConfigFile), redacted, 0o600); err != nil { // #nosec G306 -- bundle dir is owner-only
 		return fmt.Errorf("backup create: config: %w", err)
 	}
 	components = append(components, backup.ComponentConfig)
@@ -215,7 +219,7 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	}
 
 	r.Message("backup created at %s", bundleDir)
-	r.Message("NOTE: secrets.env was NOT included in this bundle; back it up separately")
+	r.Message("NOTE: secrets were NOT included in this bundle; config.toml has no [secrets] table")
 	if r.Format() == output.FormatJSON {
 		// Scripts that copy the bundle off the host need its directory.
 		return r.JSON(struct {

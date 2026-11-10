@@ -151,3 +151,23 @@ func SecretsTOML(m map[string]string) string {
 	}
 	return b.String()
 }
+
+// WithoutSecrets returns the config at path as TOML with the [secrets] table
+// removed. A backup bundle stores this copy, so it never holds API tokens or
+// the rspamd controller password. YAML and JSON are converted first.
+func WithoutSecrets(path string) ([]byte, error) {
+	text, err := readTOML(path)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if _, err := toml.Decode(string(text), &m); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrInvalidConfig, path, err)
+	}
+	delete(m, "secrets")
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(m); err != nil {
+		return nil, fmt.Errorf("encode %s: %w", path, err)
+	}
+	return buf.Bytes(), nil
+}

@@ -227,9 +227,6 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.RecordDatabase(install.PgDatabase, install.PgRoles); err != nil {
 		return err
 	}
-	if err := install.GrantMailadminRead(pctx, x); err != nil {
-		return err
-	}
 	if err := install.EnablePeerMap(pctx, x); err != nil {
 		return err
 	}
