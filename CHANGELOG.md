@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.29.0] - 2026-11-10
 
 ### Added
 - `mailadmin update` compares the host config with the default config of the release it installed. It saves that default as `/etc/mailadmin/config.default.toml` for a diff and lists the keys the host config lacks. The host config is never changed. A failed download is a warning only.
