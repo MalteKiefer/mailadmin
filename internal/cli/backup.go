@@ -280,6 +280,9 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 	if a.flags.dryRun {
 		return a.backupRestoreDryRun(cmd, cfg, bundlePath, man, components, r)
 	}
+	if os.Geteuid() != 0 {
+		return errors.New("backup restore must run as root (try: sudo mailadmin backup restore ...)")
+	}
 
 	warn := fmt.Sprintf("RESTORE overwrites live data for component(s): %s. This cannot be undone automatically.", strings.Join(components, ", "))
 	if err := a.confirm(warn + " Continue?"); err != nil {
@@ -305,7 +308,8 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		a.syncDomainState(ctx(cmd), r)
 	}
 	if restoreErr != nil {
-		return restoreErr
+		// Both are reported: a missing audit entry for a partial restore matters as much.
+		return errors.Join(restoreErr, recErr)
 	}
 	if recErr != nil {
 		return recErr

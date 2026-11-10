@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 
 	"mailadmin/internal/backup"
 	"mailadmin/internal/config"
+	"mailadmin/internal/output"
 )
 
 // A failed component stops the restore, and the completed ones are reported so the
@@ -27,8 +29,9 @@ func TestRestoreComponentsReportsCompletedBeforeFailure(t *testing.T) {
 	// after the config has been written.
 	man := backup.Manifest{SieveScripts: []string{"malte.kiefer@kiefer-networks.de"}}
 	a := &App{}
+	r := output.New(output.FormatTable, io.Discard, true)
 	done, err := a.restoreComponents(&cobra.Command{}, cfg, bundle, man,
-		[]string{backup.ComponentConfig, backup.ComponentSieve}, merged, nil)
+		[]string{backup.ComponentConfig, backup.ComponentSieve}, merged, r)
 	if err == nil {
 		t.Fatal("sieve step must fail on the missing script")
 	}
