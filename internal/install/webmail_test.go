@@ -32,10 +32,17 @@ func TestAlpsConfPointsAtLocalMailAndHelper(t *testing.T) {
 		Smtp struct {
 			Server string `toml:"server"`
 		} `toml:"smtp"`
+		Webauthn struct {
+			RPID    string   `toml:"rpid"`
+			Origins []string `toml:"origins"`
+		} `toml:"webauthn"`
 		Plugin map[string]map[string]any `toml:"plugin"`
 	}
 	if _, err := toml.Decode(AlpsConf(testWebmail(), "mail.kiefer-networks.de"), &got); err != nil {
 		t.Fatalf("alps config is not valid TOML: %v", err)
+	}
+	if got.Webauthn.RPID != "webmail.kiefer-networks.de" || len(got.Webauthn.Origins) != 1 || got.Webauthn.Origins[0] != "https://webmail.kiefer-networks.de" {
+		t.Fatalf("webauthn = %+v, want rpid and origin of the webmail domain", got.Webauthn)
 	}
 	if got.Server.Addr != "127.0.0.1:8081" {
 		t.Fatalf("addr = %q", got.Server.Addr)
