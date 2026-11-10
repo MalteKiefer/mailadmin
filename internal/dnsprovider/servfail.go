@@ -267,4 +267,4 @@ var _ Provider = (*Servfail)(nil)
 
 // contentKey normalises record content the way containsValue and removeValue compare
 // it (case and surrounding space), so a disabled record is found whatever its spelling.
-func contentKey(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+func contentKey(s string) string { return strings.ToLower(strings.ToUpper(strings.TrimSpace(s))) }

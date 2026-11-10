@@ -247,18 +247,6 @@ func setOwnedDir(d HostDir) error {
 	return nil
 }
 
-// refuseSymlink returns an error when path is a symbolic link.
-func refuseSymlink(path string) error {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", path, err)
-	}
-	if fi.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink, refusing to change its owner or mode", path)
-	}
-	return nil
-}
-
 // InstallBinary copies the running executable to dst (0755). The copy is
 // written next to dst and renamed into place, so a running mailadmin keeps working.
 func InstallBinary(src, dst string) error {

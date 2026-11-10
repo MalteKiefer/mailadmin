@@ -347,6 +347,7 @@ domain=${1:-}; selector=${2:-}
 case "$domain" in ''|*[!a-z0-9.-]*|.*|*..*) echo "bad domain" >&2; exit 2 ;; esac
 case "$selector" in ''|[!a-z0-9]*|*[!a-z0-9._-]*) echo "bad selector" >&2; exit 2 ;; esac
 dir=` + DKIMDirPath + `
+[ ! -L "$dir" ] || { echo "refusing: $dir is a symlink" >&2; exit 2; }
 key="$dir/$domain.$selector.key"
 for f in "$key" "$key.pub"; do
   # mailadmin can write this directory, so a link here may have been planted.
@@ -463,10 +464,10 @@ if [ "$changed" = 1 ] || [ -e "$marker" ]; then
 	if /usr/bin/systemctl reload-or-restart postfix dovecot rspamd >/dev/null 2>&1; then
 		rm -f "$marker"
 	else
-		rm -f -- "$marker"
-		set -C
-		: > "$marker"
-		set +C
+		# A fresh root-owned file is renamed over the marker. A rename replaces a link at the
+		# marker name instead of writing through it, so a planted FIFO or file is never opened.
+		mk=$(mktemp /var/lib/mailadmin/.cert-reload.XXXXXX)
+		mv -fT -- "$mk" "$marker"
 		echo "reload failed, retrying on next run" >&2
 		exit 4
 	fi
