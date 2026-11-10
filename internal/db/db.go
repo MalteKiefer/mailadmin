@@ -120,7 +120,7 @@ func (d *DB) CountMailboxesInDomain(ctx context.Context, domain string) (int, er
 func (d *DB) CountAliasesInDomain(ctx context.Context, domain string) (int, error) {
 	var n int
 	err := d.pool.QueryRow(ctx,
-		`SELECT count(*) FROM alias WHERE source = '@' || $1 OR source LIKE '%@' || $1`, domain).Scan(&n)
+		`SELECT count(*) FROM alias WHERE split_part(source, '@', 2) = $1`, domain).Scan(&n)
 	return n, err
 }
 
@@ -219,7 +219,7 @@ func (d *DB) ListAliases(ctx context.Context, domain string) ([]Alias, error) {
 	if domain != "" {
 		rows, err = d.pool.Query(ctx,
 			`SELECT source, destination, active FROM alias
-			 WHERE source LIKE '%@'||$1 OR source='@'||$1 ORDER BY source, destination`, domain)
+			 WHERE split_part(source, '@', 2) = $1 ORDER BY source, destination`, domain)
 	} else {
 		rows, err = d.pool.Query(ctx,
 			`SELECT source, destination, active FROM alias ORDER BY source, destination`)

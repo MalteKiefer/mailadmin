@@ -720,7 +720,12 @@ func (a *App) computeDNSCheck(cmd *cobra.Command, rawDomain string) (dnsCheckRes
 	if err != nil {
 		return dnsCheckResult{}, err
 	}
+	return a.dnsCheckRow(cmd, cfg, domain, dom)
+}
 
+// dnsCheckRow diffs live public DNS for a domain whose row is already loaded, so
+// a caller that checks many domains reads the domain table once.
+func (a *App) dnsCheckRow(cmd *cobra.Command, cfg *config.Config, domain string, dom db.Domain) (dnsCheckResult, error) {
 	mgr := mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6)
 	key, err := mgr.ReadDKIM(domain, dom.DKIMSelector)
 	if err != nil {
@@ -796,20 +801,37 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify,
 	if err != nil {
 		return err
 	}
+	// The pool is opened here, before any worker starts: the workers only read it.
+	database, derr := a.openDB(cmd, cfg)
+	if derr != nil {
+		return derr
+	}
+	// One query for every domain, instead of one lookup per checked domain.
+	rows, derr := database.ListDomains(ctx(cmd))
+	if derr != nil {
+		return derr
+	}
+	byName := make(map[string]db.Domain, len(rows))
+	for _, d := range rows {
+		byName[d.Name] = d
+	}
 	domains := []string{rawDomain}
 	if all {
-		database, derr := a.openDB(cmd, cfg)
-		if derr != nil {
-			return derr
-		}
-		rows, derr := database.ListDomains(ctx(cmd))
-		if derr != nil {
-			return derr
-		}
 		domains = domains[:0]
 		for _, d := range rows {
 			domains = append(domains, d.Name)
 		}
+	}
+	check := func(name string) (dnsCheckResult, error) {
+		domain, verr := valid.Domain(name)
+		if verr != nil {
+			return dnsCheckResult{}, fmt.Errorf("%w: %v", ErrUsage, verr)
+		}
+		dom, ok := byName[domain]
+		if !ok {
+			return dnsCheckResult{}, fmt.Errorf("%w: domain %q", ErrNotFound, domain)
+		}
+		return a.dnsCheckRow(cmd, cfg, domain, dom)
 	}
 
 	results := make([]dnsCheckResult, 0, len(domains))
@@ -830,7 +852,7 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify,
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res, cerr := a.computeDNSCheck(cmd, d)
+			res, cerr := check(d)
 			outs[i] = outcome{res, cerr}
 		}()
 	}
