@@ -1,12 +1,17 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 
+	"mailadmin/internal/config"
 	"mailadmin/internal/selfupdate"
 )
 
@@ -103,8 +108,15 @@ func newUpdateCmd(app *App) *cobra.Command {
 			if err := selfupdate.Apply(ctx(c), rel); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(out, "updated to %s\n", rel.Tag)
-			return err
+			if _, err := fmt.Fprintf(out, "updated to %s\n", rel.Tag); err != nil {
+				return err
+			}
+			// Warnings only: the binary is already replaced at this point.
+			if err := configUpdateHint(ctx(c), out, rel.Tag); err != nil {
+				_, err = fmt.Fprintf(out, "warning: config check skipped: %v\n", err)
+				return err
+			}
+			return nil
 		},
 	}
 }
@@ -132,4 +144,37 @@ func newCompletionCmd(root *cobra.Command) *cobra.Command {
 	}
 	cmd.AddCommand(newManCmd(root))
 	return cmd
+}
+
+// configUpdateHint compares the host config with the default config of the
+// release just installed. It writes that default to config.default.toml next to
+// the config, as a reference for a diff, and names the keys the host lacks. The
+// host config itself is never changed.
+func configUpdateHint(c context.Context, out io.Writer, tag string) error {
+	host, err := config.Discover(config.ConfigDir)
+	if errors.Is(err, config.ErrNoConfig) {
+		return nil // no config file yet: nothing to compare
+	}
+	if err != nil {
+		return err
+	}
+	def, err := config.FetchDefaultFor(c, tag)
+	if err != nil {
+		return err
+	}
+	ref := filepath.Join(config.ConfigDir, "config.default.toml")
+	if err := os.WriteFile(ref, def, 0o644); err != nil { // #nosec G306 -- reference copy, holds no secrets
+		return fmt.Errorf("write %s: %w", ref, err)
+	}
+	keys, err := config.NewDefaultKeys(host, def)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		_, err = fmt.Fprintf(out, "config: no new keys in %s (reference: %s)\n", tag, ref)
+		return err
+	}
+	_, err = fmt.Fprintf(out, "config: %d new key(s) in %s: %s\n  review: diff %s %s\n  add them to %s (secrets stay in [secrets])\n",
+		len(keys), tag, config.FormatKeys(keys), host, ref, host)
+	return err
 }

@@ -93,3 +93,18 @@ func Init(dir string, content []byte, force bool) (string, error) {
 	}
 	return path, nil
 }
+
+// FetchDefaultFor downloads the default config file of a given release tag. Unlike
+// FetchDefault it has no built-in fallback: the caller compares against the file
+// of exactly the release it updated to.
+func FetchDefaultFor(ctx context.Context, tag string) ([]byte, error) {
+	url := "https://github.com/MalteKiefer/mailadmin/releases/download/" + tag + "/config.default.toml"
+	data, err := download(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkDefault(data); err != nil {
+		return nil, fmt.Errorf("default config of %s: %w", tag, err)
+	}
+	return data, nil
+}
