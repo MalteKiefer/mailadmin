@@ -276,8 +276,10 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		if !d.Active {
 			continue
 		}
-		pairs = append(pairs, [2]string{d.Name, d.DKIMSelector})
 		active = append(active, d.Name)
+		if d.DKIMSelector != "" { // same filter as syncRspamdSelectors
+			pairs = append(pairs, [2]string{d.Name, d.DKIMSelector})
+		}
 	}
 	if err := install.ApplyRspamd(pctx, x, secrets.RspamdControllerPW(), pairs); err != nil {
 		return err
@@ -324,14 +326,24 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		return fmt.Errorf("crowdsec: %w", err)
 	}
 	// SSH last: everything else is in place if sshd rejects the new config and it is rolled back.
-	keyOnly, account, err := install.ApplySSHHardening(pctx, x)
+	policy, account, err := install.ApplySSHHardening(pctx, x)
 	if err != nil {
 		return fmt.Errorf("ssh hardening: %w", err)
 	}
 	_, _ = fmt.Fprintln(out, "system hardening applied (sysctl, modules, auditd, CrowdSec, AIDE, unattended-upgrades, sshd)")
-	if !keyOnly {
-		_, _ = fmt.Fprintf(out, "warning: %s has no usable SSH key (Ed25519, ECDSA or RSA with 3072 bits or more), "+
-			"so SSH password login stays on; add a key and rerun install --adopt\n", account)
+	switch {
+	case account == "":
+		_, _ = fmt.Fprintln(out, "warning: the account you logged in with is unknown (no login uid, or not in /etc/passwd), "+
+			"so SSH password login and root login stay as they were")
+	case policy.KeyOnly:
+		_, _ = fmt.Fprintf(out, "SSH password login is off: %s logged in with a key the hardened sshd accepts\n", account)
+	default:
+		_, _ = fmt.Fprintf(out, "warning: %s did not log in over SSH with a key from its authorized_keys that the hardened sshd "+
+			"accepts (Ed25519, ECDSA, RSA with 3072 bits or more), so SSH password login stays on; "+
+			"log in with such a key and rerun install --adopt\n", account)
+	}
+	if !policy.StrictRSA {
+		_, _ = fmt.Fprintln(out, "warning: an RSA key shorter than 3072 bits is in use, so RequiredRSASize is not set; replace it with an Ed25519 key")
 	}
 
 	_, _ = fmt.Fprintf(out, `
@@ -441,7 +453,7 @@ func printInstallPlan(out io.Writer, d install.Distro, a install.Answers, confli
 	_, _ = fmt.Fprintf(out, "  database:  %s owned by mailadmin, roles %s\n", install.PgDatabase, strings.Join(install.PgRoles, ", "))
 	_, _ = fmt.Fprintf(out, "  mail:      postfix, dovecot, rspamd, caddy configured for %s\n", a.Domain)
 	_, _ = fmt.Fprintf(out, "  firewall:  nftables, inbound limited to 22 and mail/web ports\n")
-	_, _ = fmt.Fprintf(out, "  hardening: sshd (keys only), sysctl, modules, auditd, CrowdSec, AIDE, AppArmor, unattended-upgrades\n")
+	_, _ = fmt.Fprintf(out, "  hardening: sshd (keys only once the login account logs in with a key), sysctl, modules, auditd, CrowdSec, AIDE, AppArmor, unattended-upgrades\n")
 	_, _ = fmt.Fprintf(out, "  writes:    %s/config.toml, %s/secrets.env, %s\n", installConfigDir, installConfigDir, installBinaryPath)
 	if len(conflicts) > 0 {
 		_, _ = fmt.Fprintf(out, "  adopting existing state: %s\n", strings.Join(conflicts, ", "))

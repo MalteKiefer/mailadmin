@@ -142,10 +142,12 @@ protocol lmtp {
     sieve = yes
   }
 }
+# Outside the mail directory: the home is the Maildir++ root, where an entry
+# such as .dovecot.sieve would be listed as a mail folder.
 sieve_script personal {
   driver = file
-  path = ~/sieve
-  active_path = ~/.dovecot.sieve
+  path = /var/vmail/sieve/%{user|domain}/%{user|username}/scripts
+  active_path = /var/vmail/sieve/%{user|domain}/%{user|username}/active.sieve
 }
 
 mail_driver = maildir
@@ -249,9 +251,13 @@ func PostfixPgsqlMaps() map[string]string {
 		PostfixMapDir + "/pgsql-virtual-mailboxes.cf": common +
 			"query = SELECT 1 FROM mailbox m JOIN domain d ON d.name = m.domain " +
 			"WHERE m.username = '%u' AND m.domain = '%d' AND m.active AND d.active\n",
+		// Every destination of an exact alias is returned (Postfix delivers to all
+		// rows). The catch-all applies only to addresses that are neither an alias
+		// nor a mailbox, so it never takes mail away from an existing mailbox.
 		PostfixMapDir + "/pgsql-virtual-aliases.cf": common +
-			"query = SELECT destination FROM alias WHERE active AND source IN ('%s', '@%d') " +
-			"ORDER BY source = '%s' DESC LIMIT 1\n",
+			"query = SELECT destination FROM alias WHERE active AND (source = '%s' OR (source = '@%d' " +
+			"AND NOT EXISTS (SELECT 1 FROM alias e WHERE e.active AND e.source = '%s') " +
+			"AND NOT EXISTS (SELECT 1 FROM mailbox m WHERE m.active AND m.username = '%u' AND m.domain = '%d')))\n",
 	}
 }
 

@@ -1,7 +1,9 @@
 package rspamdconf
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +44,7 @@ func GreylistPath(dir string) string {
 // Settings absent from the file are omitted (rspamd's built-in default
 // applies); the caller decides how to present that.
 func ReadGreylist(dir string) (map[string]string, error) {
-	content, err := os.ReadFile(GreylistPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
+	content, err := readLocal(GreylistPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
 	if err != nil {
 		return nil, fmt.Errorf("rspamdconf: read %s: %w", GreylistPath(dir), err)
 	}
@@ -50,7 +52,7 @@ func ReadGreylist(dir string) (map[string]string, error) {
 	out := make(map[string]string, len(GreylistSettings))
 	for _, s := range GreylistSettings {
 		if v, ok := doc.Get(s); ok {
-			out[s] = unquote(v)
+			out[s] = showDuration(unquote(v))
 		}
 	}
 	return out, nil
@@ -66,7 +68,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 	}
 
 	path := GreylistPath(dir)
-	content, err := os.ReadFile(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
+	content, err := readLocal(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
 	if err != nil {
 		return nil, "", fmt.Errorf("rspamdconf: read %s: %w", path, err)
 	}
@@ -83,6 +85,17 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 	return content, unquote(old), nil
 }
 
+// readLocal reads a local.d override. rspamd ships only *.example files and
+// install writes neither greylist.conf nor ratelimit.conf, so a missing file is
+// an empty one: set creates it, show reports rspamd's defaults.
+func readLocal(path string) ([]byte, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- rspamd local.d path
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return data, err
+}
+
 // uclDuration spells a validated duration (5m, 2h) the way libucl reads it. A
 // bare "m" is libucl's mega multiplier (5m = 5,000,000 seconds); minutes are
 // "min". s, h and d are time units in libucl already.
@@ -91,6 +104,19 @@ func uclDuration(d string) string {
 		return n + "min"
 	}
 	return d
+}
+
+// showDuration presents a stored greylist value: "5min" (what set writes) as
+// "5m", and a bare "5m" written before v1.27.0, which libucl reads as
+// 5,000,000 seconds, with that meaning spelled out.
+func showDuration(v string) string {
+	if n, ok := strings.CutSuffix(v, "min"); ok && n != "" {
+		return n + "m"
+	}
+	if n, ok := strings.CutSuffix(v, "m"); ok && n != "" && strings.Trim(n, "0123456789") == "" {
+		return v + " (read by rspamd as " + n + "000000 seconds; set it again)"
+	}
+	return v
 }
 
 // RestoreFile writes content back to dir's ratelimit.conf/greylist.conf verbatim,

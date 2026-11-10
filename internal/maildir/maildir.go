@@ -167,7 +167,12 @@ func (m *Manager) Dedupe(local, domain string, dryRun bool) (DedupeReport, error
 	if err != nil {
 		return DedupeReport{}, err
 	}
+	// install keeps the Maildir++ root in the home itself (mail_path equals
+	// mail_home); older layouts use <home>/Maildir.
 	box := filepath.Join(p, "Maildir")
+	if fi, err := os.Stat(filepath.Join(p, "cur")); err == nil && fi.IsDir() {
+		box = p
+	}
 	if fi, statErr := os.Stat(box); errors.Is(statErr, os.ErrNotExist) || (statErr == nil && !fi.IsDir()) {
 		return DedupeReport{}, fmt.Errorf("%w: %s", ErrNotFound, box)
 	} else if statErr != nil {

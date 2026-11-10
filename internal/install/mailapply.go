@@ -209,10 +209,24 @@ func ApplyRspamd(ctx context.Context, x Exec, controllerPW string, selectors [][
 	return nil
 }
 
+// ErrNotManaged reports a file mailadmin did not write, which it leaves alone.
+var ErrNotManaged = errors.New("not written by mailadmin install, left unchanged")
+
 // SyncRspamdSelectors rewrites the DKIM selector map rspamd signs from and
-// reloads rspamd, so a new domain or a changed selector is signed at once.
+// reloads rspamd, so a new domain or a changed selector is signed at once. A
+// map that mailadmin install did not write belongs to the operator and is left
+// unchanged (ErrNotManaged); an unchanged map is not rewritten.
 func SyncRspamdSelectors(ctx context.Context, x Exec, selectors [][2]string) error {
-	if err := writeAtomicOwned(RspamdSelectorMap, []byte(RspamdSelectorMapContent(selectors)), 0o640, "root", "_rspamd"); err != nil {
+	want := RspamdSelectorMapContent(selectors)
+	if cur, err := os.ReadFile(RspamdSelectorMap); err == nil {
+		if !strings.Contains(string(cur), managedMarker) {
+			return fmt.Errorf("%s: %w", RspamdSelectorMap, ErrNotManaged)
+		}
+		if string(cur) == want {
+			return nil
+		}
+	}
+	if err := writeAtomicOwned(RspamdSelectorMap, []byte(want), 0o640, "root", "_rspamd"); err != nil {
 		return err
 	}
 	if _, err := x.Run(ctx, nil, "systemctl", "try-reload-or-restart", "rspamd"); err != nil {
@@ -364,7 +378,8 @@ const PostfixPgSocket = "/var/spool/postfix/var/run/postgresql"
 // reachable from inside the chroot through this mount. The mount is recorded in
 // fstab with nofail, so a missing source never blocks boot. /run/postgresql is
 // created by systemd-tmpfiles at boot, after local file systems are mounted, so
-// the mount waits for it and must be in place before Postfix starts.
+// the mount is ordered after it (after, not requires: one failing tmpfiles entry
+// must not cancel the mount) and before Postfix starts.
 func ensurePostfixPgSocket(ctx context.Context, x Exec) error {
 	if err := os.MkdirAll(PostfixPgSocket, 0o755); err != nil { // #nosec G301 -- chroot mount point
 		return fmt.Errorf("mkdir %s: %w", PostfixPgSocket, err)
@@ -379,7 +394,7 @@ func ensurePostfixPgSocket(ctx context.Context, x Exec) error {
 
 // PostfixPgFstabLine is the fstab entry for the socket bind mount.
 const PostfixPgFstabLine = "/var/run/postgresql " + PostfixPgSocket + " none " +
-	"bind,nofail,x-systemd.requires=systemd-tmpfiles-setup.service," +
+	"bind,nofail,x-systemd.after=systemd-tmpfiles-setup.service," +
 	"x-systemd.before=postfix.service,x-systemd.before=postfix@-.service 0 0"
 
 // setFstabEntry makes line the only fstab entry for mountpoint. An entry an

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"mailadmin/internal/sys"
@@ -103,11 +104,22 @@ func (s *Service) postsuper(ctx context.Context, op, flag, qid string) error {
 	if err != nil {
 		return fmt.Errorf("postfixq.%s: %w", op, err)
 	}
-	if _, err := s.runner.Output(ctx, binPostsuper, flag, qid); err != nil {
+	res, err := s.runner.Run(ctx, nil, binPostsuper, flag, qid)
+	if err != nil {
 		return fmt.Errorf("postfixq.%s %s: %w", op, qid, err)
+	}
+	// postsuper exits 0 also when no message has this id; it only reports a
+	// count ("Deleted: 1 message") when it changed something.
+	if !postsuperChanged(res.Stderr) {
+		return fmt.Errorf("postfixq.%s %s: %w", op, qid, ErrNotFound)
 	}
 	return nil
 }
+
+var postsuperCountRe = regexp.MustCompile(`: [1-9][0-9]* messages?`)
+
+// postsuperChanged reports whether postsuper's summary names at least one message.
+func postsuperChanged(stderr []byte) bool { return postsuperCountRe.Match(stderr) }
 
 // queueEntry mirrors the JSON object Postfix emits per message with `-j`
 // (one object per line). Only the fields we surface are decoded.

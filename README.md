@@ -152,10 +152,11 @@ mailadmin install --hostname mail.example.com --domain example.com --ipv4 203.0.
 ```
 
 Missing values are asked interactively, including the optional CrowdSec console
-enrollment key. `--dry-run` prints the plan first. Install hardens SSH last: with
-an `authorized_keys` entry for root or a user, password login is switched off, so
-check that your key works before you close the session. Add `--adopt` on a host
-that already runs parts of the stack; existing files are kept.
+enrollment key. `--dry-run` prints the plan first. Install hardens SSH last.
+Password login is switched off only when the account you logged in with did so
+over SSH with a key the hardened sshd accepts; otherwise it stays on and install
+says why. Add `--adopt` on a host that already runs parts of the stack; existing
+files are kept.
 
 ### From source
 

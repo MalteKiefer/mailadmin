@@ -81,7 +81,7 @@ func ratelimitKeyPath(bucket string) string { return "rates." + bucket }
 // from the file are omitted (rspamd's built-in default applies to them); the
 // caller decides how to present that.
 func ReadRatelimit(dir string) (map[string]string, error) {
-	content, err := os.ReadFile(RatelimitPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
+	content, err := readLocal(RatelimitPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
 	if err != nil {
 		return nil, fmt.Errorf("rspamdconf: read %s: %w", RatelimitPath(dir), err)
 	}
@@ -110,7 +110,7 @@ func SetRatelimit(dir, bucket, rate string) (oldContent []byte, oldValue string,
 	}
 
 	path := RatelimitPath(dir)
-	content, err := os.ReadFile(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
+	content, err := readLocal(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
 	if err != nil {
 		return nil, "", fmt.Errorf("rspamdconf: read %s: %w", path, err)
 	}

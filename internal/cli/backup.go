@@ -298,6 +298,18 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		return err
 	}
 	r.Message("restore complete: %s", strings.Join(components, ", "))
+	// The domain table changed under the selector map and the Caddy includes.
+	if contains(components, backup.ComponentDB) {
+		if err := a.syncRspamdSelectors(ctx(cmd)); err != nil {
+			r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+		}
+		if err := a.syncAutodiscovery(ctx(cmd)); err != nil {
+			r.Message("warning: could not update Caddy autodiscovery: %v", err)
+		}
+		if err := a.syncMTASTS(ctx(cmd)); err != nil {
+			r.Message("warning: could not update Caddy MTA-STS: %v", err)
+		}
+	}
 	if contains(components, backup.ComponentConfig) {
 		r.Message("config.toml was replaced — review it before restarting any mailadmin-managed service")
 	}

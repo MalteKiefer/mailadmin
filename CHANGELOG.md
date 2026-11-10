@@ -24,6 +24,31 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Upgrade
+- Run `mailadmin install --adopt` after `mailadmin update`. The Postfix alias map, the Dovecot config, the fstab entry for the Postfix socket mount and the CrowdSec acquisition only change through install.
+- Dovecot enforces each mailbox's `quota_bytes` since v1.26.0. `mailbox add` stored 5 GiB by default without enforcing it, so check usage first (`doveadm quota get -A`) and raise the quota of large mailboxes with `mailbox set-quota`, or their new mail bounces.
+- Sieve scripts now live in `/var/vmail/sieve/<domain>/<user>`. Scripts stored with v1.26.0 under the mailbox directory have to be set again with `mailadmin sieve set`.
+
+### Security
+- A catch-all alias took all mail of the domain, also for existing mailboxes. It now applies only to addresses that are neither a mailbox nor an alias.
+- SSH hardening could still lock the operator out: an RSA key shorter than 3072 bits was cut off by RequiredRSASize, any unrestricted key in authorized_keys (a backup key, for example) switched password login off, ECDSA and RSA certificates were refused, and a login uid outside /etc/passwd fell back to root's keys. Password login is now switched off only when sshd's journal shows that the operator's last login used a key from their authorized_keys that the hardened sshd accepts.
+- CrowdSec counted Postfix and Dovecot lines twice or three times on hosts with rsyslog. Install now adds a journal source only for logs no other acquisition file reads.
+
+### Fixed
+- An alias with several destinations delivered to only one of them.
+- Dovecot listed the active Sieve script link as a mail folder; script storage moved out of the mailbox directory.
+- `mailbox show` reported quota usage and limit 1024 times too small, and used a doveadm formatter Dovecot 2.4 does not have.
+- `backup restore` of the database now updates rspamd's selector map and the Caddy includes.
+- A DKIM selector map that mailadmin did not write is no longer replaced by domain commands.
+- App password labels with upper case letters, spaces or other characters outside Dovecot's login set could never log in; new labels are limited to lower case letters, digits, `.`, `-` and `_`.
+- A mailbox name with `+` is refused: Dovecot's LMTP cuts the local part at `+`, so such a mailbox never received mail.
+- `mailbox dedupe` did not find the Maildir of mailboxes set up by install.
+- `queue hold`, `release` and `delete` reported success for an unknown queue id.
+- `security greylist` and `ratelimit` failed on hosts without local.d files; `greylist show` marks values written before v1.26.0 that rspamd reads as millions of seconds.
+- The Postfix socket mount no longer fails when an unrelated tmpfiles entry fails at boot.
+
 ## [v1.26.0] - 2026-11-10
 
 ### Fixed

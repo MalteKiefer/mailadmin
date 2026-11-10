@@ -94,8 +94,10 @@ func TestReadRatelimit(t *testing.T) {
 func TestReadRatelimitMissingFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if _, err := ReadRatelimit(dir); err == nil {
-		t.Fatal("expected error for missing file")
+	// rspamd ships no local.d/ratelimit.conf: a missing file means defaults.
+	got, err := ReadRatelimit(dir)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("missing file: got %v, %v; want no settings and no error", got, err)
 	}
 }
 

@@ -80,3 +80,15 @@ func TestStat(t *testing.T) {
 		t.Fatal("expected escape rejection")
 	}
 }
+
+// install's Dovecot config keeps the Maildir++ root in the home itself.
+func TestDedupeInstallLayout(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "example.com", "bob")
+	write(t, filepath.Join(home, "cur", "m1"), "id-A")
+	write(t, filepath.Join(home, ".Sent", "cur", "m2"), "id-A")
+	rep, err := New(root).Dedupe("bob", "example.com", true)
+	if err != nil || rep.Kept != 1 || rep.Deleted != 1 {
+		t.Fatalf("rep = %+v err = %v", rep, err)
+	}
+}

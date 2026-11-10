@@ -253,7 +253,11 @@ func (a *App) syncRspamdSelectors(c context.Context) error {
 			pairs = append(pairs, [2]string{dom.Name, dom.DKIMSelector})
 		}
 	}
-	return install.SyncRspamdSelectors(c, install.Resolve(a.runner()), pairs)
+	err = install.SyncRspamdSelectors(c, install.Resolve(a.runner()), pairs)
+	if errors.Is(err, install.ErrNotManaged) {
+		return nil // the operator's own map; install --adopt never replaced it either
+	}
+	return err
 }
 
 // closeBackends releases pooled resources. Safe to call when nothing was opened.

@@ -229,6 +229,14 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 	if verr != nil {
 		return fmt.Errorf("%w: %w", ErrUsage, verr)
 	}
+	// Dovecot's LMTP cuts the local part at its recipient delimiter "+" before
+	// the user lookup, and app password logins use "+" as the label separator,
+	// so a mailbox named a+b@ could never receive mail or log in. An alias with
+	// "+" (for example a+shop@ -> a@) is fine.
+	if strings.Contains(local, "+") {
+		return fmt.Errorf("%w: a mailbox name must not contain '+' (use an alias such as %s@%s -> %s@%s)",
+			ErrUsage, local, dom, strings.SplitN(local, "+", 2)[0], dom)
+	}
 	if quotaBytes < 0 {
 		return fmt.Errorf("%w: quota must be >= 0", ErrUsage)
 	}

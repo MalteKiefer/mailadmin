@@ -13,12 +13,18 @@ wins over later drop-ins such as cloud-init's).
 
 - Public key login only. Password and keyboard-interactive login are off, but
   only when the account the operator logged in with (the audit login uid, which
-  survives sudo and su) has a key the hardened sshd accepts: Ed25519 or ECDSA
-  (also as FIDO keys), or RSA with at least 3072 bits. Keys bound to a forced
-  command or `restrict` do not count. Without such a key, password login stays
-  on and install prints a warning, so the operator cannot be locked out.
-- `PermitRootLogin prohibit-password`, unless the operator logs in as root with a
-  password and root has no usable key; then root login stays as configured.
+  survives sudo and su) last logged in over SSH with a key from its
+  `authorized_keys` that the hardened sshd accepts: Ed25519 or ECDSA (also as
+  FIDO keys), or RSA with at least 3072 bits, not bound to a forced command or
+  `restrict`. Install reads that login from sshd's journal and matches the key
+  fingerprint. If it cannot prove this (no login uid, an account outside
+  /etc/passwd, a password or certificate login, no journal entry), password
+  login stays on and install prints why, so the operator cannot be locked out.
+- `PermitRootLogin prohibit-password`, unless the operator logs in as root
+  without such a key, or the login account is unknown; then root login stays as
+  configured.
+- `RequiredRSASize 3072`, unless the operator or root last logged in with a
+  shorter (or unknown) RSA key; install then warns instead of cutting that key off.
 - `MaxAuthTries 3`, `MaxSessions 2`,
   `LoginGraceTime 30`, `MaxStartups 10:30:60`, idle sessions closed after 10
   minutes, `TCPKeepAlive no` (the keepalive runs inside the encrypted channel).
@@ -26,7 +32,7 @@ wins over later drop-ins such as cloud-init's).
 - Key exchange: `mlkem768x25519-sha256` (hybrid post-quantum), `sntrup761x25519`,
   `curve25519`. Ciphers: `chacha20-poly1305`, AES-GCM. MACs: SHA-2 ETM and
   `umac-128-etm`. Host keys: Ed25519 and RSA (3072 bit minimum). User keys:
-  Ed25519, ECDSA and RSA (3072 bit minimum). Each list is cut
+  Ed25519, ECDSA and RSA (3072 bit minimum), also as certificates. Each list is cut
   to what the installed OpenSSH supports, so the file also works on older releases.
 - The config is checked with `sshd -t` before the reload. A rejected config is
   rolled back.
@@ -69,7 +75,7 @@ and sends HSTS on the mail host.
 | Core dumps | off (`limits.d` and systemd-coredump) |
 | Logging | journald persistent and compressed |
 | Audit | auditd with rules for identities, sudoers, SSH config, mailadmin config, DKIM keys, TLS keys, firewall, logins, module loads and root commands of logged-in users |
-| Brute force | CrowdSec agent with the linux, sshd, postfix and dovecot collections, reading the journal, and the nftables bouncer (bans in CrowdSec's own table). sshd is read through the source `cscli setup` creates, Postfix and Dovecot through mailadmin's own journal sources, so no log line is counted twice. Install creates the allowlist `mailadmin` that `security allowlist` manages. The CrowdSec repository key is checked like the PGDG and Caddy keys (`--crowdsec-fingerprint`). With `--crowdsec-enroll-key` (asked during an interactive install) the instance joins the CrowdSec console. The agent shares attack signals with the CrowdSec central API in return for the community blocklist. |
+| Brute force | CrowdSec agent with the linux, sshd, postfix and dovecot collections, reading the journal, and the nftables bouncer (bans in CrowdSec's own table). Install reads the acquisition files that already exist and adds a journal source only for sshd, Postfix or Dovecot when no other source reads them (a file source counts only when the file exists), so no log line is counted twice. Install creates the allowlist `mailadmin` that `security allowlist` manages. The CrowdSec repository key is checked like the PGDG and Caddy keys (`--crowdsec-fingerprint`). With `--crowdsec-enroll-key` (asked during an interactive install) the instance joins the CrowdSec console. The agent shares attack signals with the CrowdSec central API in return for the community blocklist. |
 | File integrity | AIDE, baseline built in the background on the first install, checked daily by Debian's timer |
 | MAC | AppArmor enabled |
 | Time | NTP sync enabled |
