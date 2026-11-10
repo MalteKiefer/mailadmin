@@ -17,7 +17,11 @@ func TestIsNewer(t *testing.T) {
 		{"dev", "1.0.0", true},          // non-semver current -> older
 		{"1.0.0", "nightly", false},     // non-semver latest -> not newer
 		{"1.13.1", "1.13.2-rc1", true},  // pre-release suffix ignored
-		{"1.13.1-rc1", "1.13.1", false}, // suffix stripped -> equal
+		{"1.13.1-rc1", "1.13.1", true},  // pre-release is older than its release
+		{"1.25.0-dev", "v1.25.0", true}, // dev build of the released version
+		{"1.13.1", "1.13.1-rc1", false}, // release is newer than its pre-release
+		{"1.13.1-rc1", "1.13.1-rc2", false},
+		{"1.13.1+build5", "1.13.1", false}, // build metadata ignored
 	}
 	for _, tc := range cases {
 		if got := IsNewer(tc.current, tc.latest); got != tc.want {
