@@ -31,7 +31,7 @@ func newBackupCmd(app *App) *cobra.Command {
 		Long: "Writes one timestamped bundle directory containing a pg_dump of the\n" +
 			"mailadmin database, a copy of the DKIM key directory, every mailbox's\n" +
 			"active Sieve script, and mailadmin's own config.toml.\n\n" +
-			"secrets.env is NEVER included, back it up separately.",
+			"Secrets are NEVER included: the [secrets] table is left out of config.toml. Back them up separately.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error { return app.backupCreate(c, createOut) },
 	}
@@ -123,7 +123,7 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 		r.Message("  domain-db: pg_dump --format=custom via postgres.service %q", cfg.Postgres.Service)
 		r.Message("  dkim: copy %s (%s on disk today)", cfg.Mail.DKIMDir, backup.FormatBytes(dkimBytes))
 		r.Message("  sieve: active script for up to %d mailbox(es), fetched via doveadm", len(mailboxes))
-		r.Message("  config: %s (secrets.env is NEVER included in a backup)", cfg.Path)
+		r.Message("  config: %s (the [secrets] table is NEVER included in a backup)", cfg.Path)
 		r.Message("  domains covered: %s", strings.Join(names, ", "))
 		return nil
 	}

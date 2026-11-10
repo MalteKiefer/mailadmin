@@ -46,9 +46,13 @@ func (m *Manager) path(local, domain string) (string, error) {
 		strings.ContainsAny(local, "/\x00") || strings.ContainsAny(domain, "/\x00") {
 		return "", fmt.Errorf("%w: %s@%s", ErrOutsideRoot, local, domain)
 	}
+	if local == "." || local == ".." || domain == "." || domain == ".." {
+		return "", fmt.Errorf("%w: %s@%s", ErrOutsideRoot, local, domain)
+	}
 	p := filepath.Clean(filepath.Join(m.root, domain, local))
 	rootPrefix := m.root + string(os.PathSeparator)
-	if p != m.root && !strings.HasPrefix(p, rootPrefix) {
+	// The mail root itself is never a mailbox: a purge of it would delete every mailbox.
+	if p == m.root || !strings.HasPrefix(p, rootPrefix) {
 		return "", fmt.Errorf("%w: %s", ErrOutsideRoot, p)
 	}
 	return p, nil

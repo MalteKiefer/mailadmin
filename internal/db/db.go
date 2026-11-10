@@ -120,17 +120,29 @@ func (d *DB) CountMailboxesInDomain(ctx context.Context, domain string) (int, er
 func (d *DB) CountAliasesInDomain(ctx context.Context, domain string) (int, error) {
 	var n int
 	err := d.pool.QueryRow(ctx,
-		`SELECT count(*) FROM alias WHERE source = '@' || $1 OR source LIKE '%@' || $1`, domain).Scan(&n)
+		`SELECT count(*) FROM alias WHERE split_part(source, '@', 2) = $1`, domain).Scan(&n)
 	return n, err
 }
 
 // ---- mailboxes -----------------------------------------------------------
 
-const mailboxCols = `username, domain, password, quota_bytes, active, created_at`
+// mailboxCols are the columns mailbox show prints. The password hash is never
+// read back: only UpdateMailboxPassword writes it.
+const mailboxCols = `username, domain, quota_bytes, active, created_at`
+
+// mailboxSummaryCols are the columns a mailbox list, completion or backup needs:
+// address, quota and state. Creation time and the hash are not loaded.
+const mailboxSummaryCols = `username, domain, quota_bytes, active`
 
 func scanMailbox(rows pgx.Rows) (Mailbox, error) {
 	var m Mailbox
-	err := rows.Scan(&m.Username, &m.Domain, &m.Password, &m.QuotaBytes, &m.Active, &m.CreatedAt)
+	err := rows.Scan(&m.Username, &m.Domain, &m.QuotaBytes, &m.Active, &m.CreatedAt)
+	return m, err
+}
+
+func scanMailboxSummary(rows pgx.Rows) (Mailbox, error) {
+	var m Mailbox
+	err := rows.Scan(&m.Username, &m.Domain, &m.QuotaBytes, &m.Active)
 	return m, err
 }
 
@@ -141,10 +153,10 @@ func (d *DB) ListMailboxes(ctx context.Context, domain string) ([]Mailbox, error
 	)
 	if domain != "" {
 		rows, err = d.pool.Query(ctx,
-			`SELECT `+mailboxCols+` FROM mailbox WHERE domain=$1 ORDER BY username`, domain)
+			`SELECT `+mailboxSummaryCols+` FROM mailbox WHERE domain=$1 ORDER BY username`, domain)
 	} else {
 		rows, err = d.pool.Query(ctx,
-			`SELECT `+mailboxCols+` FROM mailbox ORDER BY domain, username`)
+			`SELECT `+mailboxSummaryCols+` FROM mailbox ORDER BY domain, username`)
 	}
 	if err != nil {
 		return nil, err
@@ -152,7 +164,7 @@ func (d *DB) ListMailboxes(ctx context.Context, domain string) ([]Mailbox, error
 	defer rows.Close()
 	var out []Mailbox
 	for rows.Next() {
-		m, err := scanMailbox(rows)
+		m, err := scanMailboxSummary(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +231,7 @@ func (d *DB) ListAliases(ctx context.Context, domain string) ([]Alias, error) {
 	if domain != "" {
 		rows, err = d.pool.Query(ctx,
 			`SELECT source, destination, active FROM alias
-			 WHERE source LIKE '%@'||$1 OR source='@'||$1 ORDER BY source, destination`, domain)
+			 WHERE split_part(source, '@', 2) = $1 ORDER BY source, destination`, domain)
 	} else {
 		rows, err = d.pool.Query(ctx,
 			`SELECT source, destination, active FROM alias ORDER BY source, destination`)
@@ -416,7 +428,7 @@ func (d *DB) ListAudit(ctx context.Context, limit int, filter AuditFilter) ([]Au
 
 	args = append(args, limit)
 	query := fmt.Sprintf(
-		`SELECT id, ts, actor, action, target, before, after, host(ip)::text, user_agent
+		`SELECT id, ts, actor, action, target, before, after
 		 FROM audit_log%s ORDER BY ts DESC LIMIT $%d`, where.String(), len(args))
 
 	rows, err := d.pool.Query(ctx, query, args...)
@@ -427,12 +439,8 @@ func (d *DB) ListAudit(ctx context.Context, limit int, filter AuditFilter) ([]Au
 	var out []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		var ip *string
-		if err := rows.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Target, &e.Before, &e.After, &ip, &e.UserAgent); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Target, &e.Before, &e.After); err != nil {
 			return nil, err
-		}
-		if ip != nil {
-			e.IP = *ip
 		}
 		out = append(out, e)
 	}

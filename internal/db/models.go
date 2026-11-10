@@ -65,13 +65,11 @@ func (a AppPassword) Address() string { return a.Username + "@" + a.Domain }
 
 // AuditEntry is an append-only audit-log row (table: audit_log).
 type AuditEntry struct {
-	ID        int64
-	TS        time.Time
-	Actor     string
-	Action    string
-	Target    string
-	Before    json.RawMessage
-	After     json.RawMessage
-	IP        string // host(ip)::text
-	UserAgent string
+	ID     int64
+	TS     time.Time
+	Actor  string
+	Action string
+	Target string
+	Before json.RawMessage
+	After  json.RawMessage
 }

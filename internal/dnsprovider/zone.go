@@ -27,16 +27,26 @@ func PullAXFR(ctx context.Context, domain, nameserver string) ([]Record, error) 
 	if err != nil {
 		return nil, fmt.Errorf("axfr %s @ %s: %w", domain, nameserver, err)
 	}
+	// The transfer goroutine sends on ch until it is done or the channel is
+	// drained. Returning early would leave it blocked on a send, so every
+	// envelope is read even after an error.
 	var out []Record
+	var xferErr error
 	for env := range ch {
 		if env.Error != nil {
-			return nil, fmt.Errorf("axfr %s: %w (does the nameserver allow transfers from this host?)", domain, env.Error)
+			if xferErr == nil {
+				xferErr = env.Error
+			}
+			continue
 		}
 		for _, rr := range env.RR {
 			if r, ok := rrToRecord(rr, domain); ok {
 				out = append(out, r)
 			}
 		}
+	}
+	if xferErr != nil {
+		return nil, fmt.Errorf("axfr %s: %w (does the nameserver allow transfers from this host?)", domain, xferErr)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("axfr %s @ %s returned no usable records", domain, nameserver)

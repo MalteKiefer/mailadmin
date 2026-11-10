@@ -24,6 +24,24 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.29.6] - 2026-11-10
+
+### Added
+- Migration `006_indexes.sql`: index on `mailbox (domain, username)` and an expression index on the domain part of `alias.source`. Measured on 100k rows: domain mailbox listing 3.1 ms to 0.5 ms, alias listing for a domain 8.4 ms to 1.2 ms.
+
+### Changed
+- `dns drift-check` reads the domain table once and opens the database before its workers start. It no longer runs one lookup per domain, and parallel domain arguments no longer open the pool concurrently.
+- Mailbox lists, completion and backup read address, quota and state only. Mailbox show and the list reads no longer load the password hash. The audit list no longer loads IP and user agent, which were never printed.
+- Alias queries match the domain part with `split_part(source, '@', 2)` instead of `LIKE`, so the new index is used.
+
+### Fixed
+- AXFR transfer drains its channel after an error, so the transfer goroutine and its TCP connection are released.
+- Mailbox paths cannot resolve to the mail root. A purge of such a path would have removed every mailbox. No current command reaches it, the address validator blocks it first.
+- Backup help and dry-run text name the `[secrets]` table instead of `secrets.env`.
+
+### Upgrade
+- Apply migration 006 with `mailadmin install --adopt` on each host, then update the binary.
+
 ## [v1.29.5] - 2026-11-10
 
 ### Fixed
