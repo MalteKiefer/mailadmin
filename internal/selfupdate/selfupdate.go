@@ -107,12 +107,14 @@ func Latest(ctx context.Context) (Release, error) {
 // IsNewer reports whether latest is a strictly higher semantic version than
 // current. A non-numeric current (e.g. "dev") is treated as older so a real
 // release is always offered; a non-numeric latest is never considered newer.
+// As in SemVer, a pre-release (1.25.0-dev) is older than its release (1.25.0).
+// Two pre-releases of the same version count as equal.
 func IsNewer(current, latest string) bool {
-	lv, ok := parseSemver(latest)
+	lv, lpre, ok := parseSemver(latest)
 	if !ok {
 		return false
 	}
-	cv, ok := parseSemver(current)
+	cv, cpre, ok := parseSemver(current)
 	if !ok {
 		return true
 	}
@@ -121,30 +123,33 @@ func IsNewer(current, latest string) bool {
 			return lv[i] > cv[i]
 		}
 	}
-	return false
+	return cpre && !lpre
 }
 
-// parseSemver parses "vX.Y.Z" / "X.Y.Z" (ignoring any pre-release/build suffix)
-// into a [3]int. ok is false if it is not of that shape.
-func parseSemver(s string) ([3]int, bool) {
-	var out [3]int
+// parseSemver parses "vX.Y.Z" / "X.Y.Z" into a [3]int and reports whether a
+// pre-release suffix ("-...") is present. Build metadata ("+...") is ignored.
+// ok is false if it is not of that shape.
+func parseSemver(s string) (out [3]int, pre bool, ok bool) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "v")
-	if i := strings.IndexAny(s, "-+"); i >= 0 {
+	if i := strings.IndexByte(s, '+'); i >= 0 {
 		s = s[:i]
+	}
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		s, pre = s[:i], true
 	}
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {
-		return out, false
+		return out, false, false
 	}
 	for i, p := range parts {
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 0 {
-			return out, false
+			return out, false, false
 		}
 		out[i] = n
 	}
-	return out, true
+	return out, pre, true
 }
 
 // assetFor returns the download URL of the platform binary in rel.

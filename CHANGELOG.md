@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.25.1] - 2026-11-10
+
+### Fixed
+- `mailadmin update` treats a pre-release build (`1.25.0-dev`) as older than the release `1.25.0`, as SemVer requires. Before, it reported "already up to date".
+
 ## [v1.25.0] - 2026-11-10
 
 ### Added
