@@ -24,6 +24,15 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.29.4] - 2026-11-10
+
+### Fixed
+- `update` no longer prints a "config check skipped" warning on a host without a config file.
+- `config check` judges a symlinked `--config` file by its target, as `load` does.
+- `backup restore` onto a dangling config symlink creates the file the link names instead of replacing the link.
+- `backup restore --dry-run` runs the same config merge as the real restore and reports a refusal (live YAML or JSON config).
+- Removed the unused `CopyFileFollow` helper. The restore of `config.toml` has a test that covers the secret-keeping path.
+
 ## [v1.29.3] - 2026-11-10
 
 ### Fixed
