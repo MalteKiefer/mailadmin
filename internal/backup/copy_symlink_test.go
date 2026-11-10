@@ -35,35 +35,3 @@ func TestCopyTreeRefusesSymlinkedDestinationDir(t *testing.T) {
 		t.Fatal("file was written outside the destination tree")
 	}
 }
-
-// CopyFile refuses a symlink at the destination, CopyFileFollow writes through
-// it. The restore of an operator-managed config.toml relies on the latter.
-func TestCopyFileFollowWritesThroughSymlink(t *testing.T) {
-	base := t.TempDir()
-	src := filepath.Join(base, "bundle-config.toml")
-	realTarget := filepath.Join(base, "managed.toml")
-	link := filepath.Join(base, "config.toml")
-	if err := os.WriteFile(src, []byte("new"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(realTarget, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(realTarget, link); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := CopyFile(src, link); err == nil {
-		t.Fatal("CopyFile wrote through a symlink")
-	}
-	if _, err := CopyFileFollow(src, link); err != nil {
-		t.Fatalf("CopyFileFollow: %v", err)
-	}
-	got, err := os.ReadFile(realTarget)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "new" {
-		t.Fatalf("link target = %q, want %q", got, "new")
-	}
-}

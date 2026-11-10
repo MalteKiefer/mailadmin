@@ -123,7 +123,7 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 // only when it holds secrets, and this check applies the same rule. A legacy
 // secrets.env is still read, so it is reported, not required.
 func secretsState(c *Config) (ok bool, detail string) {
-	fi, err := os.Lstat(c.Path)
+	fi, err := os.Stat(c.Path) // follows a symlinked --config path, as Load does
 	if err != nil {
 		return false, err.Error()
 	}
