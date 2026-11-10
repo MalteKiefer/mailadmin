@@ -329,6 +329,9 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.EnableUnit(pctx, x, "caddy"); err != nil {
 		return err
 	}
+	if err := install.ApplyWebmail(pctx, x, cfg.Webmail, ans.Hostname); err != nil {
+		return err
+	}
 	if err := install.ApplyAutoconfig(ans.Hostname); err != nil {
 		return err
 	}
