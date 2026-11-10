@@ -296,42 +296,53 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		return err
 	}
 
-	for _, comp := range components {
-		switch comp {
-		case backup.ComponentDB:
-			if err := a.restoreDomainDB(cmd, cfg, bundlePath); err != nil {
-				return err
-			}
-		case backup.ComponentDKIM:
-			if err := a.restoreDKIM(cmd, cfg, bundlePath); err != nil {
-				return err
-			}
-		case backup.ComponentSieve:
-			if err := a.restoreSieve(cmd, bundlePath, man); err != nil {
-				return err
-			}
-		case backup.ComponentConfig:
-			if err := a.restoreConfig(cmd, cfg, configMerged); err != nil {
-				return err
-			}
-			if !config.HasSecretsTable(configMerged) {
-				r.Message("warning: the restored config has no [secrets] table (the bundle carries none and this host has none): add the secrets back before starting services")
-			}
-		}
-	}
-
-	if err := rec.Record(ctx(cmd), "backup.restore", bundlePath, nil, map[string]any{"components": components}); err != nil {
-		return err
-	}
-	r.Message("restore complete: %s", strings.Join(components, ", "))
-	// The domain table changed under the selector map and the Caddy includes.
-	if contains(components, backup.ComponentDB) {
+	done, restoreErr := a.restoreComponents(cmd, cfg, bundlePath, man, components, configMerged, r)
+	// Recorded and synced even when a later component failed: the components that
+	// finished have already changed the host.
+	recErr := rec.Record(ctx(cmd), "backup.restore", bundlePath, nil, map[string]any{"components": done, "complete": restoreErr == nil})
+	if contains(done, backup.ComponentDB) {
+		// The domain table changed under the selector map and the Caddy includes.
 		a.syncDomainState(ctx(cmd), r)
 	}
+	if restoreErr != nil {
+		return restoreErr
+	}
+	if recErr != nil {
+		return recErr
+	}
+	r.Message("restore complete: %s", strings.Join(components, ", "))
 	if contains(components, backup.ComponentConfig) {
 		r.Message("config.toml was replaced, review it before restarting any mailadmin-managed service")
 	}
 	return nil
+}
+
+// restoreComponents applies the components in bundle order and returns the ones
+// that completed. It stops at the first failure, so the caller can record what
+// already changed.
+func (a *App) restoreComponents(cmd *cobra.Command, cfg *config.Config, bundlePath string, man backup.Manifest, components []string, configMerged []byte, r *output.Renderer) ([]string, error) {
+	var done []string
+	for _, comp := range components {
+		var err error
+		switch comp {
+		case backup.ComponentDB:
+			err = a.restoreDomainDB(cmd, cfg, bundlePath)
+		case backup.ComponentDKIM:
+			err = a.restoreDKIM(cmd, cfg, bundlePath)
+		case backup.ComponentSieve:
+			err = a.restoreSieve(cmd, bundlePath, man)
+		case backup.ComponentConfig:
+			err = a.restoreConfig(cmd, cfg, configMerged)
+			if err == nil && !config.HasSecretsTable(configMerged) {
+				r.Message("warning: the restored config has no [secrets] table (the bundle carries none and this host has none): add the secrets back before starting services")
+			}
+		}
+		if err != nil {
+			return done, err
+		}
+		done = append(done, comp)
+	}
+	return done, nil
 }
 
 // backupRestoreDryRun prints exactly what a restore would change, per
