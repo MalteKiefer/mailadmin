@@ -112,9 +112,16 @@ func newUpdateCmd(app *App) *cobra.Command {
 				return err
 			}
 			// Warnings only: the binary is already replaced at this point.
-			if err := configUpdateHint(ctx(c), out, rel.Tag); err != nil {
-				_, err = fmt.Fprintf(out, "warning: config check skipped: %v\n", err)
-				return err
+			cfg, _, cerr := app.Config()
+			switch {
+			case errors.Is(cerr, config.ErrNoConfig):
+				return nil // no config file yet: nothing to compare
+			case cerr != nil:
+				_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", cerr)
+				return nil
+			}
+			if err := configUpdateHint(ctx(c), out, cfg.Path, rel.Tag); err != nil {
+				_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", err)
 			}
 			return nil
 		},
@@ -148,21 +155,14 @@ func newCompletionCmd(root *cobra.Command) *cobra.Command {
 
 // configUpdateHint compares the host config with the default config of the
 // release just installed. It writes that default to config.default.toml next to
-// the config, as a reference for a diff, and names the keys the host lacks. The
+// the host config (the file in use, also when --config points elsewhere), as a reference for a diff, and names the keys the host lacks. The
 // host config itself is never changed.
-func configUpdateHint(c context.Context, out io.Writer, tag string) error {
-	host, err := config.Discover(config.ConfigDir)
-	if errors.Is(err, config.ErrNoConfig) {
-		return nil // no config file yet: nothing to compare
-	}
-	if err != nil {
-		return err
-	}
+func configUpdateHint(c context.Context, out io.Writer, host, tag string) error {
 	def, err := config.FetchDefaultFor(c, tag)
 	if err != nil {
 		return err
 	}
-	ref := filepath.Join(config.ConfigDir, "config.default.toml")
+	ref := filepath.Join(filepath.Dir(host), "config.default.toml")
 	if err := os.WriteFile(ref, def, 0o644); err != nil { // #nosec G306 -- reference copy, holds no secrets
 		return fmt.Errorf("write %s: %w", ref, err)
 	}

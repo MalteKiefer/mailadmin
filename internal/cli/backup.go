@@ -509,10 +509,18 @@ func (a *App) restoreSieve(cmd *cobra.Command, bundlePath string, man backup.Man
 	return nil
 }
 
-// restoreConfig overwrites the live config.toml with the bundle's copy.
+// restoreConfig replaces the live config with the bundle's copy. The live
+// [secrets] table is kept, since bundles from v1.29.2 on carry none.
 func (a *App) restoreConfig(_ *cobra.Command, cfg *config.Config, bundlePath string) error {
-	src := filepath.Join(bundlePath, backup.ConfigFile)
-	if _, err := backup.CopyFileFollow(src, cfg.Path); err != nil {
+	bundle, err := os.ReadFile(filepath.Join(bundlePath, backup.ConfigFile)) // #nosec G304 -- bundle path from the operator
+	if err != nil {
+		return fmt.Errorf("backup restore: config: %w", err)
+	}
+	merged, err := config.MergeRestored(bundle, cfg.Path)
+	if err != nil {
+		return fmt.Errorf("backup restore: config: %w", err)
+	}
+	if err := config.WriteSecretFile(cfg.Path, merged); err != nil {
 		return fmt.Errorf("backup restore: config: %w", err)
 	}
 	return nil

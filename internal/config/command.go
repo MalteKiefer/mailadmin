@@ -119,8 +119,9 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 }
 
 // secretsState reports where the secrets live. Since v1.28 they sit in the
-// [secrets] table of the config file, which must be owner-only (no group or
-// other bits). A legacy secrets.env is still read, so it is reported, not required.
+// [secrets] table of the config file. Load requires that file to be owner-only
+// only when it holds secrets, and this check applies the same rule. A legacy
+// secrets.env is still read, so it is reported, not required.
 func secretsState(c *Config) (ok bool, detail string) {
 	fi, err := os.Lstat(c.Path)
 	if err != nil {
@@ -129,11 +130,14 @@ func secretsState(c *Config) (ok bool, detail string) {
 	if !fi.Mode().IsRegular() {
 		return false, c.Path + " is not a regular file"
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
+	if len(c.Secrets) > 0 && fi.Mode().Perm()&0o077 != 0 {
 		return false, fmt.Sprintf("%s mode %#o: secrets need 0600", c.Path, fi.Mode().Perm())
 	}
 	if _, err := os.Lstat(c.secretsPath()); err == nil {
 		return true, fmt.Sprintf("%s mode %#o; legacy %s is still read", c.Path, fi.Mode().Perm(), c.secretsPath())
+	}
+	if len(c.Secrets) == 0 {
+		return true, fmt.Sprintf("%s mode %#o (no secrets configured)", c.Path, fi.Mode().Perm())
 	}
 	return true, fmt.Sprintf("%s mode %#o (secrets in [secrets])", c.Path, fi.Mode().Perm())
 }
