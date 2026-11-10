@@ -277,6 +277,9 @@ func (r *Renderer) Value(v any) error {
 	return r.renderKV(v)
 }
 
+// Quiet reports whether status messages are suppressed (-q).
+func (r *Renderer) Quiet() bool { return r.quiet }
+
 // Message prints a human status line (suppressed when quiet, omitted for json).
 func (r *Renderer) Message(format string, args ...any) {
 	if r.quiet || r.format == FormatJSON {

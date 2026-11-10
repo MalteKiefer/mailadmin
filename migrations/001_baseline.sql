@@ -1,34 +1,34 @@
 -- 001_baseline.sql
 --
 -- Baseline schema for the mailadmin `mail` database, reconstructed from
--- internal/db/db.go, internal/db/models.go, and internal/db/apppw.go — the
+-- internal/db/db.go, internal/db/models.go, and internal/db/apppw.go, the
 -- single source of truth for the queries this file must support. This file
 -- did not previously exist in version control; only 002_dns_provider.sql
 -- (an ALTER TABLE against this schema) was checked in. It has already been
 -- applied to the live `mail` database, so 001 must describe exactly the
 -- state that predates it: in particular, `domain` here has NO dns_provider
--- column — 002 adds that with `ADD COLUMN IF NOT EXISTS`.
+-- column, 002 adds that with `ADD COLUMN IF NOT EXISTS`.
 --
 -- Column types/constraints below are derived from how each column is used in
 -- internal/db, e.g.:
 --   - `domain.dkim_selector` is read via COALESCE(dkim_selector, '') in
 --     domainCols, so it is nullable.
---   - `mailbox` is looked up and upserted by (username, domain) — ON CONFLICT
---     (username, domain) in CreateMailbox — so that pair is the primary key.
---   - `alias` is looked up and upserted by (source, destination) — ON
---     CONFLICT (source, destination) in CreateAlias — so that pair is the
+--   - `mailbox` is looked up and upserted by (username, domain), ON CONFLICT
+--     (username, domain) in CreateMailbox, so that pair is the primary key.
+--   - `alias` is looked up and upserted by (source, destination), ON
+--     CONFLICT (source, destination) in CreateAlias, so that pair is the
 --     primary key.
 --   - `app_password.id` scans into a Go `int`, not `int64` (models.go), so it
 --     is `integer`, not `bigint`; it is upserted by (username, domain, label)
---     — ON CONFLICT (username, domain, label) in CreateAppPassword.
+--    , ON CONFLICT (username, domain, label) in CreateAppPassword.
 --   - `audit_log.id` scans into a Go `int64` (models.go), so it is `bigint`;
 --     `ip` is read back via `host(ip)::text`, so its column type is `inet`.
 --
 -- Postfix and Dovecot read this schema directly (virtual_mailbox_maps,
--- virtual_alias_maps, SQL userdb/passdb) via a read-only role — see the
+-- virtual_alias_maps, SQL userdb/passdb) via a read-only role, see the
 -- GRANT block at the end. The exact role name(s) and grant set were NOT
 -- re-derived from a live \dp dump for this reconstruction (that requires
--- access to the running server) — verify them against the live database
+-- access to the running server), verify them against the live database
 -- before relying on this file to rebuild permissions from scratch. See
 -- docs/DISASTER-RECOVERY.md.
 
@@ -126,7 +126,7 @@ CREATE INDEX audit_log_ts_idx ON audit_log (ts DESC);
 --
 -- The exact role names below (mailadmin/postfix/dovecot) match the actors
 -- documented elsewhere in this repo, but this GRANT block was reconstructed,
--- not re-derived from a live `\dp` dump — confirm against the running server
+-- not re-derived from a live `\dp` dump, confirm against the running server
 -- (`psql -c '\dp'`) and adjust before trusting this file for a real rebuild.
 -- See docs/DISASTER-RECOVERY.md, step "Recreate roles and grants".
 

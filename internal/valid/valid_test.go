@@ -60,7 +60,7 @@ func TestDomain(t *testing.T) {
 		{"idna-looking but raw unicode rejected", "example.édu", "", true},
 		// NOTE: reDomain caps each label at 63 chars but does not cap the total
 		// length (real DNS names top out at 253 octets). A long chain of
-		// single-char labels is accepted today — documented here rather than
+		// single-char labels is accepted today, documented here rather than
 		// silently assumed away; see report for a suggested follow-up.
 		{"long chain of short labels currently accepted", strings.Repeat("a.", 2000) + "com", strings.Repeat("a.", 2000) + "com", false},
 		{"wildcard glob", "*.example.com", "", true},
@@ -342,7 +342,7 @@ func TestUnit(t *testing.T) {
 		{"space inside", "post fix.service", "", true},
 		{"slash", "post/fix.service", "", true},
 
-		// Injection-shaped — Unit only enforces charset; allowlisting is the
+		// Injection-shaped, Unit only enforces charset; allowlisting is the
 		// caller's job per the doc comment, but these must still fail the regex.
 		{"shell metachar semicolon", "postfix.service;rm -rf /", "", true},
 		{"shell pipe", "postfix.service|id", "", true},
@@ -575,10 +575,10 @@ func TestDuration(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Fuzz targets — riskiest parsers: Domain and Address. These run as ordinary
+// Fuzz targets, riskiest parsers: Domain and Address. These run as ordinary
 // seed-corpus tests under `go test ./...`; full fuzzing needs `go test -fuzz`.
 // The only invariant checked is "never panics" (crash-safety), since the
-// validators are intentionally permissive about *rejecting* almost anything —
+// validators are intentionally permissive about *rejecting* almost anything:
 // correctness of acceptance is covered exhaustively by the table tests above.
 // ---------------------------------------------------------------------------
 

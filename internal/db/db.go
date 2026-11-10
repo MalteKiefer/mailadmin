@@ -2,7 +2,7 @@
 //
 // Connection uses libpq service files (PGSERVICEFILE / PG_SERVICE) so that the
 // process authenticates to Postgres via the unix socket with peer auth as the
-// `mailadmin` role. All statements are parameterized ($1, $2, ...) — lookup
+// `mailadmin` role. All statements are parameterized ($1, $2, ...), lookup
 // input (local-parts, domains) is never string-interpolated.
 package db
 
@@ -115,6 +115,15 @@ func (d *DB) CountMailboxesInDomain(ctx context.Context, domain string) (int, er
 	return n, err
 }
 
+// CountAliasesInDomain counts aliases whose source is in domain, the catch-all
+// included. The alias table has no foreign key to domain, so they would outlive it.
+func (d *DB) CountAliasesInDomain(ctx context.Context, domain string) (int, error) {
+	var n int
+	err := d.pool.QueryRow(ctx,
+		`SELECT count(*) FROM alias WHERE source = '@' || $1 OR source LIKE '%@' || $1`, domain).Scan(&n)
+	return n, err
+}
+
 // ---- mailboxes -----------------------------------------------------------
 
 const mailboxCols = `username, domain, password, quota_bytes, active, created_at`
@@ -215,6 +224,25 @@ func (d *DB) ListAliases(ctx context.Context, domain string) ([]Alias, error) {
 		rows, err = d.pool.Query(ctx,
 			`SELECT source, destination, active FROM alias ORDER BY source, destination`)
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Alias
+	for rows.Next() {
+		var a Alias
+		if err := rows.Scan(&a.Source, &a.Destination, &a.Active); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListAliasesBySource returns every destination of one alias source.
+func (d *DB) ListAliasesBySource(ctx context.Context, source string) ([]Alias, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT source, destination, active FROM alias WHERE source=$1 ORDER BY destination`, source)
 	if err != nil {
 		return nil, err
 	}

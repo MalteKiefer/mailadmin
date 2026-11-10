@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -99,7 +100,7 @@ func newDNSCmd(app *App) *cobra.Command {
 			"it exits non-zero (runtime error, exit code 1) if any record is missing\n" +
 			"or has drifted, so it works as-is in a cron job or systemd timer.\n" +
 			"`-o json` emits a machine-parseable summary per domain (domain, total,\n" +
-			"matched, drift count) — see docs/DNS-DRIFT-MONITORING.md for a worked\n" +
+			"matched, drift count), see docs/DNS-DRIFT-MONITORING.md for a worked\n" +
 			"systemd timer example.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -161,7 +162,7 @@ func newDNSCmd(app *App) *cobra.Command {
 			"  --zonefile <file>  a BIND-format zone export\n" +
 			"  --from <provider>  read via that provider's API\n" +
 			"Providers (--from/--to): njalla|desec|cloudflare|inwx|servercow|servfail.\n" +
-			"NS and SOA records are never copied — delegation belongs to the target zone.\n" +
+			"NS and SOA records are never copied, delegation belongs to the target zone.\n" +
 			"With --create the zone is created at the target first (deSEC), and the\n" +
 			"nameservers + DNSSEC DS records to set at your registrar are printed.\n" +
 			"By default existing target records are left untouched; nothing is deleted.\n" +
@@ -184,7 +185,7 @@ func newDNSCmd(app *App) *cobra.Command {
 	audit := &cobra.Command{
 		Use:   "audit <domain>",
 		Short: "Grade a domain's mail-security posture (SPF/DKIM/DMARC/DNSSEC/DANE/MTA-STS/TLS-RPT/BIMI)",
-		Long: "Evaluate live public DNS for correctness and policy strength per RFC —\n" +
+		Long: "Evaluate live public DNS for correctness and policy strength per RFC:\n" +
 			"not a desired/actual diff (that is `dns check`). Works for any domain,\n" +
 			"including externally hosted ones. DKIM selectors are taken from --selector,\n" +
 			"else the domain's configured selector, else a common-provider set.",
@@ -228,7 +229,6 @@ func (a *App) completeDomain(cmd *cobra.Command, args []string, toComplete strin
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	defer database.Close()
 	domains, err := database.ListDomains(ctx(cmd))
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -267,7 +267,6 @@ func (a *App) dnsAudit(cmd *cobra.Command, rawDomain string, userSelectors []str
 			if dom, gerr := getDomain(ctx(cmd), database, domain); gerr == nil && dom.DKIMSelector != "" {
 				selectors = []string{dom.DKIMSelector}
 			}
-			database.Close()
 		}
 	}
 	speculative := false
@@ -284,7 +283,7 @@ func (a *App) dnsAudit(cmd *cobra.Command, rawDomain string, userSelectors []str
 		return r.JSON(report)
 	}
 	pass, warn, fail := report.Counts()
-	r.Message("%s — mail-security audit: %s (%d pass, %d warn, %d fail)",
+	r.Message("%s, mail-security audit: %s (%d pass, %d warn, %d fail)",
 		domain, strings.ToUpper(string(report.Grade())), pass, warn, fail)
 	return r.StatusTable(dnsAuditTable(report), 1)
 }
@@ -341,11 +340,21 @@ func (a *App) dnsZoneCreate(cmd *cobra.Command, rawDomain, provider string) erro
 	if err != nil {
 		return err
 	}
+	if a.flags.dryRun {
+		r.Message("dry-run: would create zone %s at %s (if it does not exist)", domain, prov)
+		return nil
+	}
+	if err := a.confirm(fmt.Sprintf("create zone %s at %s?", domain, prov)); err != nil {
+		return err
+	}
 	info, err := zm.EnsureZone(ctx(cmd), domain)
 	if err != nil {
 		return fmt.Errorf("dns zone create %s: %w", domain, err)
 	}
 	if info.Created {
+		if err := a.recordAudit(ctx(cmd), "dns.zone.create", domain, nil, map[string]any{"provider": prov}); err != nil {
+			return fmt.Errorf("zone created but not audited: %w", err)
+		}
 		r.Message("created zone %s at %s", domain, prov)
 	} else {
 		r.Message("zone %s already exists at %s", domain, prov)
@@ -391,7 +400,7 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		return fmt.Errorf("%w: choose exactly one source (--axfr, --zonefile, --from or --probe)", ErrUsage)
 	}
 
-	// Pull the source records first — a dry-run then needs no target credentials.
+	// Pull the source records first, a dry-run then needs no target credentials.
 	var records []dnsprovider.Record
 	switch {
 	case axfr != "":
@@ -424,7 +433,7 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 	// Never migrate delegation records: NS/SOA belong to the target zone.
 	records, droppedNS := splitDelegation(records)
 	if len(droppedNS) > 0 {
-		r.Message("skipping %d NS/SOA record(s) — delegation is managed by the target", len(droppedNS))
+		r.Message("skipping %d NS/SOA record(s), delegation is managed by the target", len(droppedNS))
 	}
 	if len(records) == 0 {
 		return fmt.Errorf("dns migrate %s: source returned only NS/SOA records", domain)
@@ -472,9 +481,9 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		if info.Created {
 			r.Message("created zone %s at %s", domain, to)
 		}
-		r.Message("delegation — set nameservers to: %s", strings.Join(info.Nameservers, ", "))
+		r.Message("delegation, set nameservers to: %s", strings.Join(info.Nameservers, ", "))
 		if len(info.DS) > 0 {
-			r.Message("DNSSEC — publish DS at parent: %s", strings.Join(info.DS, " | "))
+			r.Message("DNSSEC, publish DS at parent: %s", strings.Join(info.DS, " | "))
 		}
 	}
 
@@ -517,19 +526,20 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		return fmt.Errorf("dns migrate %s: %w", domain, err)
 	}
 	// Records created before a failed rectify are live, so audit and report them first.
-	if rec, aerr := a.auditor(ctx(cmd)); aerr == nil {
-		_ = rec.Record(context.WithoutCancel(ctx(cmd)), "dns.migrate", domain, nil, map[string]any{
-			"target": to, "created": len(res.Created), "skipped": len(res.Skipped), "failed": len(res.Failed),
-		})
-	}
+	auditErr := a.recordAudit(context.WithoutCancel(ctx(cmd)), "dns.migrate", domain, nil, map[string]any{
+		"target": to, "created": len(res.Created), "skipped": len(res.Skipped), "failed": len(res.Failed),
+	})
 	r.Message("migrated to %s: %d created, %d already present, %d failed",
 		to, len(res.Created), len(res.Skipped), len(res.Failed))
 	if err != nil {
-		return fmt.Errorf("dns migrate %s: %w", domain, err)
+		return fmt.Errorf("dns migrate %s: %w", domain, errors.Join(err, auditErr))
+	}
+	if auditErr != nil {
+		return fmt.Errorf("dns migrate %s: change applied but not audited: %w", domain, auditErr)
 	}
 
 	// Offer to point the domain at the target so `dns publish` (and DANE) manage
-	// it going forward — migrate only copies records, it never changes the row.
+	// it going forward, migrate only copies records, it never changes the row.
 	if automatedDNS(to) {
 		if database, derr := a.openDB(cmd, cfg); derr == nil {
 			if dom, gerr := getDomain(ctx(cmd), database, domain); gerr == nil && !strings.EqualFold(dom.DNSProvider, to) {
@@ -639,7 +649,7 @@ type dnsBackends struct {
 }
 
 // dnsShow prints the desired mail record-set for a domain. It needs no registrar
-// or DB write — only the DKIM key on disk and the domain's selector.
+// or DB write, only the DKIM key on disk and the domain's selector.
 func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS, withDANE bool) error {
 	r, err := a.Renderer()
 	if err != nil {
@@ -665,7 +675,6 @@ func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS, withDANE
 	if err != nil {
 		return err
 	}
-	defer database.Close()
 
 	dom, err := getDomain(ctx(cmd), database, domain)
 	if err != nil {
@@ -682,7 +691,7 @@ func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS, withDANE
 }
 
 // dnsCheckResult is the outcome of comparing desired vs. live public DNS for
-// one domain — the computation shared by `dns check` (human table) and
+// one domain, the computation shared by `dns check` (human table) and
 // `dns drift-check` (cron-friendly, per-domain, non-zero exit on drift).
 type dnsCheckResult struct {
 	Domain  string               `json:"domain"`
@@ -693,7 +702,7 @@ type dnsCheckResult struct {
 }
 
 // computeDNSCheck resolves live public DNS and diffs it against the desired
-// mail record-set for domain. It does no rendering — callers own that.
+// mail record-set for domain. It does no rendering, callers own that.
 func (a *App) computeDNSCheck(cmd *cobra.Command, rawDomain string) (dnsCheckResult, error) {
 	cfg, _, err := a.Config()
 	if err != nil {
@@ -740,7 +749,7 @@ func (a *App) computeDNSCheck(cmd *cobra.Command, rawDomain string) (dnsCheckRes
 
 // dnsCheck verifies live public DNS against the full desired record-set (the
 // same set `dns show` prints), reporting per record whether it matches, drifts
-// (old→new), or is missing — coloured, and covering MX/SPF/DMARC/DKIM/TLS-RPT/
+// (old→new), or is missing, coloured, and covering MX/SPF/DMARC/DKIM/TLS-RPT/
 // SRV/CNAME, not just the policy records.
 func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
 	r, err := a.Renderer()
@@ -751,7 +760,7 @@ func (a *App) dnsCheck(cmd *cobra.Command, rawDomain string) error {
 	if err != nil {
 		return err
 	}
-	r.Message("%s — public DNS: %d of %d records correct", res.Domain, res.Matched, res.Total)
+	r.Message("%s, public DNS: %d of %d records correct", res.Domain, res.Matched, res.Total)
 	return r.StatusTable(njallaCheckTable(res.Plan), 0)
 }
 
@@ -772,7 +781,7 @@ func validateDriftCheckArgs(domain string, all bool) error {
 // `dns check` for one domain or every domain (--all), but is shaped for
 // unattended/cron use: it exits non-zero when any domain has drifted, and
 // renders a machine-parseable summary under -o json. It never mutates
-// anything — a thin, exit-code-flavoured wrapper around computeDNSCheck, not
+// anything, a thin, exit-code-flavoured wrapper around computeDNSCheck, not
 // a second implementation of the diffing logic.
 func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify, notifyHeartbeat bool) error {
 	r, err := a.Renderer()
@@ -793,7 +802,6 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify,
 		if derr != nil {
 			return derr
 		}
-		defer database.Close()
 		rows, derr := database.ListDomains(ctx(cmd))
 		if derr != nil {
 			return derr
@@ -807,14 +815,33 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify,
 	results := make([]dnsCheckResult, 0, len(domains))
 	var failed []string
 	drifted := 0
-	for _, d := range domains {
-		res, cerr := a.computeDNSCheck(cmd, d)
-		if cerr != nil {
-			failed = append(failed, fmt.Sprintf("%s: %v", d, cerr))
+	// Domains are checked a few at a time: each one is a dozen sequential DNS
+	// queries, and a lossy resolver costs seconds per query.
+	type outcome struct {
+		res dnsCheckResult
+		err error
+	}
+	outs := make([]outcome, len(domains))
+	sem := make(chan struct{}, 4)
+	var wg sync.WaitGroup
+	for i, d := range domains {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			res, cerr := a.computeDNSCheck(cmd, d)
+			outs[i] = outcome{res, cerr}
+		}()
+	}
+	wg.Wait()
+	for i, o := range outs {
+		if o.err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", domains[i], o.err))
 			continue
 		}
-		results = append(results, res)
-		if res.Drift > 0 {
+		results = append(results, o.res)
+		if o.res.Drift > 0 {
 			drifted++
 		}
 	}
@@ -829,7 +856,7 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify,
 			if res.Drift > 0 {
 				status = fmt.Sprintf("%d drifted", res.Drift)
 			}
-			r.Message("%s — %d/%d correct (%s)", res.Domain, res.Matched, res.Total, status)
+			r.Message("%s, %d/%d correct (%s)", res.Domain, res.Matched, res.Total, status)
 		}
 	}
 
@@ -850,7 +877,7 @@ func (a *App) dnsDriftCheck(cmd *cobra.Command, rawDomain string, all, doNotify,
 
 // driftCheckNotifyMessage builds the single ntfy notification for a
 // drift-check run, summarising every domain that drifted or could not be
-// checked — never one per domain. ok is false (nothing to send) on a fully
+// checked, never one per domain. ok is false (nothing to send) on a fully
 // clean run unless heartbeat asks for a low-priority OK ping. Pure and
 // host-injected so it is unit-testable without a real App/config.
 func driftCheckNotifyMessage(results []dnsCheckResult, failed []string, drifted int, heartbeat bool, host string) (notify.Message, bool) {
@@ -913,7 +940,6 @@ func (a *App) dnsCheckRegistrar(cmd *cobra.Command, rawDomain, forceProvider str
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -942,7 +968,7 @@ func (a *App) dnsCheckRegistrar(cmd *cobra.Command, rawDomain, forceProvider str
 
 	plan := dnsprovider.Plan(live, desired)
 	match := len(plan) - countMutating(plan)
-	r.Message("%s @ %s — mail records: %d match, %d to change",
+	r.Message("%s @ %s, mail records: %d match, %d to change",
 		domain, be.provider.Name(), match, countMutating(plan))
 	if err := r.StatusTable(njallaCheckTable(plan), 0); err != nil {
 		return err
@@ -1017,7 +1043,6 @@ func (a *App) dnsPublish(cmd *cobra.Command, rawDomain string, withMTASTS bool) 
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -1072,7 +1097,7 @@ func daneSubname(mailHost, domain string) (string, error) {
 	case strings.HasSuffix(h, "."+d):
 		return "_25._tcp." + strings.TrimSuffix(h, "."+d), nil
 	default:
-		return "", fmt.Errorf("mail host %q is not within zone %q — publish its TLSA in the mail host's own domain", h, d)
+		return "", fmt.Errorf("mail host %q is not within zone %q, publish its TLSA in the mail host's own domain", h, d)
 	}
 }
 
@@ -1098,7 +1123,6 @@ func (a *App) dnsPublishDANE(cmd *cobra.Command, rawDomain string) error {
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -1150,7 +1174,6 @@ func (a *App) dnsTakeover(cmd *cobra.Command, rawDomain string, keepWeb, withMTA
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -1196,6 +1219,11 @@ func (a *App) dnsTakeover(cmd *cobra.Command, rawDomain string, keepWeb, withMTA
 	}
 	r.Message("takeover of %s complete: removed %d, added %d, backup %s",
 		domain, len(res.Removed), len(res.Added), res.BackupPath)
+	if r.Format() == output.FormatJSON {
+		// The snapshot path is the undo handle; json output must carry it.
+		return r.JSON(map[string]any{"domain": domain, "backup": res.BackupPath,
+			"removed": len(res.Removed), "added": res.Added})
+	}
 	return r.Table(recordsTable(res.Added))
 }
 
@@ -1205,7 +1233,6 @@ func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -1407,7 +1434,7 @@ func (a *App) openDB(cmd *cobra.Command, _ *config.Config) (*db.DB, error) {
 }
 
 // sysRunner builds a privileged-exec runner (the mail.Manager uses it for the
-// DKIM helper). Every invocation still goes through internal/sys — no shell.
+// DKIM helper). Every invocation still goes through internal/sys, no shell.
 func (a *App) sysRunner() *sys.Runner {
 	return sys.New(sys.DefaultTimeout, nil)
 }
@@ -1569,7 +1596,7 @@ func recordTypeOrder(rtype string) int {
 // legible instead of just the bare target host.
 func recordContent(r dnsprovider.Record) string {
 	if strings.EqualFold(r.Type, "SRV") {
-		// prio weight port target — prio included so a priority-only drift is visible.
+		// prio weight port target, prio included so a priority-only drift is visible.
 		return fmt.Sprintf("%d %d %d %s", r.Prio, r.Weight, r.Port, r.Content)
 	}
 	return r.Content
@@ -1611,13 +1638,13 @@ func njallaCheckTable(changes []dnsprovider.Change) output.Table {
 			st = c.Op
 		}
 		typ, name := c.Record.Type, c.Record.Name
-		current, desired := "—", recordContent(c.Record)
+		current, desired := ", ", recordContent(c.Record)
 		if c.Current != nil {
 			current = recordContent(*c.Current)
 			typ, name = c.Current.Type, c.Current.Name
 		}
 		if c.Op == dnsprovider.OpDelete { // superfluous live record; nothing desired
-			desired = "(remove — duplicate in slot)"
+			desired = "(remove, duplicate in slot)"
 		}
 		rows = append(rows, []string{st, typ, name, current, desired})
 	}

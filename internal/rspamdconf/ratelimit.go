@@ -3,7 +3,6 @@ package rspamdconf
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -34,14 +33,15 @@ var ErrUnknownBucket = errors.New("rspamdconf: unknown ratelimit bucket")
 var ErrInvalidRate = errors.New("rspamdconf: invalid rate")
 
 // reRate matches a rate string such as "20 / 1m" or "20/1h". The unit
-// alphabet (s/m/h/d/w) mirrors internal/valid.Duration's (s/m/h/d) plus "w"
-// for the weekly-scale bounce buckets, kept in one letter per unit for
-// consistency with the rest of the tool's duration handling. rspamd itself
+// alphabet (s/m/h/d) is internal/valid.Duration's; weekly rates are written in
+// days (1 / 7d). rspamd itself
 // additionally accepts word units ("min", "hour", ...); this narrower
-// grammar is what mailadmin writes and validates — an operator who wants a
+// grammar is what mailadmin writes and validates, an operator who wants a
 // word-unit rate can still hand-edit the file, mailadmin will simply not
 // offer to "set" it afterwards until it's changed back to a unit letter.
-var reRate = regexp.MustCompile(`^\s*(\d+(?:\.\d+)?)\s*/\s*(\d{1,4})\s*([smhdw])\s*$`)
+// rspamd's rate parser knows s, m, h and d only; an unknown unit is dropped and
+// the period read as seconds, so "w" is refused here.
+var reRate = regexp.MustCompile(`^\s*(\d+(?:\.\d+)?)\s*/\s*(\d{1,4})\s*([smhd])\s*$`)
 
 // IsBucket reports whether name is a recognised ratelimit bucket.
 func IsBucket(name string) bool {
@@ -59,7 +59,7 @@ func IsBucket(name string) bool {
 func ValidateRate(s string) (string, error) {
 	m := reRate.FindStringSubmatch(s)
 	if m == nil {
-		return "", fmt.Errorf("%w: %q (want \"<count> / <n><unit>\", unit one of s,m,h,d,w)", ErrInvalidRate, s)
+		return "", fmt.Errorf("%w: %q (want \"<count> / <n><unit>\", unit one of s,m,h,d)", ErrInvalidRate, s)
 	}
 	return m[1] + " / " + m[2] + m[3], nil
 }
@@ -121,7 +121,7 @@ func SetRatelimit(dir, bucket, rate string) (oldContent []byte, oldValue string,
 		return nil, "", err
 	}
 
-	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := writeConf(path, doc.Bytes()); err != nil {
 		return content, "", fmt.Errorf("rspamdconf: write %s: %w", path, err)
 	}
 	return content, unquote(old), nil

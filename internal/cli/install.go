@@ -138,17 +138,18 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return err
 	}
 
-	repos := []struct {
-		repo     install.Repo
-		expected string
-		flag     string
-	}{
-		{install.PostgresRepo(distro.Codename), in.pgdgFingerprint, "pgdg-fingerprint"},
-		{install.CaddyRepo(), in.caddyFingerprint, "caddy-fingerprint"},
-		{install.CrowdSecRepo(), in.crowdsecFingerprint, "crowdsec-fingerprint"},
+	// Fingerprint flag per repository; the repositories come from install.VendorRepos.
+	fingerprints := map[string]struct{ expected, flag string }{
+		"pgdg":         {in.pgdgFingerprint, "pgdg-fingerprint"},
+		"caddy-stable": {in.caddyFingerprint, "caddy-fingerprint"},
+		"crowdsec":     {in.crowdsecFingerprint, "crowdsec-fingerprint"},
 	}
-	for _, r := range repos {
-		if err := addRepo(app, c, x, r.repo, r.expected, r.flag); err != nil {
+	for _, r := range install.VendorRepos(distro.Codename) {
+		fp, ok := fingerprints[r.Name]
+		if !ok {
+			return fmt.Errorf("no fingerprint flag for repository %s", r.Name)
+		}
+		if err := addRepo(app, c, x, r, fp.expected, fp.flag); err != nil {
 			return err
 		}
 	}
@@ -156,7 +157,7 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.AptUpdate(pctx, x); err != nil {
 		return err
 	}
-	pkgs := append(append(install.DistroPackages(), install.VendorPackages()...), install.HardeningPackages()...)
+	pkgs := install.AllPackages()
 	if err := install.CheckDovecotVersion(pctx, x); err != nil {
 		return err
 	}
@@ -330,6 +331,9 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err != nil {
 		return fmt.Errorf("ssh hardening: %w", err)
 	}
+	if err := install.StartAIDEBaseline(pctx, x); err != nil {
+		return err
+	}
 	_, _ = fmt.Fprintln(out, "system hardening applied (sysctl, modules, auditd, CrowdSec, AIDE, unattended-upgrades, sshd)")
 	switch {
 	case account == "":
@@ -447,8 +451,12 @@ func printInstallPlan(out io.Writer, d install.Distro, a install.Answers, confli
 	_, _ = fmt.Fprintf(out, "install plan for %s\n", d.Pretty)
 	_, _ = fmt.Fprintf(out, "  host:      %s (domain %s, ipv4 %s, ipv6 %s, selector %s)\n",
 		a.Hostname, a.Domain, a.IPv4, orDash(a.IPv6), a.Selector)
-	_, _ = fmt.Fprintf(out, "  repos:     postgresql.org (PGDG), caddy stable (Cloudsmith), CrowdSec (packagecloud)\n")
-	_, _ = fmt.Fprintf(out, "  packages:  %s\n", strings.Join(append(append(install.DistroPackages(), install.VendorPackages()...), install.HardeningPackages()...), " "))
+	var repos []string
+	for _, r := range install.VendorRepos(d.Codename) {
+		repos = append(repos, r.Name+" ("+r.URI+")")
+	}
+	_, _ = fmt.Fprintf(out, "  repos:     %s\n", strings.Join(repos, ", "))
+	_, _ = fmt.Fprintf(out, "  packages:  %s\n", strings.Join(install.AllPackages(), " "))
 	_, _ = fmt.Fprintf(out, "  accounts:  mailadmin, vmail (uid 5000)\n")
 	_, _ = fmt.Fprintf(out, "  database:  %s owned by mailadmin, roles %s\n", install.PgDatabase, strings.Join(install.PgRoles, ", "))
 	_, _ = fmt.Fprintf(out, "  mail:      postfix, dovecot, rspamd, caddy configured for %s\n", a.Domain)

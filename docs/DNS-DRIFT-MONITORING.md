@@ -1,8 +1,8 @@
 # DNS drift monitoring
 
 `mailadmin dns drift-check` compares every domain's desired mail DNS
-record-set against what is actually live in public DNS — the same comparison
-[`dns check`](DNS.md#dns-show--dns-check) does — and exits non-zero (runtime
+record-set against what is actually live in public DNS, the same comparison
+[`dns check`](DNS.md#dns-show--dns-check) does, and exits non-zero (runtime
 error, exit code 1) if anything is missing or has drifted. That makes it a
 good fit for a periodic, unattended job: a registrar-side edit, an expired
 zone, a botched manual change, or (for automated providers) a `dns publish`
@@ -20,7 +20,7 @@ mailadmin dns drift-check --all --notify     # + one ntfy alert if anything drif
 
 Both `dns drift-check` and [`doctor`](#running-doctor-notify-on-a-schedule)
 can push exactly one [ntfy](https://ntfy.sh/) notification per run when
-`--notify` is passed — summarising every domain that drifted or could not be
+`--notify` is passed, summarising every domain that drifted or could not be
 checked, not one message per domain. On a clean run it stays silent: silence
 is the success signal. Add `--notify-heartbeat` if you also want a low-priority "all clean" ping
 on a fully healthy run (useful as a dead-man's-switch check that the timer is
@@ -66,9 +66,9 @@ Type=oneshot
 # --yes: never prompt (drift-check does not mutate anything, but --yes keeps
 # this future-proof if a shared confirm() path is ever added upstream).
 # --notify: push one ntfy alert if anything drifted (no-ops if [notify].url /
-# NTFY_TOKEN are not configured — see "Push alerting" above).
+# NTFY_TOKEN are not configured, see "Push alerting" above).
 # A non-zero exit (drift found, or a domain could not be checked) marks the
-# unit failed — systemd records that in `systemctl status` / `journalctl`,
+# unit failed, systemd records that in `systemctl status` / `journalctl`,
 # which is what the OnFailure alerting hook further down also reacts to.
 ExecStart=/usr/local/bin/mailadmin --yes dns drift-check --all --notify
 User=root
@@ -107,7 +107,7 @@ journalctl -u mailadmin-drift-check.service --since -1d
 
 [`mailadmin doctor`](DNS.md) is the other half of the observability gap:
 service/port/TLS/DANE/MTA-STS health, also previously manual-only. The same
-timer shape works, just with a longer interval — a wedged service or a
+timer shape works, just with a longer interval, a wedged service or a
 missing listening port doesn't need hourly polling the way DNS drift does.
 
 `/etc/systemd/system/mailadmin-doctor.service`:
@@ -121,7 +121,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 # --notify: push one ntfy alert naming every FAILing check, if any (WARN/ERROR
-# rows are advisory and never page — see internal/cli/doctor.go). No-ops if
+# rows are advisory and never page, see internal/cli/doctor.go). No-ops if
 # [notify].url / NTFY_TOKEN are not configured.
 ExecStart=/usr/local/bin/mailadmin --yes doctor --notify
 User=root
@@ -152,7 +152,7 @@ systemctl enable --now mailadmin-doctor.timer
 `--notify` covers the common case: one ntfy alert per unhealthy run, silent
 otherwise. If you want a *systemd-level* alert too (e.g. because the binary
 itself crashed, or you already have OnFailure-based alerting for everything
-else on the box), it composes fine with `--notify` rather than replacing it —
+else on the box), it composes fine with `--notify` rather than replacing it:
 add to either service above:
 
 ```ini
@@ -168,7 +168,7 @@ Description=Notify on mailadmin drift-check failure
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/curl -fsS -d "mailadmin dns drift-check failed on %H — see: journalctl -u mailadmin-drift-check.service" https://ntfy.sh/YOUR-TOPIC
+ExecStart=/usr/bin/curl -fsS -d "mailadmin dns drift-check failed on %H, see: journalctl -u mailadmin-drift-check.service" https://ntfy.sh/YOUR-TOPIC
 ```
 
 This stays a separate, coarser channel from `--notify`: it fires on any

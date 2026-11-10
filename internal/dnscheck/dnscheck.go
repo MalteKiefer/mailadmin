@@ -59,7 +59,7 @@ func New(resolver, mailHost, defaultSelector string) *Checker {
 // ResolveLive queries public DNS (via the fixed resolver) for every managed
 // slot in `desired` and returns the live records as dnsprovider.Record values.
 // Feeding these plus `desired` into dnsprovider.Plan yields the same ok/drift/
-// missing view as the registrar check — but from what the world actually sees.
+// missing view as the registrar check, but from what the world actually sees.
 // One query per unique (name,type); results are tagged with the desired
 // record's relative name so Plan's identity matching lines up.
 func (c *Checker) ResolveLive(ctx context.Context, domain string, desired []dnsprovider.Record) ([]dnsprovider.Record, error) {
@@ -82,7 +82,9 @@ func (c *Checker) ResolveLive(ctx context.Context, domain string, desired []dnsp
 		fqdn := dns.Fqdn(fullName(d.Name, domain))
 		msg, err := conn.exchange(ctx, fqdn, qtype)
 		if err != nil {
-			continue // treated as "missing" by Plan
+			// A failed lookup is not a missing record: reporting it as drift would
+			// alert on every resolver hiccup.
+			return nil, fmt.Errorf("dnscheck: %w", err)
 		}
 		out = append(out, recordsFromanswer(msg, d.Name)...)
 	}
@@ -405,8 +407,16 @@ func (cc *clientConn) exchange(ctx context.Context, name string, qtype uint16) (
 	m := new(dns.Msg)
 	m.SetQuestion(name, qtype)
 	m.RecursionDesired = true
+	// EDNS0 lets the resolver answer large TXT sets (SPF plus verification
+	// records, 4096-bit DKIM keys) over UDP; a truncated answer is retried over TCP.
+	m.SetEdns0(4096, false)
 
 	resp, _, err := cc.c.ExchangeContext(ctx, m, cc.resolver)
+	if err == nil && resp.Truncated {
+		tcp := *cc.c
+		tcp.Net = "tcp"
+		resp, _, err = tcp.ExchangeContext(ctx, m, cc.resolver)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", strings.TrimSuffix(name, "."), err)
 	}

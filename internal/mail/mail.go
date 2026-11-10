@@ -18,7 +18,7 @@ import (
 )
 
 // Privileged helper binaries (absolute paths, matching the old system). They
-// are invoked with a validated (domain, selector) argument vector — never a
+// are invoked with a validated (domain, selector) argument vector, never a
 // shell string.
 const (
 	dkimGenBin  = "/usr/local/libexec/mailadmin-dkim-gen"

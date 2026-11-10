@@ -82,7 +82,7 @@ type TakeoverResult struct {
 // ReplaceAll performs the domain-onboarding takeover: it MUST be given a
 // backupDir so the current zone is snapshotted first, then EVERY existing
 // record is removed and the desired mail record-set is added. This is
-// destructive — callers must confirm and be admin-gated.
+// destructive, callers must confirm and be admin-gated.
 //
 // If protectApexWeb is true, existing apex/www A/AAAA/CNAME records are kept
 // (so publishing mail DNS does not knock a website offline). Set false for a
@@ -103,7 +103,7 @@ func ReplaceAll(ctx context.Context, p Provider, domain, backupDir string, desir
 		if protectApexWeb && isApexWeb(r) {
 			continue
 		}
-		if r.ID == "" {
+		if r.ID == "" || isZoneInfra(r) {
 			continue
 		}
 		if err := p.RemoveRecord(ctx, domain, r.ID); err != nil {
@@ -120,7 +120,7 @@ func ReplaceAll(ctx context.Context, p Provider, domain, backupDir string, desir
 	return res, nil
 }
 
-// Restore wipes the current zone and re-adds every record from a snapshot —
+// Restore wipes the current zone and re-adds every record from a snapshot:
 // the undo for ReplaceAll. Records keep their content; provider assigns new ids.
 func Restore(ctx context.Context, p Provider, domain string, snap Snapshot) (err error) {
 	defer flushInto(ctx, p, domain, &err)
@@ -129,7 +129,7 @@ func Restore(ctx context.Context, p Provider, domain string, snap Snapshot) (err
 		return err
 	}
 	for _, r := range live {
-		if r.ID == "" {
+		if r.ID == "" || isZoneInfra(r) {
 			continue
 		}
 		if err := p.RemoveRecord(ctx, domain, r.ID); err != nil {
@@ -137,12 +137,23 @@ func Restore(ctx context.Context, p Provider, domain string, snap Snapshot) (err
 		}
 	}
 	for _, r := range snap.Records {
+		if isZoneInfra(r) {
+			continue // still there: it was never removed
+		}
 		r.ID = ""
 		if err := p.AddRecord(ctx, domain, r); err != nil {
 			return fmt.Errorf("restore: add %s %s: %w", r.Type, r.Name, err)
 		}
 	}
 	return nil
+}
+
+// isZoneInfra reports the records a zone cannot live without: SOA and the
+// apex NS set. Providers that list them refuse their removal, and removing them
+// halfway through would leave the zone undelegated, so they are never touched.
+func isZoneInfra(r Record) bool {
+	t := strings.ToUpper(r.Type)
+	return t == "SOA" || (t == "NS" && normName(r.Name) == "@")
 }
 
 func isApexWeb(r Record) bool {

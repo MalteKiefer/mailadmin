@@ -1,7 +1,7 @@
 // Package sys is the single privileged-exec chokepoint for mailadmin.
 //
 // Every external command runs through Runner.Run: arguments are passed as a
-// slice (never a shell string — there is no "sh -c" anywhere), a per-call
+// slice (never a shell string, there is no "sh -c" anywhere), a per-call
 // timeout is enforced via context, combined output is captured and capped, and
 // each invocation is recorded so auditing/logging stays consistent and
 // injection-free. Callers pass an absolute binary path and already-validated
@@ -13,13 +13,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
-// maxOutput caps captured combined output (bytes) to avoid unbounded memory.
-const maxOutput = 4 << 20 // 4 MiB
+// maxOutput caps captured output per stream (bytes) to avoid unbounded memory.
+// Output beyond it is an error (ErrOutputTruncated), never silently dropped:
+// callers parse journal windows and queue dumps and would report partial data.
+const maxOutput = 64 << 20 // 64 MiB
+
+// killGrace is how long Run waits for the output pipes after the process group
+// was killed, so a grandchild holding them cannot block Run forever.
+const killGrace = 10 * time.Second
 
 // DefaultTimeout applies when a Runner is created without an explicit timeout.
 const DefaultTimeout = 30 * time.Second
@@ -37,6 +45,9 @@ var (
 	// non-zero status. Errors.Is matches it; the concrete error also carries the
 	// captured stderr via *ExitError for callers that want detail.
 	ErrNonZeroExit = errors.New("sys: command exited non-zero")
+
+	// ErrOutputTruncated is returned when stdout exceeded maxOutput.
+	ErrOutputTruncated = errors.New("sys: command output exceeded the capture limit")
 )
 
 // ExitError wraps a non-zero command exit. It intentionally exposes the stderr
@@ -110,6 +121,17 @@ func New(timeout time.Duration, recorder Recorder) *Runner {
 // command, or context cancellation/timeout, returns a %w-wrapped error and a
 // zero-value Result. Every attempt that produced an exec.Cmd is recorded once.
 func (r *Runner) Run(ctx context.Context, stdin []byte, argv ...string) (Result, error) {
+	var in io.Reader
+	if len(stdin) > 0 {
+		in = bytes.NewReader(stdin)
+	}
+	return r.RunReader(ctx, in, argv...)
+}
+
+// RunReader is Run with stdin read from a reader, so a large input (a database
+// dump) streams from its file instead of being loaded into memory. A nil reader
+// means no stdin.
+func (r *Runner) RunReader(ctx context.Context, stdin io.Reader, argv ...string) (Result, error) {
 	if len(argv) == 0 || argv[0] == "" {
 		return Result{}, ErrEmptyArgv
 	}
@@ -126,13 +148,19 @@ func (r *Runner) Run(ctx context.Context, stdin []byte, argv ...string) (Result,
 	copy(args, argv)
 
 	// This is the single privileged-exec chokepoint. argv[0] is required to be an
-	// absolute path (checked above) and arguments are passed as a slice — there is
+	// absolute path (checked above) and arguments are passed as a slice, there is
 	// no shell and no PATH lookup, so no shell metacharacter can be interpreted.
 	// Callers pass already-validated tokens; G204's dynamic-argv warning is by design.
 	cmd := exec.CommandContext(runCtx, args[0], args[1:]...) // #nosec G204 -- absolute path, arg slice, no shell; the audited exec chokepoint
-	if len(stdin) > 0 {
-		cmd.Stdin = bytes.NewReader(stdin)
+	if stdin != nil {
+		cmd.Stdin = stdin
 	}
+	// The command runs in its own process group, and a timeout or cancel kills
+	// the whole group: a wrapper such as runuser would otherwise die alone while
+	// its child (pg_restore) keeps running and holding the output pipes.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = killGrace
 	var outBuf, errBuf capBuffer
 	outBuf.limit = maxOutput
 	errBuf.limit = maxOutput
@@ -174,6 +202,9 @@ func (r *Runner) Run(ctx context.Context, stdin []byte, argv ...string) (Result,
 	if exitCode != 0 {
 		return res, &ExitError{Argv: args, ExitCode: exitCode, Stderr: res.Stderr}
 	}
+	if outBuf.truncated {
+		return res, fmt.Errorf("%s: %w (%d bytes)", commandName(args), ErrOutputTruncated, maxOutput)
+	}
 	return res, nil
 }
 
@@ -191,8 +222,9 @@ func (r *Runner) Output(ctx context.Context, argv ...string) (string, error) {
 // been stored, bounding memory for pathological command output. A zero or
 // negative limit means unbounded.
 type capBuffer struct {
-	buf   bytes.Buffer
-	limit int
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
 }
 
 func (c *capBuffer) Write(p []byte) (int, error) {
@@ -200,11 +232,13 @@ func (c *capBuffer) Write(p []byte) (int, error) {
 		room := c.limit - c.buf.Len()
 		if room <= 0 {
 			// Report full consumption so the process's writer does not error out;
-			// the surplus is intentionally discarded.
+			// the surplus is discarded and Run reports ErrOutputTruncated.
+			c.truncated = c.truncated || len(p) > 0
 			return len(p), nil
 		}
 		if len(p) > room {
 			c.buf.Write(p[:room])
+			c.truncated = true
 			return len(p), nil
 		}
 	}

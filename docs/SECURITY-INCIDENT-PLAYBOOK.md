@@ -4,7 +4,7 @@ Concrete, ordered runbooks for the incidents most likely to hit a `mailadmin`
 mail host. Every step below names a command that exists today
 (`mailadmin --help` for the full tree; `docs/DNS.md` and `docs/ARCHITECTURE.md`
 for background). Nothing here assumes a command from a branch that hasn't
-landed — if a step you expect isn't here, it isn't implemented yet.
+landed, if a step you expect isn't here, it isn't implemented yet.
 
 Conventions used below:
 - Commands are shown without global flags; add `--yes` to skip the
@@ -26,7 +26,7 @@ Conventions used below:
 `SENDER`, a spam/abuse complaint naming one of your addresses, unexpected
 volume in `mailadmin stats`, a successful Dovecot login for the mailbox from
 an unfamiliar IP in `mailadmin log show dovecot` (app-password use is *not*
-tracked in `app-password list` — see docs/SECURITY-AUDIT.md — so the auth
+tracked in `app-password list`, see docs/SECURITY-AUDIT.md, so the auth
 log is the only place this shows up, and it identifies the mailbox, not
 which app-password label was used), or an external report of spam apparently
 sent "from" one of your domains.
@@ -37,11 +37,11 @@ sent "from" one of your domains.
    ```sh
    mailadmin mailbox disable <address>
    ```
-   This flips the mailbox inactive — Dovecot/Postfix stop authenticating it —
+   This flips the mailbox inactive, Dovecot/Postfix stop authenticating it:
    without deleting any data, so you keep everything for review.
 
 2. **Kill every application password on the mailbox**, not just the one you
-   suspect — if one leaked, assume any others issued around the same time may
+   suspect, if one leaked, assume any others issued around the same time may
    have too:
    ```sh
    mailadmin mailbox app-password list <address>
@@ -53,7 +53,7 @@ sent "from" one of your domains.
    ```sh
    mailadmin mailbox passwd <address>
    ```
-   This prompts for a new password interactively — do not script a value
+   This prompts for a new password interactively, do not script a value
    into a shell history; if you must automate it, pipe it via the same
    stdin prompt from a secrets manager, never as a CLI argument.
 
@@ -97,7 +97,7 @@ sent "from" one of your domains.
    ```sh
    mailadmin dns audit <domain> --selector <sel>
    ```
-   A `fail`/`warn` on DKIM here that you didn't cause is itself an incident —
+   A `fail`/`warn` on DKIM here that you didn't cause is itself an incident:
    go to [scenario 2](#2-a-domains-dns-appears-hijacked-or-tampered).
 
 8. **Re-enable once you're confident the credential is rotated and nothing
@@ -134,7 +134,7 @@ didn't trigger.
    mailadmin dns check <domain> --registrar
    ```
    This also lists stale records the provider has that aren't part of the
-   managed mail set — useful for spotting a record the attacker *added*
+   managed mail set, useful for spotting a record the attacker *added*
    (e.g. a rogue MX or a second DKIM selector) rather than one they changed.
 
 3. **Grade the full posture** to see everything at once (SPF/DKIM/DMARC/
@@ -149,7 +149,7 @@ didn't trigger.
 ### Containment
 
 4. **If the domain is on an automated provider** (`manual` domains have
-   nothing to revert here — see step 4b), republish the correct record set
+   nothing to revert here, see step 4b), republish the correct record set
    to overwrite whatever was tampered with:
    ```sh
    mailadmin dns publish <domain> --dry-run    # confirm the plan first
@@ -167,7 +167,7 @@ didn't trigger.
    mailadmin dns takeover <domain>
    ```
    `takeover` replaces the **entire** zone with the correct mail record set
-   and snapshots the old (tampered) zone to `backup.dns_backup_dir` first —
+   and snapshots the old (tampered) zone to `backup.dns_backup_dir` first:
    keep that snapshot as evidence. Use `--keep-web` if the domain also
    serves a website you don't want touched (verify the web A/AAAA/CNAME
    weren't themselves the attack vector first).
@@ -180,8 +180,8 @@ didn't trigger.
    ```
 
 4b. **If the domain is `manual`** (no automated provider), `mailadmin` can't
-    push a fix for you — `dns show <domain>` prints the correct record set;
-    log into the registrar/DNS host directly (through a channel you trust —
+    push a fix for you, `dns show <domain>` prints the correct record set;
+    log into the registrar/DNS host directly (through a channel you trust:
     not any link from the incident itself) and correct the records by hand,
     then re-run `dns check <domain>` to confirm.
 
@@ -197,13 +197,13 @@ didn't trigger.
    either break delivery or MITM DANE-validating senders), `dns publish
    <domain> --dane` republishes the value derived from your actual
    certificate (`mail.tls_cert` in `config.toml`), which is additive and
-   will not remove a malicious record on its own — use `dns takeover` (step
+   will not remove a malicious record on its own, use `dns takeover` (step
    4) if a rogue TLSA needs to be actively removed, then republish DANE.
 
 ### Notification / post-incident
 
 7. Confirm the fix took: `mailadmin dns audit <domain>` should return to a
-   clean bill of health (DANE should read `pass — N TLSA, authenticated` if
+   clean bill of health (DANE should read `pass, N TLSA, authenticated` if
    the domain uses it).
 8. Review `mailadmin audit list` for the window around the change to see if
    it originated from `mailadmin` itself (a leaked local credential) or
@@ -229,8 +229,8 @@ show a sustained volume against the mail ports.
    mailadmin security overview
    ```
    This aggregates active bans, the allowlist, open ports, and whether
-   fail2ban is running (hosts set up by `mailadmin install` use CrowdSec
-   instead, so it reports false there), in one call — start here so you don't act on stale
+   the CrowdSec nftables bouncer runs (without it bans are listed but not
+   enforced), in one call, start here so you don't act on stale
    information.
 
 2. **Inspect active bans in detail** if you need to correlate scenario/
@@ -249,7 +249,7 @@ show a sustained volume against the mail ports.
    through addresses. Use progressively longer `--dur` (or omit it for
    CrowdSec's default) as the pattern persists.
 
-4. **Verify the allowlist hasn't been polluted** — an attacker who gained
+4. **Verify the allowlist hasn't been polluted**: an attacker who gained
    any privileged access could have allowlisted their own source to defeat
    future bans:
    ```sh
@@ -260,7 +260,7 @@ show a sustained volume against the mail ports.
    mailadmin security allowlist remove <ip>
    ```
 
-5. **Check exposed surface** — confirm nothing was opened that shouldn't be
+5. **Check exposed surface**: confirm nothing was opened that shouldn't be
    (a wider attack surface makes a sustained campaign more effective):
    ```sh
    mailadmin security firewall show
@@ -272,7 +272,7 @@ show a sustained volume against the mail ports.
 
 6. **If the pattern is targeting one service specifically** (e.g. IMAP
    brute-force but SMTP submission is clean), consider whether that service
-   needs a temporary restriction beyond what CrowdSec/nft already provide —
+   needs a temporary restriction beyond what CrowdSec/nft already provide:
    at minimum, confirm via `mailadmin doctor` that the service's own
    hardening (rate limits, `dane-outbound`, TLS config) is intact and wasn't
    itself weakened as part of the attack.
@@ -284,7 +284,7 @@ show a sustained volume against the mail ports.
    config supports it) versus left to expire.
 8. `mailadmin audit list` to confirm no ban/allowlist/firewall change during
    the window was made by anything other than you or CrowdSec's automatic
-   decisions — an attacker who could add themselves to the allowlist implies
+   decisions, an attacker who could add themselves to the allowlist implies
    a deeper compromise than the network-level attack alone.
 9. Work through the [general post-incident checklist](#general-post-incident-checklist).
 
@@ -305,5 +305,5 @@ Run after any of the scenarios above are contained:
 - [ ] Any credential touched during the incident (mailbox password,
       app-password, DNS provider API token) has been rotated, not just
       disabled.
-- [ ] `secrets.env` permissions re-verified (`mailadmin config check`) —
+- [ ] `secrets.env` permissions re-verified (`mailadmin config check`):
       an incident is a good trigger to confirm nothing loosened it.

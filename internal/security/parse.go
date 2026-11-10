@@ -10,7 +10,7 @@ import (
 
 // timeLayouts are accepted for CrowdSec expiration timestamps. cscli has
 // emitted both RFC3339 and RFC3339Nano across versions; we try the richer one
-// first and fall back. An unparseable timestamp is not fatal — the decision is
+// first and fall back. An unparseable timestamp is not fatal, the decision is
 // still surfaced with a zero Until.
 var timeLayouts = []string{time.RFC3339Nano, time.RFC3339}
 
@@ -39,7 +39,7 @@ type cscliAlert struct {
 
 // parseDecisions decodes `cscli decisions list -o json`. The command emits a
 // JSON array (or the literal `null` when empty). Simulated decisions are
-// dropped — they are not enforced and would mislead an operator reading a ban
+// dropped, they are not enforced and would mislead an operator reading a ban
 // list. A malformed document fails closed.
 func parseDecisions(data []byte) ([]Decision, error) {
 	data = bytes.TrimSpace(data)
@@ -143,10 +143,4 @@ func parseAllowlist(data []byte) ([]AllowEntry, error) {
 		out = append(out, AllowEntry{IP: value, Comment: comment})
 	}
 	return out, nil
-}
-
-// isFail2banPong reports whether fail2ban-client's ping reply indicates a live
-// server. fail2ban answers "Server replied: pong" on success.
-func isFail2banPong(stdout []byte) bool {
-	return strings.Contains(strings.ToLower(string(stdout)), "pong")
 }

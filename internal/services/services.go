@@ -1,4 +1,4 @@
-// Package services wraps systemctl for an explicit unit allowlist only — never
+// Package services wraps systemctl for an explicit unit allowlist only, never
 // a wildcard unit. Verbs are limited to status/start/stop/restart/reload.
 //
 // systemctl is invoked exclusively through internal/sys (arg slices, no shell,

@@ -113,6 +113,12 @@ func parseNftPorts(data []byte) ([]FirewallPort, error) {
 				add(FirewallPort{Proto: proto, Port: port})
 				continue
 			}
+			if proto, ports, ok := dportAnonSet(e.Match); ok {
+				for _, port := range ports {
+					add(FirewallPort{Proto: proto, Port: port})
+				}
+				continue
+			}
 			if proto, name, ok := dportSetMatch(e.Match); ok {
 				for _, port := range sets[setKey(item.Rule.Family, item.Rule.Table, name)] {
 					add(FirewallPort{Proto: proto, Port: port})
@@ -124,6 +130,31 @@ func parseNftPorts(data []byte) ([]FirewallPort, error) {
 }
 
 func setKey(family, table, name string) string { return family + "/" + table + "/" + name }
+
+// dportAnonSet returns the ports of an inline set such as tcp dport { 22, 2222 }
+// (JSON right side {"set":[22,2222]}), which install writes for several SSH ports.
+func dportAnonSet(m *nftMatch) (string, []int, bool) {
+	if m == nil || m.Left.Payload == nil || m.Left.Payload.Field != "dport" {
+		return "", nil, false
+	}
+	p := m.Left.Payload.Protocol
+	if p != "tcp" && p != "udp" {
+		return "", nil, false
+	}
+	var set struct {
+		Set []json.RawMessage `json:"set"`
+	}
+	if err := json.Unmarshal(m.RawRight, &set); err != nil || set.Set == nil {
+		return "", nil, false
+	}
+	var ports []int
+	for _, e := range set.Set {
+		if n, ok := scalarPort(e); ok {
+			ports = append(ports, n)
+		}
+	}
+	return p, ports, true
+}
 
 // dportSetMatch returns (proto, set name, true) when the match compares a
 // tcp/udp destination port against a named set reference such as "@allowed_tcp".

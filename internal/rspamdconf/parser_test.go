@@ -2,6 +2,7 @@ package rspamdconf
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -196,5 +197,18 @@ func TestDocumentSetDoesNotAffectUnrelatedSimilarKeyNames(t *testing.T) {
 	}
 	if v, _ := doc.Get("rates.to_ip"); v != `"2 / 1m"` {
 		t.Fatalf("rates.to_ip = %q, want unchanged", v)
+	}
+}
+
+func TestNestedObjectInBlock(t *testing.T) {
+	doc := Parse([]byte("rates {\n  to = {\n    burst = 100;\n  }\n  to_ip = \"100 / 1s\";\n}\n"))
+	if v, ok := doc.Get("rates.to_ip"); !ok || v != `"100 / 1s"` {
+		t.Fatalf("rates.to_ip = %q, %v", v, ok)
+	}
+	if _, err := doc.Set("rates.to_ip", `"50 / 1m"`); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(doc.Bytes()); !strings.Contains(got, "  to_ip = \"50 / 1m\";\n}") {
+		t.Fatalf("set landed in the wrong block:\n%s", got)
 	}
 }

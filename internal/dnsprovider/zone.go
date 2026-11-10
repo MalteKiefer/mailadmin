@@ -15,7 +15,7 @@ import (
 // PullAXFR fetches an entire zone from a nameserver via a DNS zone transfer
 // (AXFR) and returns it as records relative to `domain`. Records that the target
 // registrar manages itself or that cannot be re-created (SOA, apex NS, DNSSEC)
-// are dropped — see keepRR. The nameserver is "host" or "host:port" (default 53).
+// are dropped, see keepRR. The nameserver is "host" or "host:port" (default 53).
 func PullAXFR(ctx context.Context, domain, nameserver string) ([]Record, error) {
 	if !strings.Contains(nameserver, ":") {
 		nameserver += ":53"
@@ -76,8 +76,8 @@ func keepRR(rr dns.RR, domain string) bool {
 }
 
 // inZone reports whether an owner name belongs to the zone (the apex itself or a
-// subdomain of it). Records outside the zone — e.g. the external targets of a
-// CNAME chain returned in an answer — are not part of the zone and must not be
+// subdomain of it). Records outside the zone, e.g. the external targets of a
+// CNAME chain returned in an answer, are not part of the zone and must not be
 // migrated.
 func inZone(fqdn, domain string) bool {
 	n := strings.TrimSuffix(strings.TrimSuffix(fqdn, "."), ".")
@@ -159,7 +159,7 @@ type MigrateResult struct {
 }
 
 // Migrate creates every record from `records` at the target provider, skipping
-// any that already exist there. NS/SOA are never copied — delegation belongs to
+// any that already exist there. NS/SOA are never copied, delegation belongs to
 // the target zone. It never deletes. Returns per-record outcomes.
 func Migrate(ctx context.Context, target Provider, domain string, records []Record) (res MigrateResult, err error) {
 	defer flushInto(ctx, target, domain, &err)
@@ -197,7 +197,7 @@ func migrateFailReason(err error) string {
 	if errors.As(err, &ae) {
 		switch ae.StatusCode {
 		case http.StatusTooManyRequests:
-			return "rate limited (HTTP 429) — retried and still throttled"
+			return "rate limited (HTTP 429), retried and still throttled"
 		case http.StatusUnprocessableEntity:
 			return "rejected (HTTP 422)"
 		default:

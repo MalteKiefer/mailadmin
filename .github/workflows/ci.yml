@@ -67,13 +67,13 @@ jobs:
     # internal/db/integration_test.go (//go:build integration) exercises the
     # pgx CRUD layer against a real Postgres. It is fully self-contained: on
     # each test it CREATEs a uniquely-named schema, runs its own embedded
-    # DDL (testSchemaDDL — reconstructed from what db.go/apppw.go actually
+    # DDL (testSchemaDDL, reconstructed from what db.go/apppw.go actually
     # SELECT/INSERT), points a pool at it via `options=-c search_path=...`,
     # and DROPs the schema again in t.Cleanup. It never touches migrations/
     # or the public schema, so migrations/001_baseline.sql and
     # 002_dns_provider.sql are deliberately NOT applied here: 001's GRANT
     # block targets roles (mailadmin/postfix/dovecot) that don't exist on a
-    # bare service container, so blindly `psql -f`-ing it would just fail —
+    # bare service container, so blindly `psql -f`-ing it would just fail:
     # and even if it succeeded, the test doesn't read those tables. All this
     # job needs is a reachable Postgres the test role can CREATE SCHEMA on.
     services:
@@ -125,7 +125,7 @@ jobs:
       # practice via manual/integration use, not unit tests). The floor sits
       # a few points under that so ordinary fluctuation doesn't false-positive,
       # while a real drop (e.g. a large new package landing untested) still
-      # fails CI. Ratchet this up as coverage improves — see docs/CI-SECURITY.md.
+      # fails CI. Ratchet this up as coverage improves, see docs/CI-SECURITY.md.
       - name: coverage floor (20%)
         run: |
           set -euo pipefail

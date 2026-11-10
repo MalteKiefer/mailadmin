@@ -53,7 +53,7 @@ var commonTXTNames = []string{
 }
 
 // Discover probes public DNS (via resolver "host:port") for the records a zone
-// commonly holds and returns whatever resolves — a fallback when AXFR and
+// commonly holds and returns whatever resolves, a fallback when AXFR and
 // zonefiles are unavailable. extraSelectors are DKIM selectors to add to the
 // probe set (e.g. the domain's configured selector). Best-effort: it cannot
 // enumerate arbitrary custom names.
@@ -83,7 +83,7 @@ func Discover(ctx context.Context, resolver, domain string, extraSelectors []str
 	for _, s := range commonTXTNames {
 		add(s, dns.TypeTXT)
 	}
-	// DKIM selectors — probe TXT (self-hosted) and CNAME (delegated, e.g. M365
+	// DKIM selectors, probe TXT (self-hosted) and CNAME (delegated, e.g. M365
 	// uses selector1/selector2._domainkey CNAMEs).
 	sel := append(append([]string{}, commonSelectors...), extraSelectors...)
 	for _, s := range sel {
@@ -105,7 +105,13 @@ func Discover(ctx context.Context, resolver, domain string, extraSelectors []str
 		m := new(dns.Msg)
 		m.SetQuestion(name, qtype)
 		m.RecursionDesired = true
+		m.SetEdns0(4096, false) // large apex TXT sets must not come back truncated
 		resp, _, err := client.ExchangeContext(ctx, m, resolver)
+		if err == nil && resp != nil && resp.Truncated {
+			tcp := *client
+			tcp.Net = "tcp"
+			resp, _, err = tcp.ExchangeContext(ctx, m, resolver)
+		}
 		if err != nil || resp == nil || resp.Rcode != dns.RcodeSuccess {
 			return nil
 		}
@@ -115,7 +121,7 @@ func Discover(ctx context.Context, resolver, domain string, extraSelectors []str
 	// Wildcard detection: a made-up label that cannot exist. Whatever it returns
 	// is the zone's wildcard (*), per type. Probed names that only match the
 	// wildcard value are not real explicit records and must not be migrated as
-	// such — a single "*" record is emitted instead.
+	// such, a single "*" record is emitted instead.
 	const wildProbe = "zzq9x7-mailadmin-wildcard-probe"
 	wildValues := map[uint16]map[string]struct{}{}
 	for _, t := range []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeCNAME, dns.TypeMX, dns.TypeTXT, dns.TypeSRV, dns.TypeCAA} {

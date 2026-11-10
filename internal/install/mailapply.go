@@ -1,6 +1,7 @@
 package install
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,8 +9,10 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"mailadmin/internal/sys"
@@ -22,7 +25,32 @@ const managedMarker = "mailadmin install"
 // writeAtomic writes data to path through a temp file in the same directory, so
 // a half-written config is never visible to a running daemon.
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
-	return writeAtomicWith(path, data, mode, nil)
+	_, err := writeAtomicChanged(path, data, mode)
+	return err
+}
+
+// writeAtomicChanged is writeAtomic that reports whether the file changed. A
+// file that already holds data with mode is left alone: no new inode or mtime
+// for AIDE to report, and callers can skip reloads.
+func writeAtomicChanged(path string, data []byte, mode os.FileMode) (bool, error) {
+	if sameFile(path, data, mode, -1, -1) {
+		return false, nil
+	}
+	return true, writeAtomicWith(path, data, mode, nil)
+}
+
+// sameFile reports whether path is a regular file (not a link) with exactly
+// data, mode and, when uid and gid are not -1, that owner.
+func sameFile(path string, data []byte, mode os.FileMode, uid, gid int) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != mode.Perm() {
+		return false
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); uid >= 0 && (!ok || int(st.Uid) != uid || int(st.Gid) != gid) {
+		return false
+	}
+	cur, err := os.ReadFile(path) // #nosec G304 -- caller's fixed config path
+	return err == nil && bytes.Equal(cur, data)
 }
 
 // writeAtomicOwned is writeAtomic with an owner. The temp file gets its owner and
@@ -35,6 +63,9 @@ func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group s
 	gid, err := lookupGID(group)
 	if err != nil {
 		return err
+	}
+	if sameFile(path, data, mode, uid, gid) {
+		return nil
 	}
 	// Owner is set on the open descriptor, so a link swapped in at the temp name
 	// cannot redirect the chown to another file.
@@ -155,10 +186,13 @@ func ApplyPostfix(ctx context.Context, x Exec, hostname string) error {
 			return err
 		}
 	}
+	// One postconf call rewrites main.cf once for all keys.
+	args := []string{"postconf", "-e"}
 	for _, s := range PostfixSettings(hostname, installedTLSGroups(ctx, x)) {
-		if _, err := x.Run(ctx, nil, "postconf", "-e", s.Key+"="+s.Value); err != nil {
-			return fmt.Errorf("postconf %s: %w", s.Key, err)
-		}
+		args = append(args, s.Key+"="+s.Value)
+	}
+	if _, err := x.Run(ctx, nil, args...); err != nil {
+		return fmt.Errorf("postconf -e: %w", err)
 	}
 	for _, args := range PostfixSubmissionServices() {
 		if _, err := x.Run(ctx, nil, append([]string{"postconf"}, args...)...); err != nil {
@@ -256,40 +290,19 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 	if err := os.MkdirAll(filepath.Dir(NftPersistPath), 0o755); err != nil { // #nosec G301 -- nftables include dir
 		return fmt.Errorf("mkdir nftables.d: %w", err)
 	}
-	ssh := SSHPorts()
-	// The table is checked as a temp file in the persist directory and only renamed
-	// over NftPersistPath once nft accepts it, so a bad table never replaces a good one.
-	tmp, err := os.CreateTemp(filepath.Dir(NftPersistPath), "."+filepath.Base(NftPersistPath)+".*")
-	if err != nil {
-		return fmt.Errorf("temp for %s: %w", NftPersistPath, err)
+	ssh := mergePorts(SSHPorts(), listeningSSHPorts(ctx, x))
+	// The table is checked as the temp file before it is renamed over
+	// NftPersistPath, so a bad table never replaces a good one.
+	check := func(f *os.File) error {
+		if _, err := x.Run(ctx, nil, "nft", "-c", "-f", f.Name()); err != nil {
+			return fmt.Errorf("nft check: %w", err)
+		}
+		return nil
 	}
-	name := tmp.Name()
-	if _, err := tmp.WriteString(NftTableFile(DefaultTCPPorts, nil, ssh)); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return fmt.Errorf("write %s: %w", NftPersistPath, err)
-	}
-	// Synced before the rename, or a power loss can leave an empty table file at boot.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(name)
-		return fmt.Errorf("sync %s: %w", NftPersistPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("close %s: %w", NftPersistPath, err)
-	}
-	if err := os.Chmod(name, 0o600); err != nil { // root loads this file; nothing else reads it
-		_ = os.Remove(name)
-		return fmt.Errorf("chmod %s: %w", NftPersistPath, err)
-	}
-	if _, err := x.Run(ctx, nil, "nft", "-c", "-f", name); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("nft check: %w", err)
-	}
-	if err := os.Rename(name, NftPersistPath); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("install %s: %w", NftPersistPath, err)
+	if !sameFile(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o600, -1, -1) {
+		if err := writeAtomicWith(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o600, check); err != nil {
+			return err
+		}
 	}
 	// The conf only includes the persisted table, so it is written once that table is
 	// in place. Loading the conf replaces the loaded table with the checked version.
@@ -303,6 +316,55 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 		return fmt.Errorf("enable nftables: %w", err)
 	}
 	return nil
+}
+
+// listeningSSHPorts returns the TCP ports sshd (or the socket unit that starts
+// it) listens on right now, plus the port of the operator's own connection. The
+// config files miss ports set with SSHD_OPTS="-p ..." or in an ssh.socket
+// drop-in, and a firewall without them locks the operator out.
+func listeningSSHPorts(ctx context.Context, x Exec) []int {
+	var ports []int
+	if res, err := x.Run(ctx, nil, "ss", "-Hltnp"); err == nil {
+		for _, l := range strings.Split(string(res.Stdout), "\n") {
+			f := strings.Fields(l)
+			if len(f) < 4 || !strings.Contains(l, `"sshd`) {
+				continue
+			}
+			if n, ok := listenPort(f[3]); ok {
+				ports = append(ports, n)
+			}
+		}
+	}
+	if res, err := x.Run(ctx, nil, "systemctl", "show", "-p", "Listen", "ssh.socket"); err == nil {
+		for _, f := range strings.Fields(string(res.Stdout)) {
+			f = strings.TrimPrefix(f, "Listen=")
+			if n, ok := listenPort(f); ok {
+				ports = append(ports, n)
+			} else if n, ok := validPort(f); ok {
+				ports = append(ports, n)
+			}
+		}
+	}
+	if f := strings.Fields(os.Getenv("SSH_CONNECTION")); len(f) == 4 {
+		if n, ok := validPort(f[3]); ok {
+			ports = append(ports, n)
+		}
+	}
+	return ports
+}
+
+// mergePorts returns the distinct ports of both lists, sorted.
+func mergePorts(a, b []int) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, p := range append(append([]int{}, a...), b...) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 // InstallHelpers writes the three root helpers and the certificate sync units.

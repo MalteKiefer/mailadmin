@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgconn"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -30,7 +31,7 @@ func newBackupCmd(app *App) *cobra.Command {
 		Long: "Writes one timestamped bundle directory containing a pg_dump of the\n" +
 			"mailadmin database, a copy of the DKIM key directory, every mailbox's\n" +
 			"active Sieve script, and mailadmin's own config.toml.\n\n" +
-			"secrets.env is NEVER included — back it up separately.",
+			"secrets.env is NEVER included, back it up separately.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, args []string) error { return app.backupCreate(c, createOut) },
 	}
@@ -138,7 +139,7 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	// 1. Postgres dump (custom format: supports --list previews and a clean
 	// --clean --if-exists restore; see internal/backup.PgDumpArgs).
 	dumpPath := filepath.Join(bundleDir, backup.DBDumpFile)
-	if _, err := a.runner().Run(ctx(cmd), nil, backup.PgDumpArgs(cfg.Postgres.Service, dumpPath)...); err != nil {
+	if _, err := sys.New(dbToolTimeout, nil).Run(ctx(cmd), nil, backup.PgDumpArgs(cfg.Postgres.Service, dumpPath)...); err != nil {
 		return fmt.Errorf("backup create: pg_dump: %w", err)
 	}
 	components = append(components, backup.ComponentDB)
@@ -159,6 +160,12 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	var sieveAddrs []string
 	for _, mbox := range mailboxes {
 		addr := mbox.Address()
+		// Dovecot's userdb returns only active mailboxes, so doveadm cannot reach
+		// a disabled one; its scripts stay on disk and come back when it is enabled.
+		if !mbox.Active {
+			r.Message("sieve: skipped %s (mailbox disabled)", addr)
+			continue
+		}
 		script, serr := svc.Show(ctx(cmd), addr)
 		if serr != nil {
 			if errors.Is(serr, sieve.ErrNotFound) {
@@ -177,7 +184,7 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	}
 	components = append(components, backup.ComponentSieve)
 
-	// 4. mailadmin's own config.toml — never secrets.env.
+	// 4. mailadmin's own config.toml, never secrets.env.
 	if _, err := backup.CopyFile(cfg.Path, filepath.Join(bundleDir, backup.ConfigFile)); err != nil {
 		return fmt.Errorf("backup create: config: %w", err)
 	}
@@ -208,7 +215,14 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	}
 
 	r.Message("backup created at %s", bundleDir)
-	r.Message("NOTE: secrets.env was NOT included in this bundle — back it up separately")
+	r.Message("NOTE: secrets.env was NOT included in this bundle; back it up separately")
+	if r.Format() == output.FormatJSON {
+		// Scripts that copy the bundle off the host need its directory.
+		return r.JSON(struct {
+			Dir string `json:"dir"`
+			backup.Manifest
+		}{bundleDir, man})
+	}
 	return r.Value(man)
 }
 
@@ -253,7 +267,7 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		kept = append(kept, comp)
 	}
 	components = kept
-	r.Message("bundle %s — taken %s, mailadmin %s", bundlePath, man.CreatedAt.Format(time.RFC3339), man.MailadminVersion)
+	r.Message("bundle %s, taken %s, mailadmin %s", bundlePath, man.CreatedAt.Format(time.RFC3339), man.MailadminVersion)
 	if len(man.Domains) > 0 {
 		r.Message("  domains: %s", strings.Join(man.Domains, ", "))
 	}
@@ -300,18 +314,10 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 	r.Message("restore complete: %s", strings.Join(components, ", "))
 	// The domain table changed under the selector map and the Caddy includes.
 	if contains(components, backup.ComponentDB) {
-		if err := a.syncRspamdSelectors(ctx(cmd)); err != nil {
-			r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
-		}
-		if err := a.syncAutodiscovery(ctx(cmd)); err != nil {
-			r.Message("warning: could not update Caddy autodiscovery: %v", err)
-		}
-		if err := a.syncMTASTS(ctx(cmd)); err != nil {
-			r.Message("warning: could not update Caddy MTA-STS: %v", err)
-		}
+		a.syncDomainState(ctx(cmd), r)
 	}
 	if contains(components, backup.ComponentConfig) {
-		r.Message("config.toml was replaced — review it before restarting any mailadmin-managed service")
+		r.Message("config.toml was replaced, review it before restarting any mailadmin-managed service")
 	}
 	return nil
 }
@@ -327,7 +333,7 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 			dumpPath := filepath.Join(bundlePath, backup.DBDumpFile)
 			toc, err := a.runner().Output(ctx(cmd), backup.PgRestoreListArgs(dumpPath)...)
 			if err != nil {
-				r.Message("dry-run: domain-db: could not read %s (%v) — pg_restore not available in this environment?", dumpPath, err)
+				r.Message("dry-run: domain-db: could not read %s (%v), pg_restore not available in this environment?", dumpPath, err)
 				continue
 			}
 			r.Message("dry-run: domain-db: would run pg_restore --clean --if-exists into service %q; table of contents:", cfg.Postgres.Service)
@@ -346,31 +352,33 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 	return nil
 }
 
-// restoreTimeout bounds pg_restore, which can take minutes on a large audit log.
-const restoreTimeout = 30 * time.Minute
+// dbToolTimeout bounds pg_dump and pg_restore, which can take minutes on a large
+// audit log.
+const dbToolTimeout = 30 * time.Minute
 
 // restoreDomainDB replaces the live database with the bundle's pg_dump, via
 // pg_restore --clean --if-exists (drops known objects first, then recreates
-// them — a clean replacement rather than a merge with what is currently live).
+// them, a clean replacement rather than a merge with what is currently live).
 func (a *App) restoreDomainDB(cmd *cobra.Command, cfg *config.Config, bundlePath string) error {
 	dumpPath := filepath.Join(bundlePath, backup.DBDumpFile)
 	if _, err := os.Stat(dumpPath); err != nil {
 		return fmt.Errorf("backup restore: domain-db: %w", err)
 	}
-	if cfg.Postgres.ServiceFile == "" {
-		return errors.New("backup restore: domain-db: postgres.service_file is not set, so the database name is unknown")
+	// The same libpq service every other command uses names the database, host
+	// and port (PGSERVICEFILE is set from the config by App.db).
+	pc, err := pgconn.ParseConfig("service=" + cfg.Postgres.Service)
+	if err != nil {
+		return fmt.Errorf("backup restore: domain-db: resolve service %s: %w", cfg.Postgres.Service, err)
 	}
-	dbname, err := backup.ServiceDBName(cfg.Postgres.ServiceFile, cfg.Postgres.Service)
+	// The dump streams in on stdin: the bundle directory is root only, and
+	// pg_restore runs as postgres. A restore takes longer than the default timeout.
+	dump, err := os.Open(dumpPath) // #nosec G304 -- path inside the validated bundle
 	if err != nil {
 		return fmt.Errorf("backup restore: domain-db: %w", err)
 	}
-	// The dump goes in on stdin: the bundle directory is root only, and pg_restore
-	// runs as postgres. A restore takes longer than the default command timeout.
-	dump, err := os.ReadFile(dumpPath) // #nosec G304 -- path inside the validated bundle
-	if err != nil {
-		return fmt.Errorf("backup restore: domain-db: %w", err)
-	}
-	if _, err := sys.New(restoreTimeout, nil).Run(ctx(cmd), dump, backup.PgRestoreArgs(dbname)...); err != nil {
+	defer func() { _ = dump.Close() }()
+	if _, err := sys.New(dbToolTimeout, nil).RunReader(ctx(cmd), dump,
+		backup.PgRestoreArgs(pc.Database, pc.Host, pc.Port)...); err != nil {
 		return fmt.Errorf("backup restore: pg_restore: %w", err)
 	}
 	return nil

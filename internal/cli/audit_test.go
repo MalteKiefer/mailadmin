@@ -94,7 +94,7 @@ func TestAuditFilter(t *testing.T) {
 	})
 
 	t.Run("since further forward than until is a usage error", func(t *testing.T) {
-		// --since 1d --until 7d means "since 1 day ago, until 7 days ago" —
+		// --since 1d --until 7d means "since 1 day ago, until 7 days ago":
 		// an inverted, empty window; reject it rather than silently
 		// returning nothing.
 		_, _, err := auditFilter(auditListArgs{lines: 200, since: "1d", until: "7d"}, now)

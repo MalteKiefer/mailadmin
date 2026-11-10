@@ -80,22 +80,22 @@ func TestDecideSSHPolicyFollowsTheActualLogin(t *testing.T) {
 		want    SSHPolicy
 	}{
 		{"root with its own key", "root", true, []authKey{ed}, []authKey{ed},
-			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{true, true, true}},
+			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}},
 		{"root by password, backup key present", "root", true, []authKey{backup}, []authKey{backup},
-			map[string]sshLogin{"root": {method: "password"}}, SSHPolicy{false, false, true}},
+			map[string]sshLogin{"root": {method: "password"}}, SSHPolicy{KeyOnly: false, RootKeyOnly: false, StrictRSA: true}},
 		{"admin by key, root has none", "admin", true, []authKey{ed}, nil,
-			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519")}, SSHPolicy{true, true, true}},
+			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}},
 		{"admin by password", "admin", true, []authKey{ed}, nil,
-			map[string]sshLogin{"admin": {method: "password"}}, SSHPolicy{false, true, true}},
+			map[string]sshLogin{"admin": {method: "password"}}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
 		{"key from another file", "admin", true, []authKey{ed}, nil,
-			map[string]sshLogin{"admin": key("SHA256:other", "ED25519")}, SSHPolicy{false, true, true}},
+			map[string]sshLogin{"admin": key("SHA256:other", "ED25519")}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
 		{"weak RSA in use keeps RSA", "admin", true, []authKey{weakRSA}, nil,
-			map[string]sshLogin{"admin": key("SHA256:rsa", "RSA")}, SSHPolicy{false, true, false}},
+			map[string]sshLogin{"admin": key("SHA256:rsa", "RSA")}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: false}},
 		{"root used an unknown RSA key", "admin", true, []authKey{ed}, nil,
-			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519"), "root": key("SHA256:x", "RSA")}, SSHPolicy{true, true, false}},
+			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519"), "root": key("SHA256:x", "RSA")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: false}},
 		{"no login uid", "", false, nil, []authKey{ed},
-			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{false, false, true}},
-		{"no journal entry", "admin", true, []authKey{ed}, nil, map[string]sshLogin{}, SSHPolicy{false, true, true}},
+			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: false, RootKeyOnly: false, StrictRSA: true}},
+		{"no journal entry", "admin", true, []authKey{ed}, nil, map[string]sshLogin{}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
 	}
 	for _, c := range cases {
 		if got := decideSSHPolicy(c.account, c.known, c.keys, c.root, c.logins); got != c.want {
@@ -263,5 +263,26 @@ func TestSetShellVar(t *testing.T) {
 	}
 	if got := SetShellVar("HISTORY=7", "ENABLED", `"true"`); got != "HISTORY=7\nENABLED=\"true\"\n" {
 		t.Fatalf("append: %q", got)
+	}
+}
+
+func TestOperatorSSHKeepsStricterSettings(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "10-site.conf")
+	_ = os.WriteFile(a, []byte("PermitRootLogin no # site rule\nMatch User x\nAuthenticationMethods any\n"), 0o600)
+	b := filepath.Join(dir, "sshd_config")
+	_ = os.WriteFile(b, []byte("PermitRootLogin yes\nAuthenticationMethods publickey,keyboard-interactive\n"), 0o600)
+	prl, am := operatorSSH([]string{a, b})
+	if prl != "no" || am != "publickey,keyboard-interactive" {
+		t.Fatalf("got %q %q", prl, am)
+	}
+	conf := SSHHardeningConf(SSHCaps{}, SSHPolicy{KeyOnly: true, RootLoginNo: true, AuthMethods: am}, nil)
+	for _, want := range []string{"PermitRootLogin no\n", "AuthenticationMethods publickey,keyboard-interactive\n"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("missing %q:\n%s", want, conf)
+		}
+	}
+	if strings.Contains(conf, "KbdInteractiveAuthentication no") {
+		t.Error("keyboard-interactive is a required factor and must stay on")
 	}
 }

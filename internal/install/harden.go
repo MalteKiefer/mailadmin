@@ -17,8 +17,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
-	"mailadmin/internal/sys"
+	"mailadmin/internal/security"
 )
 
 // The hardening install applies follows the BSI IT-Grundschutz module SYS.1.3
@@ -36,7 +37,6 @@ const (
 	CrowdSecAcquisPath    = "/etc/crowdsec/acquis.d/mailadmin.yaml"
 	CrowdSecBouncerConf   = "/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
 	crowdSecBouncerName   = "mailadmin-nftables"
-	CrowdSecAllowlist     = "mailadmin" // the list security allowlist manages
 	UnattendedConfPath    = "/etc/apt/apt.conf.d/52mailadmin-unattended-upgrades"
 	AutoUpgradesPath      = "/etc/apt/apt.conf.d/20auto-upgrades"
 	NeedrestartConfPath   = "/etc/needrestart/conf.d/90-mailadmin.conf"
@@ -78,25 +78,32 @@ func HardeningPackages() []string {
 // not start, so it is only listed when the installed OpenSSL supports it.
 func TLSGroups(opensslVersion string) []string {
 	groups := []string{"X25519", "prime256v1", "secp384r1"}
-	if versionAtLeast(opensslVersion, `OpenSSL (\d+)\.(\d+)`, 3, 5) {
+	if versionAtLeast(opensslVersion, opensslVersionRe, 3, 5) {
 		return append([]string{"X25519MLKEM768"}, groups...)
 	}
 	return groups
 }
 
-// installedTLSGroups asks the installed openssl for its version.
+// installedTLSGroups asks the distribution's openssl for its version. The path is
+// fixed: a self-built openssl in /usr/local would describe another libssl than
+// the one Postfix and Dovecot link against.
 func installedTLSGroups(ctx context.Context, x Exec) []string {
-	res, err := x.Run(ctx, nil, "openssl", "version")
+	res, err := x.Run(ctx, nil, "/usr/bin/openssl", "version")
 	if err != nil {
 		return TLSGroups("")
 	}
 	return TLSGroups(string(res.Stdout))
 }
 
-// versionAtLeast reports whether the first match of pattern in s (two numeric
+var (
+	opensslVersionRe = regexp.MustCompile(`OpenSSL (\d+)\.(\d+)`)
+	opensshVersionRe = regexp.MustCompile(`OpenSSH_(\d+)\.(\d+)`)
+)
+
+// versionAtLeast reports whether the first match of re in s (two numeric
 // groups, major and minor) is at least major.minor.
-func versionAtLeast(s, pattern string, major, minor int) bool {
-	m := regexp.MustCompile(pattern).FindStringSubmatch(s)
+func versionAtLeast(s string, re *regexp.Regexp, major, minor int) bool {
+	m := re.FindStringSubmatch(s)
 	if len(m) != 3 {
 		return false
 	}
@@ -106,6 +113,16 @@ func versionAtLeast(s, pattern string, major, minor int) bool {
 		return false
 	}
 	return maj > major || (maj == major && mnr >= minor)
+}
+
+// runSteps runs each argv in order and stops at the first failure.
+func runSteps(ctx context.Context, x Exec, steps ...[]string) error {
+	for _, s := range steps {
+		if _, err := x.Run(ctx, nil, s...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
+		}
+	}
+	return nil
 }
 
 // SSHCaps is what the installed OpenSSH supports, so the hardened config only
@@ -119,7 +136,7 @@ type SSHCaps struct {
 }
 
 func (c SSHCaps) atLeast(major, minor int) bool {
-	return versionAtLeast(c.Version, `OpenSSH_(\d+)\.(\d+)`, major, minor)
+	return versionAtLeast(c.Version, opensshVersionRe, major, minor)
 }
 
 // Preferred algorithms, strongest first. Each list is cut to what sshd supports.
@@ -151,6 +168,9 @@ type SSHPolicy struct {
 	KeyOnly     bool // password and keyboard-interactive login off
 	RootKeyOnly bool // PermitRootLogin prohibit-password
 	StrictRSA   bool // RequiredRSASize 3072
+	// Stricter settings the operator already had, kept on --adopt.
+	RootLoginNo bool   // PermitRootLogin no
+	AuthMethods string // AuthenticationMethods with more than one factor
 }
 
 func supported(prefer []string, have map[string]bool) []string {
@@ -171,15 +191,23 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	b.WriteString("# Managed by mailadmin install. SSH hardening (BSI SYS.1.3, CIS Level 1 and 2).\n")
 	b.WriteString("# Loaded first from sshd_config.d, so these values win over later drop-ins.\n")
 	line := func(k, v string) { fmt.Fprintf(&b, "%s %s\n", k, v) }
-	if p.RootKeyOnly {
+	if p.RootLoginNo {
+		line("PermitRootLogin", "no")
+	} else if p.RootKeyOnly {
 		line("PermitRootLogin", "prohibit-password")
 	}
 	line("PubkeyAuthentication", "yes")
 	if p.KeyOnly {
 		line("PasswordAuthentication", "no")
-		line("AuthenticationMethods", "publickey")
+		if p.AuthMethods != "" {
+			line("AuthenticationMethods", p.AuthMethods)
+		} else {
+			line("AuthenticationMethods", "publickey")
+		}
 	}
-	line("KbdInteractiveAuthentication", "no")
+	if !strings.Contains(p.AuthMethods, "keyboard-interactive") {
+		line("KbdInteractiveAuthentication", "no")
+	}
 	line("PermitEmptyPasswords", "no")
 	line("HostbasedAuthentication", "no")
 	line("IgnoreRhosts", "yes")
@@ -201,7 +229,9 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	line("PermitUserEnvironment", "no")
 	line("UseDNS", "no")
 	line("Compression", "no")
-	line("LogLevel", "VERBOSE")
+	// INFO, not VERBOSE: VERBOSE logs every agent key sshd refuses as a failure,
+	// and CrowdSec's ssh-bf then bans an operator whose agent holds several keys.
+	line("LogLevel", "INFO")
 	line("Banner", IssueNetPath)
 	if l := supported(sshKex, c.Kex); len(l) > 0 {
 		line("KexAlgorithms", strings.Join(l, ","))
@@ -448,6 +478,45 @@ func loginAccount() (name, home string, known bool) {
 	return u.Username, u.HomeDir, true
 }
 
+// operatorSSH returns the first PermitRootLogin and AuthenticationMethods values
+// outside Match blocks in files (sshd's first value wins), skipping mailadmin's
+// own drop-in.
+func operatorSSH(files []string) (permitRootLogin, authMethods string) {
+	for _, f := range files {
+		if f == SSHHardeningPath {
+			continue
+		}
+		data, err := os.ReadFile(f) // #nosec G304 -- sshd config files
+		if err != nil {
+			continue
+		}
+		for _, l := range strings.Split(string(data), "\n") {
+			if i := strings.Index(l, "#"); i >= 0 {
+				l = l[:i]
+			}
+			k, v, ok := strings.Cut(strings.TrimSpace(strings.Replace(l, "=", " ", 1)), " ")
+			if !ok {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			switch strings.ToLower(k) {
+			case "match":
+				goto next
+			case "permitrootlogin":
+				if permitRootLogin == "" {
+					permitRootLogin = v
+				}
+			case "authenticationmethods":
+				if authMethods == "" {
+					authMethods = v
+				}
+			}
+		}
+	next:
+	}
+	return permitRootLogin, authMethods
+}
+
 // ApplySSHHardening writes the sshd drop-in, validates it with sshd -t and
 // reloads sshd. A config that sshd rejects is rolled back, so a failed run never
 // leaves sshd unable to start. It reports whether password login was turned off
@@ -463,6 +532,14 @@ func ApplySSHHardening(ctx context.Context, x Exec) (policy SSHPolicy, account s
 		keys = readAuthorizedKeys(filepath.Join(home, ".ssh", "authorized_keys"))
 	}
 	policy = decideSSHPolicy(account, known, keys, readAuthorizedKeys("/root/.ssh/authorized_keys"), lastLogins(ctx, x))
+	// The drop-in loads first and wins, so stricter settings the operator had
+	// elsewhere are carried into it instead of being overridden.
+	drops, _ := filepath.Glob("/etc/ssh/sshd_config.d/*.conf")
+	prl, am := operatorSSH(append(drops, "/etc/ssh/sshd_config"))
+	policy.RootLoginNo = strings.EqualFold(prl, "no")
+	if f := strings.FieldsFunc(am, func(r rune) bool { return r == ',' || r == ' ' }); len(f) > 1 {
+		policy.AuthMethods = am
+	}
 	var hostKeys []string
 	for _, k := range []string{"/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_rsa_key"} {
 		if _, err := os.Stat(k); err == nil {
@@ -635,17 +712,12 @@ func CrowdSecAcquis(sshCovered, mailCovered bool) string {
 	return b.String()
 }
 
-// vendorRepos are the third-party repositories install adds.
-func vendorRepos() []Repo {
-	return []Repo{PostgresRepo(""), CaddyRepo(), CrowdSecRepo()}
-}
-
 // UnattendedUpgrades installs every update from the distribution (release,
 // updates, security) and from every vendor repository install adds, and reboots
 // at 04:00 when an update needs it.
 func UnattendedUpgrades() string {
 	var sites strings.Builder
-	for _, r := range vendorRepos() {
+	for _, r := range VendorRepos("") { // the site does not depend on the codename
 		if u, err := url.Parse(r.URI); err == nil && u.Host != "" {
 			fmt.Fprintf(&sites, "\t\"site=%s\";\n", u.Host)
 		}
@@ -752,10 +824,12 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 		}
 	}
 	// PostgreSQL's config files are readable by the postgres group only (CIS 6.1).
+	// The directory belongs to postgres, so a link there is never followed: it
+	// could point root's chmod at any file.
 	pgConfs, _ := filepath.Glob("/etc/postgresql/*/main/*.conf")
 	for _, f := range pgConfs {
-		if err := os.Chmod(f, 0o640); err != nil { // #nosec G302 -- tighter than the 0644 default, postgres group reads it
-			return fmt.Errorf("chmod %s: %w", f, err)
+		if err := chmodNoFollow(f, 0o640); err != nil {
+			return err
 		}
 	}
 	// Cron is root only (CIS 5.1).
@@ -771,7 +845,6 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 		{"systemctl", "enable", "--now", "auditd"},
 		{"augenrules", "--load"},
 		{"systemctl", "enable", "--now", "apparmor"},
-		{"timedatectl", "set-ntp", "true"},
 		{"systemctl", "enable", "--now", "apt-daily.timer"},
 		{"systemctl", "enable", "--now", "apt-daily-upgrade.timer"},
 		{"systemctl", "enable", "--now", "acct"},
@@ -779,22 +852,55 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 		// Pending updates are installed now in the background, not only at the next timer run.
 		{"systemctl", "start", "--no-block", "apt-daily-upgrade.service"},
 	}
-	for _, s := range steps {
-		if _, err := x.Run(ctx, nil, s...); err != nil {
-			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
-		}
+	if err := runSteps(ctx, x, steps...); err != nil {
+		return err
+	}
+	// Without an NTP service (no systemd-timesyncd, no chrony) timedatectl fails;
+	// the host then keeps its current time source.
+	if _, err := x.Run(ctx, nil, "timedatectl", "set-ntp", "true"); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: timedatectl set-ntp true failed (%v); install systemd-timesyncd or chrony\n", err)
 	}
 	// Services a mail host never needs. A unit that is not installed is fine.
 	for _, u := range []string{"avahi-daemon.service", "avahi-daemon.socket", "cups.service", "cups.socket",
 		"rpcbind.service", "rpcbind.socket", "bluetooth.service"} {
 		_, _ = x.Run(ctx, nil, "systemctl", "disable", "--now", u)
 	}
-	// The first AIDE baseline takes minutes, so it runs in the background once.
-	if _, err := os.Stat(AideDBPath); errors.Is(err, fs.ErrNotExist) {
-		if _, err := x.Run(ctx, nil, "systemd-run", "--unit=mailadmin-aideinit", "--collect", "--no-block",
-			"/usr/sbin/aideinit", "-y", "-f"); err != nil {
-			return fmt.Errorf("start AIDE baseline: %w", err)
+	return nil
+}
+
+// StartAIDEBaseline schedules the first AIDE baseline once, 30 minutes from now,
+// so it hashes the system after install and the first update run, not during
+// them. A baseline that exists or is already scheduled or running is left alone.
+func StartAIDEBaseline(ctx context.Context, x Exec) error {
+	if _, err := os.Stat(AideDBPath); err == nil {
+		return nil
+	}
+	if _, err := x.Run(ctx, nil, "systemctl", "is-active", "--quiet",
+		"mailadmin-aideinit.timer", "mailadmin-aideinit.service"); err == nil {
+		return nil
+	}
+	if _, err := x.Run(ctx, nil, "systemd-run", "--unit=mailadmin-aideinit", "--on-active=30min",
+		"--timer-property=AccuracySec=1min", "/usr/sbin/aideinit", "-y", "-f"); err != nil {
+		return fmt.Errorf("schedule AIDE baseline: %w", err)
+	}
+	return nil
+}
+
+// chmodNoFollow changes the mode of a regular file without following a link.
+func chmodNoFollow(path string, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) // #nosec G304 -- fixed config glob
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil // a link: leave it alone
 		}
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil
+	}
+	if err := f.Chmod(mode); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
 	}
 	return nil
 }
@@ -803,82 +909,124 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 // console when a key is given, and starts the agent and the nftables bouncer. The
 // bouncer bans in its own nftables table, so the mailadmin table stays untouched.
 func ApplyCrowdSec(ctx context.Context, x Exec, hostname, enrollKey string) error {
-	steps := [][]string{
-		{"cscli", "hub", "update"},
-		append([]string{"cscli", "collections", "install"}, CrowdSecCollections...),
-	}
-	for _, s := range steps {
-		if _, err := x.Run(ctx, nil, s...); err != nil {
-			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
-		}
-	}
-	if enrollKey != "" {
-		// The key is not put into the error: an exit error carries the full argv.
-		if _, err := x.Run(ctx, nil, "cscli", "console", "enroll", "--overwrite", "--name", hostname, enrollKey); err != nil {
-			detail := "no exit status"
-			var ee *sys.ExitError
-			if errors.As(err, &ee) {
-				detail = fmt.Sprintf("exit %d: %s", ee.ExitCode, strings.TrimSpace(string(ee.Stderr)))
-			}
-			return fmt.Errorf("crowdsec console enroll failed (%s); check the key and rerun", detail)
-		}
-	}
-	for _, s := range [][]string{
-		{"systemctl", "enable", "crowdsec", "crowdsec-firewall-bouncer"},
-		{"systemctl", "restart", "crowdsec"},
-	} {
-		if _, err := x.Run(ctx, nil, s...); err != nil {
-			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
-		}
-	}
-	if acquis := CrowdSecAcquis(crowdSecCoverage("/etc/crowdsec")); acquis != "" {
-		if err := writeAtomic(CrowdSecAcquisPath, []byte(acquis), 0o644); err != nil {
+	changed := false
+	// The hub is fetched only while a collection is missing, so a rerun does not
+	// depend on the hub CDN and does not restart the agent for nothing.
+	if !crowdSecCollectionsInstalled(ctx, x) {
+		if err := runSteps(ctx, x,
+			[]string{"cscli", "hub", "update"},
+			append([]string{"cscli", "collections", "install"}, CrowdSecCollections...)); err != nil {
 			return err
 		}
-	} else if err := os.Remove(CrowdSecAcquisPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("remove %s: %w", CrowdSecAcquisPath, err)
+		changed = true
+	}
+	if enrollKey != "" {
+		// The key is in argv; sys errors name only the command, never its arguments.
+		if _, err := x.Run(ctx, nil, "cscli", "console", "enroll", "--overwrite", "--name", hostname, enrollKey); err != nil {
+			return fmt.Errorf("crowdsec console enroll failed (%w); check the key and rerun", err)
+		}
+		changed = true
+	}
+	acquisChanged, err := writeCrowdSecAcquis()
+	if err != nil {
+		return err
+	}
+	changed = changed || acquisChanged
+	if err := runSteps(ctx, x, []string{"systemctl", "enable", "--now", "crowdsec", "crowdsec-firewall-bouncer"}); err != nil {
+		return err
+	}
+	if changed {
+		if err := runSteps(ctx, x, []string{"systemctl", "restart", "crowdsec"}); err != nil {
+			return err
+		}
 	}
 	// The security allowlist commands and overview work on this list; cscli
 	// allowlists add does not create it.
-	if _, err := x.Run(ctx, nil, "cscli", "allowlists", "inspect", CrowdSecAllowlist); err != nil {
-		if _, err := x.Run(ctx, nil, "cscli", "allowlists", "create", CrowdSecAllowlist,
+	if _, err := x.Run(ctx, nil, "cscli", "allowlists", "inspect", security.AllowlistName); err != nil {
+		if _, err := x.Run(ctx, nil, "cscli", "allowlists", "create", security.AllowlistName,
 			"--description", "managed by mailadmin"); err != nil {
 			return fmt.Errorf("create crowdsec allowlist: %w", err)
 		}
 	}
-	if err := registerBouncer(ctx, x); err != nil {
+	registered, err := registerBouncer(ctx, x)
+	if err != nil {
 		return err
 	}
-	if _, err := x.Run(ctx, nil, "systemctl", "restart", "crowdsec-firewall-bouncer"); err != nil {
-		return fmt.Errorf("systemctl restart crowdsec-firewall-bouncer: %w", err)
+	if registered {
+		return runSteps(ctx, x, []string{"systemctl", "restart", "crowdsec-firewall-bouncer"})
 	}
 	return nil
 }
 
-// registerBouncer gives the nftables bouncer a fresh local API key. The package
-// registers itself only when the local API already runs during its postinst,
-// which is not the case when both packages arrive in one apt run; the config then
-// keeps the ${API_KEY} placeholder and the bouncer gets "access forbidden".
-// Re-registering on every run keeps install idempotent; the old key is revoked.
-func registerBouncer(ctx context.Context, x Exec) error {
+// crowdSecCollectionsInstalled reports whether every hub collection is present.
+func crowdSecCollectionsInstalled(ctx context.Context, x Exec) bool {
+	res, err := x.Run(ctx, nil, "cscli", "collections", "list", "-o", "raw")
+	if err != nil {
+		return false
+	}
+	for _, c := range CrowdSecCollections {
+		if !strings.Contains(string(res.Stdout), c) {
+			return false
+		}
+	}
+	return true
+}
+
+// writeCrowdSecAcquis writes mailadmin's acquisition file, or removes it when
+// other sources already read everything, and reports whether it changed.
+func writeCrowdSecAcquis() (bool, error) {
+	acquis := CrowdSecAcquis(crowdSecCoverage("/etc/crowdsec"))
+	if acquis == "" {
+		err := os.Remove(CrowdSecAcquisPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("remove %s: %w", CrowdSecAcquisPath, err)
+		}
+		return true, nil
+	}
+	return writeAtomicChanged(CrowdSecAcquisPath, []byte(acquis), 0o644)
+}
+
+// registerBouncer gives the nftables bouncer a local API key when its config
+// has none yet. The package registers itself only when the local API already
+// runs during its postinst, which is not the case when both packages arrive in
+// one apt run; the config then keeps the ${API_KEY} placeholder and the bouncer
+// gets "access forbidden". A key that is already set is kept: replacing it on
+// every run would revoke the running bouncer's key and flush its bans.
+func registerBouncer(ctx context.Context, x Exec) (bool, error) {
 	conf, err := os.ReadFile(CrowdSecBouncerConf)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", CrowdSecBouncerConf, err)
+		return false, fmt.Errorf("read %s: %w", CrowdSecBouncerConf, err)
+	}
+	if !bouncerKeyMissing(string(conf)) {
+		return false, nil
 	}
 	_, _ = x.Run(ctx, nil, "cscli", "bouncers", "delete", crowdSecBouncerName)
 	res, err := x.Run(ctx, nil, "cscli", "bouncers", "add", crowdSecBouncerName, "-o", "raw")
 	if err != nil {
-		return fmt.Errorf("register crowdsec bouncer: %w", err)
+		return false, fmt.Errorf("register crowdsec bouncer: %w", err)
 	}
 	key := strings.TrimSpace(string(res.Stdout))
 	if key == "" || strings.ContainsAny(key, " \n") {
-		return errors.New("register crowdsec bouncer: cscli returned no key")
+		return false, errors.New("register crowdsec bouncer: cscli returned no key")
 	}
 	out, err := SetBouncerKey(string(conf), key)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return writeAtomic(CrowdSecBouncerConf, []byte(out), 0o600)
+	return true, writeAtomic(CrowdSecBouncerConf, []byte(out), 0o600)
+}
+
+// bouncerKeyMissing reports whether the bouncer config holds no usable key.
+func bouncerKeyMissing(conf string) bool {
+	m := regexp.MustCompile(`(?m)^api_key:[ \t]*(.*)$`).FindStringSubmatch(conf)
+	if m == nil {
+		return true
+	}
+	v := strings.Trim(strings.TrimSpace(m[1]), `"'`)
+	return v == "" || v == "${API_KEY}" || v == "<API_KEY>"
 }
 
 // SetBouncerKey replaces the api_key line of the bouncer config.

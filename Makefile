@@ -1,4 +1,4 @@
-# mailadmin — build & quality targets.
+# mailadmin, build & quality targets.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 LDFLAGS := -s -w -X mailadmin/internal/cli.Version=$(VERSION)
 GOOS    ?= linux

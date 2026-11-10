@@ -38,7 +38,7 @@ A domain's `dns_provider` (stored in the database) decides which backend API
 | INWX | `inwx` | `INWX_USER`, `INWX_PASSWORD`, `INWX_SHARED_SECRET` (if 2FA) |
 | Servercow | `servercow` | `SERVERCOW_USERNAME`, `SERVERCOW_PASSWORD` (DNS-API creds) |
 | servfail.network | `servfail` | `SERVFAIL_API_KEY`, `SERVFAIL_SERVER` (primary-NS FQDN, trailing dot) |
-| manual | `manual` | none — records are only printed for you to publish |
+| manual | `manual` | none, records are only printed for you to publish |
 
 deSEC's API throttles writes; `mailadmin` transparently retries on `429` (honouring
 `Retry-After`) and on transient `502/503/504` (exponential backoff), so a large
@@ -50,7 +50,7 @@ publish or migration completes without dropped records.
 
 `mailadmin` derives the correct mail record set for a domain from its config and
 DKIM key: MX, SPF, DKIM, DMARC, the autoconfig/autodiscover CNAMEs and SRVs,
-TLS-RPT, and — with `--with-mta-sts` — the MTA-STS records. DANE TLSA is managed
+TLS-RPT, and, with `--with-mta-sts`, the MTA-STS records. DANE TLSA is managed
 separately (see [DANE](#dane-tlsa)) because it is derived from the TLS certificate.
 
 ---
@@ -67,7 +67,7 @@ mailadmin dns check <domain> --registrar         # diff desired vs. live at the 
 whether it matches, drifts (old → new), or is missing. With `--registrar` it queries
 the API of the domain's configured provider instead of public DNS and additionally
 lists stale records not part of the mail set. `--njalla` / `--desec` force that
-specific provider's API regardless of the domain's configured `dns_provider` — handy
+specific provider's API regardless of the domain's configured `dns_provider`, handy
 for verifying a zone before switching the domain over to it.
 
 ---
@@ -89,7 +89,7 @@ The domain must be on an automated provider (not `manual`); otherwise set one wi
 
 ## `dns migrate`
 
-Copy an existing zone into an automated provider — e.g. when moving registrars or
+Copy an existing zone into an automated provider, e.g. when moving registrars or
 adopting `mailadmin` for a domain hosted elsewhere.
 
 ```sh
@@ -107,7 +107,7 @@ Pick exactly one **source**:
 
 Behaviour:
 
-- **NS and SOA are never copied** — delegation belongs to the target zone.
+- **NS and SOA are never copied**: delegation belongs to the target zone.
 - Existing target records are left untouched; nothing is deleted **unless** you
   pass `--clean`, which wipes the target (all records except NS/SOA) after a
   confirmation, for a clean 1:1 replacement.
@@ -139,7 +139,7 @@ unchanged, so this is the follow-up (migrate also offers to do it for you).
 
 ## `dns audit`
 
-Grades a domain's mail-security posture from live public DNS — correctness and
+Grades a domain's mail-security posture from live public DNS, correctness and
 policy strength per RFC, for **any** domain (including externally hosted ones).
 
 ```sh
@@ -160,10 +160,10 @@ DNSSEC-authenticated), **MTA-STS** (record + fetched policy), **TLS-RPT**, and
 DANE (DNS-based Authentication of Named Entities, RFC 7672) lets a sending MTA
 verify your mail server's TLS certificate against a **TLSA** record published in
 DNS, instead of trusting the public CA system alone. It only works when the zone
-is DNSSEC-signed — the TLSA must be authenticated.
+is DNSSEC-signed, the TLSA must be authenticated.
 
 `mailadmin` manages inbound-SMTP DANE: a `3 1 1` TLSA record (usage **DANE-EE**,
-selector **SPKI**, matching **SHA-256** — it pins the certificate's public key) at
+selector **SPKI**, matching **SHA-256**: it pins the certificate's public key) at
 `_25._tcp.<mail-host>`.
 
 ### Deriving the record
@@ -196,7 +196,7 @@ tls_cert = "/etc/ssl/mail/fullchain.pem"
 mailadmin dns publish <domain> --dane [--dry-run]
 ```
 
-Publishes the TLSA at the provider. The publish is **additive** — an existing TLSA
+Publishes the TLSA at the provider. The publish is **additive**: an existing TLSA
 value is kept, which is exactly what a certificate rollover needs (both the old and
 new values are valid, so a verifier matches either). The audit trail records every
 publish.
@@ -220,38 +220,31 @@ A worked example for a Caddy-issued cert deployed to Postfix/Dovecot, driven by 
 systemd `path` unit that watches Caddy's certificate:
 
 [`scripts/mail-cert-deploy.sh`](../scripts/mail-cert-deploy.sh) in this repo is
-the source of truth for the script — deploy it to
+the source of truth for the script, deploy it to
 `/usr/local/sbin/mail-cert-deploy` on the mail server (see the header comment
 in that file for the exact deploy steps and for the assumptions made about the
 scaffolding around the excerpt below, since only the core install+rollover
-logic was ever pinned down here). Core of the script — install the new cert,
-then roll DANE over:
+logic was ever pinned down here). Core of the script: stage the new cert,
+publish its TLSA, wait out the TTL, then switch:
 
 ```bash
 umask 027
-# Keep the served pair so a failed TLSA publish can roll back.
-prev=$(mktemp -d)
-cp -p /etc/ssl/mail/fullchain.pem /etc/ssl/mail/privkey.pem "$prev"/ 2>/dev/null || true
-restore_prev() {
-  if [ -f "$prev/fullchain.pem" ] && [ -f "$prev/privkey.pem" ]; then
-    install -o root -g root -m 0600 "$prev/fullchain.pem" /etc/ssl/mail/fullchain.pem
-    install -o root -g root -m 0600 "$prev/privkey.pem" /etc/ssl/mail/privkey.pem
-  fi
-}
-# A failed copy can leave a mixed pair on disk, so restore the previous pair.
-if ! { install -o root -g root -m 0600 "$SRC_CRT" /etc/ssl/mail/fullchain.pem &&
-       install -o root -g root -m 0600 "$SRC_KEY" /etc/ssl/mail/privkey.pem; }; then
-  restore_prev
-  rm -rf "$prev"
-  echo "mail-cert-deploy: installing the new cert failed, previous cert files restored" >&2
+# The new pair is staged next to the live one and goes live only after its TLSA
+# record had a TTL to propagate. Installing it first would let every new smtpd
+# serve it while DANE senders still cache only the old TLSA, and they would
+# defer mail for up to an hour on every renewal.
+stage=$(mktemp -d /etc/ssl/mail/.staged.XXXXXX)
+trap 'rm -rf "$stage"' EXIT
+if ! { install -o root -g root -m 0600 "$SRC_CRT" "$stage/fullchain.pem" &&
+       install -o root -g root -m 0600 "$SRC_KEY" "$stage/privkey.pem"; }; then
+  echo "mail-cert-deploy: staging the new cert failed, the served cert is unchanged" >&2
   exit 1
 fi
 
-# DANE rollover: publish the NEW leaf's TLSA (mailadmin reads the just-installed
-# fullchain.pem via mail.tls_cert, so it pins the new key). Additive — the old
-# TLSA stays valid during the overlap. Wait out the TTL so validators see the new
-# TLSA before we switch the served cert, then reload.
-if out=$(mailadmin --yes dns publish "$DOMAIN" --dane 2>&1); then
+# DANE rollover: publish the NEW leaf's TLSA, read from the staged pair. Additive:
+# the old TLSA stays valid during the overlap. Wait out the TTL so validators see
+# the new TLSA before the served cert switches.
+if out=$(MAILADMIN_MAIL_TLS_CERT="$stage/fullchain.pem" mailadmin --yes dns publish "$DOMAIN" --dane 2>&1); then
   sleep 3900            # > TLSA TTL (deSEC minimum is 3600)
 else
   case "$out" in
@@ -263,14 +256,15 @@ else
     ;;
   *)
     printf '%s\n' "$out" >&2
-    restore_prev
-    rm -rf "$prev"
-    echo "mail-cert-deploy: TLSA publish failed, previous cert files restored, reload skipped" >&2
+    echo "mail-cert-deploy: TLSA publish failed, the served cert is unchanged" >&2
     exit 1
     ;;
   esac
 fi
-rm -rf "$prev"
+
+# Both files are renamed into place from the same file system, each atomically.
+mv -f "$stage/privkey.pem" /etc/ssl/mail/privkey.pem
+mv -f "$stage/fullchain.pem" /etc/ssl/mail/fullchain.pem
 if ! systemctl reload-or-restart postfix dovecot; then
   echo "mail-cert-deploy: reload failed, postfix and dovecot still serve the old certificate; reload them by hand" >&2
   exit 1
@@ -288,27 +282,27 @@ TimeoutStartSec=infinity
 
 With this in place, DANE survives every automatic key rotation with no delivery
 outage. Verify at any time with `mailadmin dns audit <domain>` (DANE should read
-`pass — N TLSA, authenticated`).
+`pass, N TLSA, authenticated`).
 
 ### Verifying DANE actually works
 
 Publishing the TLSA record is only half of DANE. Two commands confirm it is
 effective:
 
-- `mailadmin dns audit <domain>` — the **DANE** finding now also fetches the
+- `mailadmin dns audit <domain>`, the **DANE** finding now also fetches the
   live certificate over STARTTLS and confirms the published `3 1 1` TLSA still
   matches it. A stale TLSA (after a key rotation without `--reuse-key`) shows as
-  **fail** — *"published TLSA does not match live certificate"* — which is
+  **fail**: *"published TLSA does not match live certificate"*, which is
   exactly what DANE senders would reject. An unreachable mail host downgrades to
   a warning rather than a false pass.
 
-- `mailadmin doctor` — checks the Postfix side on the mail host:
+- `mailadmin doctor`, checks the Postfix side on the mail host:
   - **dane-outbound**: `smtp_tls_security_level` is `dane`/`dane-only` and
     `smtp_dns_support_level=dnssec`. `dane` is opportunistic (falls back to
     plaintext when a peer has no signed TLSA); `dane-only` never falls back.
   - **dane-smtpd-cert**: `smtpd_tls_cert_file` matches the cert that feeds the
     TLSA (`mail.tls_cert`), catching deploy-path drift.
-  - **dane-resolver**: a loopback nameserver in `/etc/resolv.conf` — outbound
+  - **dane-resolver**: a loopback nameserver in `/etc/resolv.conf`, outbound
     DANE needs a local validating resolver to trust the DNSSEC AD flag
     (best-effort check).
 
@@ -323,7 +317,7 @@ mailadmin dns restore  <domain> <backup>
 
 `takeover` replaces the **entire** zone with the mail record set, snapshotting it
 to `backup.dns_backup_dir` first; `--keep-web` preserves apex/www A/AAAA/CNAME.
-`restore` puts a snapshot back. Both are destructive — use `--dry-run` to preview.
+`restore` puts a snapshot back. Both are destructive, use `--dry-run` to preview.
 
 ---
 
@@ -335,16 +329,16 @@ mailadmin domain set-bimi <domain> --logo-url <https-url> [--logo-file <path>] [
 
 Computes and publishes the `default._bimi` TXT record
 (`v=BIMI1; l=<logo-url>[; a=<vmc-url>]`) through the same
-Plan/Reconcile path `dns publish` uses — it respects `--dry-run` and the
+Plan/Reconcile path `dns publish` uses, it respects `--dry-run` and the
 domain's configured `dns_provider` (manual just prints the record; an
 automated provider publishes it after confirmation).
 
 **Hosting design decision:** mailadmin does **not** host the logo or the VMC.
-An alternative was considered — a managed Caddy web root at `/srv/caddy/bimi`,
-mirroring `internal/webserver`'s autodiscovery/MTA-STS include pattern — but
+An alternative was considered, a managed Caddy web root at `/srv/caddy/bimi`,
+mirroring `internal/webserver`'s autodiscovery/MTA-STS include pattern, but
 was rejected: BIMI logos must satisfy constraints mailadmin cannot check or
-obtain on the operator's behalf (full SVG Tiny PS conformance, and — for the
-checkmark to actually render in most mailbox providers — a Verified Mark
+obtain on the operator's behalf (full SVG Tiny PS conformance, and, for the
+checkmark to actually render in most mailbox providers, a Verified Mark
 Certificate issued by a commercial CA against the *exact* hosted bytes).
 Hosting it locally would not remove that dependency, only add a Caddy include
 and reload path for no real benefit. So: host the SVG (and VMC, if you have
@@ -352,11 +346,11 @@ one) yourself at a stable HTTPS URL, then run `set-bimi` to publish the
 pointer record.
 
 `--logo-file` is optional and purely a local sanity check: it parses the file
-as XML and confirms the root `<svg>` carries `baseProfile="tiny-ps"` — the two
+as XML and confirms the root `<svg>` carries `baseProfile="tiny-ps"`, the two
 most common mistakes (not valid XML at all, or a normal SVG export missing the
 BIMI profile). It is **not** a full SVG Tiny PS conformance check.
 
-BIMI only displays once DMARC enforces (`p=quarantine` or `p=reject`) — see
+BIMI only displays once DMARC enforces (`p=quarantine` or `p=reject`), see
 [`dns audit`](#dns-audit)'s BIMI finding, which now points here when no record
 is published yet.
 
@@ -373,7 +367,7 @@ mailadmin domain dkim-rotate-finish <domain> <new-selector> [--remove-old]
 generated and the domain's row is updated to the new selector in one step.
 That is fine when the old key is not worth keeping alive, but it means any
 DNS resolver still caching the old public key sees a mismatch the moment
-signing switches — a real, if usually brief, delivery risk during
+signing switches, a real, if usually brief, delivery risk during
 propagation.
 
 `dkim-rotate-start`/`dkim-rotate-finish` split that into two explicit steps
@@ -381,13 +375,13 @@ with an overlap window, no instant cutover:
 
 1. **`dkim-rotate-start`** generates a **new** key under a **new** selector
    and publishes **both** the current and new selector's DKIM TXT records.
-   The domain keeps *signing* with the old selector throughout — nothing
+   The domain keeps *signing* with the old selector throughout, nothing
    about mail delivery changes yet. The new selector defaults to
    `<current>-<YYYYMMDD>`, or pass `--selector` explicitly. The command
    prints the selector it used; **mailadmin does not persist rotation state**
    between the two steps, so note it down (or use an explicit `--selector`)
    if you're not running `dkim-rotate-finish` right away.
-2. Wait for DNS to propagate — at least the record TTL, longer for a
+2. Wait for DNS to propagate, at least the record TTL, longer for a
    comfortable margin.
 3. **`dkim-rotate-finish <domain> <new-selector>`** performs the DB cutover
    (`SetDKIMSelector`) that `set-dkim`/`regen-dkim` do instantly, now as an
@@ -395,14 +389,14 @@ with an overlap window, no instant cutover:
 
 **Old-record grace period (tradeoff):** by default `dkim-rotate-finish`
 leaves the old selector's DNS record published after cutover. It costs
-nothing (an unused TXT record) and is safer — any mail that was queued or is
+nothing (an unused TXT record) and is safer, any mail that was queued or is
 still being verified against the old signature keeps working. Pass
 `--remove-old` to delete it immediately instead, once you're confident
 nothing still depends on it.
 
 Both `set-dkim`/`regen-dkim` (instant, no-overlap) and
 `dkim-rotate-start`/`dkim-rotate-finish` (two-step, overlapping) stay
-available — pick whichever fits the situation.
+available, pick whichever fits the situation.
 
 ---
 
@@ -415,8 +409,8 @@ mailadmin dns drift-check --all -o json     # machine-parseable summary
 ```
 
 Runs the exact same desired-vs-live public DNS comparison as
-[`dns check`](#dns-show--dns-check) — it is a thin wrapper, not a second
-implementation of the diffing logic — but is shaped for unattended use: it
+[`dns check`](#dns-show--dns-check), it is a thin wrapper, not a second
+implementation of the diffing logic, but is shaped for unattended use: it
 **exits non-zero** (runtime error, exit code 1) if any record is missing or
 has drifted, so it can be dropped straight into a cron job or systemd timer.
 `-o json` emits one object per domain (`domain`, `total`, `matched`,

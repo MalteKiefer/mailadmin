@@ -20,7 +20,8 @@ func TestValidateRate(t *testing.T) {
 		{"5 / 1h", "5 / 1h", false},
 		{"5.5 / 1h", "5.5 / 1h", false},
 		{"1000 / 1d", "1000 / 1d", false},
-		{"1 / 1w", "1 / 1w", false},
+		{"1 / 1w", "", true}, // rspamd has no week unit
+		{"1 / 7d", "1 / 7d", false},
 		{"", "", true},
 		{"20", "", true},
 		{"20 / 1min", "", true}, // word units not accepted, see doc comment

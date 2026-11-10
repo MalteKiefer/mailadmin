@@ -18,42 +18,42 @@ over SSH; there is no HTTP server and no web UI.
 
 ## Features
 
-- **Install** — `mailadmin install` installs and configures PostgreSQL, Postfix,
+- **Install**: `mailadmin install` installs and configures PostgreSQL, Postfix,
   Dovecot, Rspamd, Caddy, nftables and CrowdSec on Debian or Ubuntu, with
   fingerprint-checked vendor repositories. `--adopt` converges an existing host.
-- **Host hardening** — SSH (key only, post-quantum key exchange), strict TLS for
+- **Host hardening**: SSH (key only, post-quantum key exchange), strict TLS for
   Postfix and Dovecot (TLS 1.2+, AEAD, `X25519MLKEM768`), sysctl, auditd, AIDE,
   AppArmor, unattended upgrades and CrowdSec, along BSI SYS.1.3 and CIS Level 1
   and 2. See [docs/HARDENING.md](docs/HARDENING.md).
-- **Backup** — self-contained bundles (database, DKIM keys, Sieve, config) with
+- **Backup**: self-contained bundles (database, DKIM keys, Sieve, config) with
   per-component restore. See [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md).
-- **Domains** — add/remove/enable/disable, DKIM selector management, per-domain
+- **Domains**: add/remove/enable/disable, DKIM selector management, per-domain
   DNS record set, provider-driven publish/takeover/restore.
-- **Mailboxes** — create/remove (with optional maildir purge), password change
+- **Mailboxes**: create/remove (with optional maildir purge), password change
   (argon2id via `doveadm`), quota, enable/disable, dedupe, and per-mailbox
   **app passwords**.
-- **Aliases** — including catch-all.
-- **DNS** — verify (`SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT/rDNS/autoconfig`), publish,
+- **Aliases**: including catch-all.
+- **DNS**: verify (`SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT/rDNS/autoconfig`), publish,
   migrate and zone takeover through a provider API (**Njalla, deSEC, Cloudflare,
   INWX, Servercow, servfail.network/PowerDNS**), with a full-zone snapshot taken
   before any destructive change and a `restore`. Grade posture with `dns audit`
   (`SPF/DKIM/DMARC/DNSSEC/DANE/MTA-STS/TLS-RPT/BIMI`). See [docs/DNS.md](docs/DNS.md).
-- **DANE** — manage inbound-SMTP TLSA records (`dns show/publish --dane`, and a
+- **DANE**: manage inbound-SMTP TLSA records (`dns show/publish --dane`, and a
   DANE check in `dns audit`), derived from the mail host's certificate, with a
   documented rollover for certificate renewals. See [docs/DNS.md](docs/DNS.md#dane-tlsa).
-- **Security** — CrowdSec ban list, IP allowlist, and nftables firewall
+- **Security**: CrowdSec ban list, IP allowlist, and nftables firewall
   open/close with a protected-port guard.
-- **Queue** — list/show/flush/hold/release/delete Postfix queue entries.
-- **Services / logs** — allowlisted `systemctl` control and `journalctl`/Caddy
+- **Queue**: list/show/flush/hold/release/delete Postfix queue entries.
+- **Services / logs**: allowlisted `systemctl` control and `journalctl`/Caddy
   log access.
-- **Statistics** — inbound/outbound/spam/per-domain, parsed from Postfix and
+- **Statistics**: inbound/outbound/spam/per-domain, parsed from Postfix and
   Rspamd logs.
-- **Sieve** — show/set/edit user filters via ManageSieve.
-- **Audit** — every mutation is recorded (actor, action, target, before/after).
-- **Doctor** — health check: services, ports, TLS, rspamd config, and DANE
+- **Sieve**: show/set/edit user filters via ManageSieve.
+- **Audit**: every mutation is recorded (actor, action, target, before/after).
+- **Doctor**: health check: services, ports, TLS, rspamd config, and DANE
   (outbound `smtp_tls_security_level`/`smtp_dns_support_level`, smtpd-cert drift,
   validating resolver).
-- **Self-update** — `mailadmin version --check` and `mailadmin update` pull
+- **Self-update**: `mailadmin version --check` and `mailadmin update` pull
   signed-by-checksum release binaries from GitHub.
 - Global `-o table|json|plain` output, `--yes`, `--dry-run`, `-q`, `--config`.
 
@@ -118,11 +118,11 @@ configures them):
 | systemd / journald | service control + logs |
 
 Privileged helper scripts (shipped separately under `/usr/local/libexec`, invoked
-with validated argument vectors — never a shell string):
+with validated argument vectors, never a shell string):
 
-- `mailadmin-dkim-gen <domain> <selector>` — generate a DKIM key via `rspamadm`.
-- `mailadmin-fw-port <open|close|list> <tcp|udp> <port>` — edit nftables sets.
-- `mailadmin-mta-sts-sync` — regenerate the Caddy MTA-STS include.
+- `mailadmin-dkim-gen <domain> <selector>`, generate a DKIM key via `rspamadm`.
+- `mailadmin-fw-port <open|close|list> <tcp|udp> <port>`, edit nftables sets.
+- `mailadmin-mta-sts-sync`, regenerate the Caddy MTA-STS include.
 
 `mailadmin install` runs on Debian or Ubuntu, amd64 or arm64 (tested on Debian 13).
 Build/development requirements: **Go 1.26+** (see `go.mod`).
@@ -139,6 +139,9 @@ Download the binary for your platform from the
 ```sh
 curl -fsSLO https://github.com/MalteKiefer/mailadmin/releases/latest/download/mailadmin-linux-amd64
 curl -fsSLO https://github.com/MalteKiefer/mailadmin/releases/latest/download/SHA256SUMS
+curl -fsSLO https://github.com/MalteKiefer/mailadmin/releases/latest/download/SHA256SUMS.asc
+gpg --recv-keys AB222289126C59D40BDFC707C82C7B375578C141
+gpg --verify SHA256SUMS.asc SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 sudo install -m 0755 mailadmin-linux-amd64 /usr/local/sbin/mailadmin
 ```
@@ -228,7 +231,7 @@ units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall
 ### `secrets.env` (mode 0600, root only)
 
 ```sh
-# DNS provider credentials — set only the one you use.
+# DNS provider credentials, set only the one you use.
 NJALLA_TOKEN=
 DESEC_TOKEN=
 CLOUDFLARE_API_TOKEN=
@@ -261,15 +264,15 @@ mailadmin config check     # validates paths, permissions, configured secrets
 
 - **Njalla** (`--dns njalla`, `NJALLA_TOKEN`)
 - **deSEC** (`--dns desec`, `DESEC_TOKEN`)
-- **Cloudflare** (`--dns cloudflare`, `CLOUDFLARE_API_TOKEN` — an API Token with
+- **Cloudflare** (`--dns cloudflare`, `CLOUDFLARE_API_TOKEN`, an API Token with
   Zone:DNS:Edit on the zone)
 - **INWX** (`--dns inwx`, `INWX_USER` + `INWX_PASSWORD`, plus `INWX_SHARED_SECRET`
   if the account uses 2FA)
-- **Servercow** (`--dns servercow`, `SERVERCOW_USERNAME` + `SERVERCOW_PASSWORD` —
+- **Servercow** (`--dns servercow`, `SERVERCOW_USERNAME` + `SERVERCOW_PASSWORD`:
   the DNS-API credentials, not the panel login)
-- **servfail.network** (`--dns servfail`, `SERVFAIL_API_KEY` + `SERVFAIL_SERVER` —
+- **servfail.network** (`--dns servfail`, `SERVFAIL_API_KEY` + `SERVFAIL_SERVER`:
   a hosted PowerDNS; the server id is the primary-NS FQDN incl. trailing dot)
-- **manual** (`--dns manual`) — records are only displayed for you to publish.
+- **manual** (`--dns manual`), records are only displayed for you to publish.
 
 Takeover is safe by construction: `dns takeover <d>` snapshots the entire zone to
 `backup.dns_backup_dir` before replacing records, and `dns restore <d> <backup>`
@@ -287,24 +290,24 @@ documented in **[docs/DNS.md](docs/DNS.md)**.
 
 ## Security
 
-- **Injection** — all SQL is parameterized (pgx `$n`); there is no `sh -c`.
+- **Injection**: all SQL is parameterized (pgx `$n`); there is no `sh -c`.
   Every external command runs through one audited chokepoint (`internal/sys`) as
   an argument slice from an absolute path with a context timeout and capped
   output. All external tokens are validated/normalized in `internal/valid`
   (domain, address, queue-id `^[A-F0-9]{6,16}$`, IP, CIDR, port, proto, unit,
   selector, duration).
-- **Least privilege** — `systemctl` and `nft`/`cscli` are gated by explicit
+- **Least privilege**: `systemctl` and `nft`/`cscli` are gated by explicit
   allowlists; no wildcards.
-- **Crypto / TLS** — mailbox passwords are argon2id; all outbound HTTPS pins
+- **Crypto / TLS**: mailbox passwords are argon2id; all outbound HTTPS pins
   TLS 1.2+ with certificate verification; no MD5/SHA1/DES/RC4. Self-update
   downloads are checksum-verified. The sole `InsecureSkipVerify` is the DANE
   STARTTLS probe, which reads the certificate to fingerprint it (chain trust is
-  irrelevant — DANE pins the presented key), not to authenticate a session.
-- **Secrets** — 0600 `secrets.env`, redacted in every output path, read from the
+  irrelevant, DANE pins the presented key), not to authenticate a session.
+- **Secrets**: 0600 `secrets.env`, redacted in every output path, read from the
   TTY (never argv).
-- **Audit** — every mutation writes an `audit_log` row; DNS takeovers snapshot
+- **Audit**: every mutation writes an `audit_log` row; DNS takeovers snapshot
   the zone first.
-- **Host** — `mailadmin install` hardens SSH, TLS, kernel, accounts, logging and
+- **Host**: `mailadmin install` hardens SSH, TLS, kernel, accounts, logging and
   updates. Every control and every deliberate deviation is listed in
   [`docs/HARDENING.md`](docs/HARDENING.md).
 
@@ -328,13 +331,23 @@ The same gates run in CI on every push/PR (`.github/workflows/ci.yml`).
 
 ### Releasing
 
-Tag a signed version and push it — the release workflow builds the static
+Tag a signed version and push it, the release workflow builds the static
 `linux/amd64` + `linux/arm64` binaries, generates `SHA256SUMS`, and publishes a
 GitHub release that `mailadmin update` can consume:
 
 ```sh
-git tag -s v1.25.0 -m v1.25.0
-git push origin v1.25.0
+git tag -s v1.27.0 -m v1.27.0
+git push origin v1.27.0
+```
+
+When the workflow has finished, sign the checksums with the release key and
+attach the signature, so the download can be verified against the key and not
+only against the release page:
+
+```sh
+gh release download v1.27.0 -p SHA256SUMS
+gpg --local-user AB222289126C59D40BDFC707C82C7B375578C141 --armor --detach-sign SHA256SUMS
+gh release upload v1.27.0 SHA256SUMS.asc
 ```
 
 The version embedded in the binary comes from the tag

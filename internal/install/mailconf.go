@@ -83,7 +83,8 @@ passdb mailbox {
 # and the query matches exactly one row. The identity returned is the mailbox.
 passdb apppw {
   driver = sql
-  sql_query = SELECT a.username, a.domain, a.password FROM app_password a JOIN mailbox m ON m.username = a.username AND m.domain = a.domain WHERE a.username || '@' || a.domain || '+' || a.label = '%{user}' AND a.active AND m.active
+  # The username condition lets the app_password index narrow the lookup.
+  sql_query = SELECT a.username, a.domain, a.password FROM app_password a JOIN mailbox m ON m.username = a.username AND m.domain = a.domain WHERE a.username = '%{user|username}' AND a.username || '@' || a.domain || '+' || a.label = '%{user}' AND a.active AND m.active
 }
 # quota_bytes 0 means no limit.
 userdb mailbox {

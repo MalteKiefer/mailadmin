@@ -2,7 +2,12 @@
 /dist/
 /mailadmin
 /mailadmin-*
+/cmd/mailadmin/mailadmin
 *.exe
+
+# Local Go workspace
+go.work
+go.work.sum
 
 # Test / tool artifacts
 *.out

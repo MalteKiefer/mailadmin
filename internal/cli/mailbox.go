@@ -282,8 +282,8 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 		return fmt.Errorf("create mailbox: %w", err)
 	}
 
-	if rec, aerr := a.auditor(c); aerr == nil {
-		_ = rec.Record(c, "mailbox.add", local+"@"+dom, nil, map[string]any{"quota_bytes": quotaBytes})
+	if aerr := a.recordAudit(c, "mailbox.add", local+"@"+dom, nil, map[string]any{"quota_bytes": quotaBytes}); aerr != nil {
+		return fmt.Errorf("change applied but not audited: %w", aerr)
 	}
 	r.Message("mailbox %s@%s created (quota %d bytes)", local, dom, quotaBytes)
 	return nil
@@ -320,7 +320,7 @@ func (a *App) mailboxRemove(cmd *cobra.Command, address string, purge bool) erro
 		return fmt.Errorf("check maildir: %w", mderr)
 	}
 	if present && !purge {
-		return fmt.Errorf("%w: maildir for %s still exists — pass --purge to delete it too",
+		return fmt.Errorf("%w: maildir for %s still exists, pass --purge to delete it too",
 			ErrUsage, m.Address())
 	}
 
@@ -363,9 +363,9 @@ func (a *App) mailboxRemove(cmd *cobra.Command, address string, purge bool) erro
 		return fmt.Errorf("delete mailbox: %w", err)
 	}
 
-	if rec, aerr := a.auditor(c); aerr == nil {
-		_ = rec.Record(c, "mailbox.remove", m.Address(),
-			map[string]any{"quota_bytes": m.QuotaBytes, "active": m.Active, "purged": purge && present}, nil)
+	if aerr := a.recordAudit(c, "mailbox.remove", m.Address(),
+		map[string]any{"quota_bytes": m.QuotaBytes, "active": m.Active, "purged": purge && present}, nil); aerr != nil {
+		return fmt.Errorf("change applied but not audited: %w", aerr)
 	}
 	r.Message("mailbox %s removed", m.Address())
 	return nil
@@ -412,9 +412,9 @@ func (a *App) mailboxPasswd(cmd *cobra.Command, address string) error {
 		return fmt.Errorf("update password: %w", err)
 	}
 
-	if rec, aerr := a.auditor(c); aerr == nil {
-		// The hash is never recorded; only the fact of a rotation.
-		_ = rec.Record(c, "mailbox.passwd", local+"@"+dom, nil, nil)
+	// The hash is never recorded; only the fact of a rotation.
+	if aerr := a.recordAudit(c, "mailbox.passwd", local+"@"+dom, nil, nil); aerr != nil {
+		return fmt.Errorf("change applied but not audited: %w", aerr)
 	}
 	r.Message("password for %s@%s updated", local, dom)
 	return nil
@@ -458,9 +458,9 @@ func (a *App) mailboxSetQuota(cmd *cobra.Command, address, bytesArg string) erro
 		return fmt.Errorf("update quota: %w", err)
 	}
 
-	if rec, aerr := a.auditor(c); aerr == nil {
-		_ = rec.Record(c, "mailbox.set-quota", m.Address(),
-			map[string]any{"quota_bytes": m.QuotaBytes}, map[string]any{"quota_bytes": bytesVal})
+	if aerr := a.recordAudit(c, "mailbox.set-quota", m.Address(),
+		map[string]any{"quota_bytes": m.QuotaBytes}, map[string]any{"quota_bytes": bytesVal}); aerr != nil {
+		return fmt.Errorf("change applied but not audited: %w", aerr)
 	}
 	r.Message("quota for %s set to %d bytes", m.Address(), bytesVal)
 	return nil
@@ -506,9 +506,9 @@ func (a *App) mailboxSetActive(cmd *cobra.Command, address string, active bool) 
 		verb = "disabled"
 		action = "mailbox.disable"
 	}
-	if rec, aerr := a.auditor(c); aerr == nil {
-		_ = rec.Record(c, action, m.Address(),
-			map[string]any{"active": m.Active}, map[string]any{"active": active})
+	if aerr := a.recordAudit(c, action, m.Address(),
+		map[string]any{"active": m.Active}, map[string]any{"active": active}); aerr != nil {
+		return fmt.Errorf("change applied but not audited: %w", aerr)
 	}
 	r.Message("mailbox %s %s", m.Address(), verb)
 	return nil
@@ -553,9 +553,9 @@ func (a *App) mailboxDedupe(cmd *cobra.Command, address string, dryRun bool) err
 	}
 
 	if !dryRun && rep.Deleted > 0 {
-		if rec, aerr := a.auditor(c); aerr == nil {
-			_ = rec.Record(c, "mailbox.dedupe", local+"@"+dom, nil,
-				map[string]any{"deleted": rep.Deleted, "reclaimed_bytes": rep.Bytes})
+		if aerr := a.recordAudit(c, "mailbox.dedupe", local+"@"+dom, nil,
+			map[string]any{"deleted": rep.Deleted, "reclaimed_bytes": rep.Bytes}); aerr != nil {
+			return fmt.Errorf("change applied but not audited: %w", aerr)
 		}
 	}
 	return r.Value(rep)
@@ -574,7 +574,7 @@ Dovecot authenticates app passwords directly against Postgres on the mail
 server (SQL passdb config that lives outside this repo); mailadmin's own
 code path is never on that hot path, so it has no way to observe when a
 password is actually used. The "last_used" column therefore always reads
-"not tracked" — it is not a bug, there is currently no mechanism (in this
+"not tracked", it is not a bug, there is currently no mechanism (in this
 CLI or in the deployed Dovecot config) that ever writes it. To approximate
 recent usage, cross-reference "mailadmin log show dovecot" for a successful
 login timestamp on the mailbox's address/IP around the time in question;
@@ -628,7 +628,7 @@ func appPasswordAge(createdAt time.Time, now time.Time) string {
 
 // filterAppPasswordsByAge keeps only passwords whose age (time since
 // created_at) is at least `stale`. It is named around "age" rather than
-// "staleness by use" because usage cannot be observed — see
+// "staleness by use" because usage cannot be observed, see
 // appPasswordLastUsedLabel.
 func filterAppPasswordsByAge(pws []db.AppPassword, stale time.Duration, now time.Time) []db.AppPassword {
 	if stale <= 0 {
@@ -743,20 +743,25 @@ func (a *App) appPasswordAdd(cmd *cobra.Command, address, label string) error {
 		return fmt.Errorf("create app password: %w", err)
 	}
 
-	if rec, aerr := a.auditor(c); aerr == nil {
-		// Only the label is recorded; the password/hash never touches the log.
-		_ = rec.Record(c, "mailbox.app-password.add", local+"@"+dom, nil, map[string]any{"label": label})
-	}
+	// Only the label is recorded; the password/hash never touches the log. A
+	// failed audit is reported after the password is shown, so it is not lost.
+	auditErr := a.recordAudit(c, "mailbox.app-password.add", local+"@"+dom, nil, map[string]any{"label": label})
 
-	r.Message("login: %s+%s", m.Address(), label)
 	res := appPasswordResult{Address: m.Address(), Label: label, Password: plaintext}
-	if r.Format() != output.FormatJSON {
+	// The password is the result of this command and is shown only once, so
+	// -q must not hide it: quiet and json output print the record instead.
+	if r.Format() != output.FormatJSON && !r.Quiet() {
+		r.Message("login: %s+%s", m.Address(), label)
 		r.Message("app password for %s (label: %s):", m.Address(), label)
 		r.Message("  %s", plaintext)
-		r.Message("(store it now — it cannot be retrieved again)")
-		return nil
+		r.Message("(store it now: it cannot be retrieved again)")
+	} else if err := r.Value(res); err != nil {
+		return err
 	}
-	return r.JSON(res)
+	if auditErr != nil {
+		return fmt.Errorf("app password created but not audited: %w", auditErr)
+	}
+	return nil
 }
 
 // appPasswordRemove deletes a mailbox's application password by label.
@@ -797,9 +802,9 @@ func (a *App) appPasswordRemove(cmd *cobra.Command, address, label string) error
 		return fmt.Errorf("app password %q for %s@%s: %w", label, local, dom, ErrNotFound)
 	}
 
-	if rec, aerr := a.auditor(c); aerr == nil {
-		_ = rec.Record(c, "mailbox.app-password.remove", local+"@"+dom,
-			map[string]any{"label": label}, nil)
+	if aerr := a.recordAudit(c, "mailbox.app-password.remove", local+"@"+dom,
+		map[string]any{"label": label}, nil); aerr != nil {
+		return fmt.Errorf("change applied but not audited: %w", aerr)
 	}
 	r.Message("app password %q removed for %s@%s", label, local, dom)
 	return nil

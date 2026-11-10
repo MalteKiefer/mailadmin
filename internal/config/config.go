@@ -93,7 +93,7 @@ type Logs struct {
 // Notify holds the ntfy.sh alerting target for `doctor --notify` and
 // `dns drift-check --notify`. URL is not secret (the topic is only useful
 // with its bearer token, which lives in secrets.env as NTFY_TOKEN); it is
-// entirely optional — an unset URL (or a missing token) simply means
+// entirely optional, an unset URL (or a missing token) simply means
 // --notify no-ops instead of erroring, so a fresh install never breaks on
 // this.
 type Notify struct {
@@ -179,7 +179,7 @@ func (s *Secrets) RspamdControllerPW() string { return s.rspamdControllPW }
 func (s *Secrets) NtfyToken() string { return s.ntfyToken }
 
 // HasNtfy reports whether a non-empty ntfy.sh token is configured. Note this
-// only reports the secret half — `doctor --notify`/`dns drift-check
+// only reports the secret half, `doctor --notify`/`dns drift-check
 // --notify` also need notify.url set in config.toml before an alert can
 // actually be sent (see notify.Config.Configured).
 func (s *Secrets) HasNtfy() bool { return s.ntfyToken != "" }

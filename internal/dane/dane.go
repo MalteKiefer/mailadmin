@@ -1,6 +1,6 @@
 // Package dane derives inbound-SMTP DANE TLSA records (RFC 7672) for a mail
 // host from its TLS certificate. It emits DANE-EE / SPKI / SHA-256 ("3 1 1")
-// values, pinning the certificate's public key — the common choice for SMTP.
+// values, pinning the certificate's public key, the common choice for SMTP.
 //
 // The certificate is taken from a local PEM file when a path is given, else read
 // live from the host via SMTP STARTTLS on port 25 (what a DANE verifier sees).

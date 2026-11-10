@@ -79,10 +79,35 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 		return nil, "", err
 	}
 
-	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := writeConf(path, doc.Bytes()); err != nil {
 		return content, "", fmt.Errorf("rspamdconf: write %s: %w", path, err)
 	}
 	return content, unquote(old), nil
+}
+
+// writeConf replaces a local.d file through a synced temp file and a rename, so
+// a crash never leaves rspamd a half-written config. 0644 matches rspamd's own
+// file modes; these files hold no secrets.
+func writeConf(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if _, err := tmp.Write(data); err == nil {
+		err = tmp.Chmod(0o644)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // readLocal reads a local.d override. rspamd ships only *.example files and
@@ -123,7 +148,7 @@ func showDuration(v string) string {
 // for rollback after a failed post-write validation. path must be one of
 // RatelimitPath(dir) or GreylistPath(dir).
 func RestoreFile(path string, content []byte) error {
-	if err := os.WriteFile(path, content, 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := writeConf(path, content); err != nil {
 		return fmt.Errorf("rspamdconf: restore %s: %w", path, err)
 	}
 	return nil

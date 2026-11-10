@@ -1,4 +1,4 @@
-# mailadmin — Go CLI architecture
+# mailadmin, Go CLI architecture
 
 Single static binary, console-only, run as root over hardened SSH. Replaces the
 old bash CLI + the (removed) mailadmin-web. No HTTP server, no OIDC.
@@ -74,13 +74,13 @@ error messages. Env `MAILADMIN_*` overrides config keys.
 | `internal/cli` | cobra command definitions (one file per resource group), flag wiring, output |
 | `internal/config` | TOML + secrets loader, validation, `config` command backend |
 | `internal/output` | table/json/plain renderer (`-o`); one place, no per-command formatting |
-| `internal/db` | Postgres (pgx) — domains/mailboxes/aliases/app-passwords/audit **(done)** |
+| `internal/db` | Postgres (pgx), domains/mailboxes/aliases/app-passwords/audit **(done)** |
 | `internal/dnsprovider` | registrar DNS (Njalla), Plan/Reconcile/Backup/ReplaceAll/Restore **(done)** |
 | `internal/mail` | DKIM key read/gen, desired-record set, MTA-STS policy id |
 | `internal/dnscheck` | verify SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT (miekg/dns) |
 | `internal/sys` | thin, audited exec wrapper (context, timeout, no shell, arg slices) |
 | `internal/postfixq` | postqueue/postsuper |
-| `internal/security` | cscli (crowdsec), nft (read + fw-port), fail2ban status if installed |
+| `internal/security` | cscli (crowdsec), nft (read + fw-port), bouncer status |
 | `internal/install` | `install`: packages, repositories, mail config, firewall, host hardening |
 | `internal/services` | systemctl (explicit unit allowlist) |
 | `internal/logs` | journalctl / caddy logs |

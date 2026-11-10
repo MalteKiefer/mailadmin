@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mailadmin/internal/config"
 	"net"
 	"os"
 	"path/filepath"
@@ -26,24 +27,29 @@ type Answers struct {
 	Selector string // default DKIM selector
 }
 
-// Validate checks every answer before anything is changed on the host.
-func (a Answers) Validate() error {
-	if _, err := valid.Domain(a.Hostname); err != nil {
+// Validate checks every answer before anything is changed on the host and
+// stores the normalized form (lower case, no trailing dot, canonical IPv6),
+// which is what the database, Postfix and DNS records must use.
+func (a *Answers) Validate() error {
+	var err error
+	if a.Hostname, err = valid.Domain(a.Hostname); err != nil {
 		return fmt.Errorf("hostname: %w", err)
 	}
-	if _, err := valid.Domain(a.Domain); err != nil {
+	if a.Domain, err = valid.Domain(a.Domain); err != nil {
 		return fmt.Errorf("domain: %w", err)
 	}
-	if _, err := valid.Selector(a.Selector); err != nil {
+	if a.Selector, err = valid.Selector(a.Selector); err != nil {
 		return fmt.Errorf("selector: %w", err)
 	}
 	if ip := net.ParseIP(a.IPv4); ip == nil || ip.To4() == nil || strings.Contains(a.IPv4, ":") {
 		return fmt.Errorf("ipv4 %q is not an IPv4 address", a.IPv4)
 	}
 	if a.IPv6 != "" {
-		if ip := net.ParseIP(a.IPv6); ip == nil || ip.To4() != nil {
+		ip := net.ParseIP(a.IPv6)
+		if ip == nil || ip.To4() != nil {
 			return fmt.Errorf("ipv6 %q is not an IPv6 address", a.IPv6)
 		}
+		a.IPv6 = ip.String()
 	}
 	return nil
 }
@@ -51,31 +57,10 @@ func (a Answers) Validate() error {
 // RenderConfig returns config.toml in the layout ARCHITECTURE.md documents.
 // Non-secret values only; tokens and the rspamd password go to secrets.env.
 func RenderConfig(a Answers) []byte {
-	return []byte(fmt.Sprintf(`# Managed by mailadmin install.
-[postgres]
-service      = %q
-service_file = %q
-
-[mail]
-hostname         = %q
-dkim_dir         = "/var/lib/rspamd/dkim"
-default_selector = %q
-tls_cert         = %q
-
-[server]
-ipv4 = %q
-ipv6 = %q
-
-[dns]
-resolver = "1.1.1.1:53"
-
-[backup]
-dns_backup_dir = "/var/lib/mailadmin/dns-backups"
-dir            = "/var/lib/mailadmin/backups"
-
-[logs]
-units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
-`, PgService, PgServiceFile, a.Hostname, a.Selector, TLSFullchain, a.IPv4, a.IPv6))
+	return config.RenderTemplate(config.Template{
+		Header: "Managed by mailadmin install.", Service: PgService, ServiceFile: PgServiceFile,
+		Hostname: a.Hostname, Selector: a.Selector, TLSCert: TLSFullchain, IPv4: a.IPv4, IPv6: a.IPv6,
+	})
 }
 
 // RenderSecrets returns secrets.env with a freshly generated rspamd controller

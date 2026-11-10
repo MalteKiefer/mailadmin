@@ -10,7 +10,7 @@ import (
 
 // notifyConfig builds a notify.Config from the loaded config + secrets. It
 // returns a zero Config (a clean no-op for notify.Send) if config cannot be
-// loaded at all — an alerting misconfiguration must never be surfaced in
+// loaded at all, an alerting misconfiguration must never be surfaced in
 // place of, or ahead of, the caller's own error.
 func (a *App) notifyConfig() notify.Config {
 	cfg, secrets, err := a.Config()
@@ -22,7 +22,7 @@ func (a *App) notifyConfig() notify.Config {
 
 // notifySend posts msg through notify.Send using this app's configured ntfy
 // target. Any failure to deliver is written to stderr and otherwise
-// swallowed — see internal/notify's package doc for why: a broken notify
+// swallowed, see internal/notify's package doc for why: a broken notify
 // channel must never mask or replace the caller's own report/exit code.
 func (a *App) notifySend(ctx context.Context, msg notify.Message) {
 	_ = notify.Send(ctx, a.notifyConfig(), msg, func(warning string) {
