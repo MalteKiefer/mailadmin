@@ -349,8 +349,13 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 		case backup.ComponentDB:
 			dumpPath := filepath.Join(bundlePath, backup.DBDumpFile)
 			toc, err := a.runner().Output(ctx(cmd), backup.PgRestoreListArgs(dumpPath)...)
+			if errors.Is(err, sys.ErrNonZeroExit) {
+				// pg_restore ran and rejected the dump: the real restore fails the same way.
+				return fmt.Errorf("backup restore: domain-db: %s is not a readable dump: %w", dumpPath, err)
+			}
 			if err != nil {
-				r.Message("dry-run: domain-db: could not read %s (%v), pg_restore not available in this environment?", dumpPath, err)
+				// pg_restore could not be started here; the dry-run still shows the rest of the plan.
+				r.Message("dry-run: domain-db: pg_restore not available in this environment? (%v)", err)
 				continue
 			}
 			r.Message("dry-run: domain-db: would run pg_restore --clean --if-exists into service %q; table of contents:", cfg.Postgres.Service)
@@ -363,10 +368,7 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 			r.Message("dry-run: sieve: would overwrite the active script for %d mailbox(es): %s",
 				len(man.SieveScripts), strings.Join(man.SieveScripts, ", "))
 		case backup.ComponentConfig:
-			if _, err := readConfigRestore(cfg, bundlePath); err != nil {
-				r.Message("dry-run: config: restore would be refused: %v", err)
-				continue
-			}
+			// The refusal of a live YAML or JSON config was checked by the preflight above.
 			r.Message("dry-run: config: would replace %s from the bundle's config.toml, keeping the live [secrets] table when the bundle has none (review before restarting services)", cfg.Path)
 		}
 	}
