@@ -7,12 +7,11 @@ import (
 	"testing"
 )
 
-func withStateDir(t *testing.T) string {
+func withStateDir(t *testing.T) {
 	t.Helper()
 	old := StateDir
 	StateDir = t.TempDir()
 	t.Cleanup(func() { StateDir = old; EndJournal() })
-	return StateDir
 }
 
 func TestJournalRestoresOriginalAndRemovesCreated(t *testing.T) {

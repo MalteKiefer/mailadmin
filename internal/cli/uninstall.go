@@ -159,11 +159,15 @@ func uninstallBackup(c *cobra.Command, app *App, cfg *config.Config, dir string)
 // of it can be checked.
 func writeChecksums(dir string) error {
 	var lines []string
+	// The backup was written by this run a moment ago; a link in it is refused.
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		f, err := os.Open(p) // #nosec G304 -- files of the backup just written
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("unexpected link in backup: %s", p)
+		}
+		f, err := os.Open(p) // #nosec G304 G122 -- regular files of the backup just written
 		if err != nil {
 			return err
 		}

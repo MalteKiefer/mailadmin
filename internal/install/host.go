@@ -139,8 +139,8 @@ func MigrateSecrets(dir string) (migrated bool, err error) {
 	if _, err := os.Lstat(secPath); errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
-	cfg, err := os.ReadFile(cfgPath) // #nosec G304 -- config in the fixed config dir
-	if err != nil {
+	cfg, rerr := os.ReadFile(cfgPath) // #nosec G304 -- config in the fixed config dir
+	if rerr != nil {
 		return false, nil // no TOML config here: nothing to migrate into
 	}
 	if config.HasSecretsTable(cfg) {
