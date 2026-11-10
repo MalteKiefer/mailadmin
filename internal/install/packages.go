@@ -13,7 +13,7 @@ import (
 // DistroPackages come from the distribution archive.
 func DistroPackages() []string {
 	return []string{
-		"ca-certificates", "curl", "gnupg",
+		"ca-certificates", "curl", "gnupg", "sudo",
 		"postfix", "postfix-pgsql",
 		"dovecot-core", "dovecot-imapd", "dovecot-lmtpd", "dovecot-pgsql",
 		"dovecot-sieve", "dovecot-managesieved",

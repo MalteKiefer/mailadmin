@@ -446,3 +446,12 @@ func (d *DB) ListAudit(ctx context.Context, limit int, filter AuditFilter) ([]Au
 	}
 	return out, rows.Err()
 }
+
+// MailboxPasswordHash returns the stored password hash of an active mailbox. Only
+// the webmail password helper reads it: no listing ever loads the hash.
+func (d *DB) MailboxPasswordHash(ctx context.Context, username, domain string) (string, error) {
+	var h string
+	err := d.pool.QueryRow(ctx,
+		`SELECT password FROM mailbox WHERE username=$1 AND domain=$2 AND active`, username, domain).Scan(&h)
+	return h, err
+}

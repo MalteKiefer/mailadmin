@@ -15,10 +15,10 @@ type Webmail struct {
 	Enabled bool `toml:"enabled"`
 	// Domain is the host name the web client is served on, e.g. webmail.example.com.
 	Domain string `toml:"domain"`
-	// Version is the alps release tag, e.g. v1.
-	Version string `toml:"version"`
-	// SHA256 is the checksum of the linux-amd64 release zip. The download is
-	// refused when it does not match.
+	// URL is where the linux-amd64 alps binary is downloaded from (https).
+	URL string `toml:"url"`
+	// SHA256 is the checksum of that binary. The download is refused when it does
+	// not match.
 	SHA256 string `toml:"sha256"`
 	// Listen is the local address alps listens on. Caddy proxies Domain to it.
 	Listen string `toml:"listen"`
@@ -78,11 +78,11 @@ func (w Webmail) validate() error {
 	if !reHostName.MatchString(w.Domain) {
 		return fmt.Errorf("%w: webmail.domain must be a host name, got %q", ErrInvalidConfig, w.Domain)
 	}
-	if w.Version == "" {
-		return fmt.Errorf("%w: webmail.version is required when webmail is enabled", ErrInvalidConfig)
+	if !strings.HasPrefix(w.URL, "https://") {
+		return fmt.Errorf("%w: webmail.url must be an https URL of the alps binary", ErrInvalidConfig)
 	}
 	if !reSHA256Hex.MatchString(w.SHA256) {
-		return fmt.Errorf("%w: webmail.sha256 must be 64 lowercase hex digits of the release zip", ErrInvalidConfig)
+		return fmt.Errorf("%w: webmail.sha256 must be 64 lowercase hex digits of the alps binary", ErrInvalidConfig)
 	}
 	if err := validateHostPort(w.Listen); err != nil {
 		return fmt.Errorf("%w: webmail.listen: %w", ErrInvalidConfig, err)

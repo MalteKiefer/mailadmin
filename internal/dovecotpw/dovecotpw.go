@@ -114,3 +114,36 @@ func parseHash(stdout string) (string, error) {
 	}
 	return "", ErrNoHash
 }
+
+// Verify reports whether plaintext matches a stored hash. Mailbox rows store the
+// hash without its scheme, so the default scheme is added when it is missing. The
+// password goes to doveadm on stdin only. A mismatch is not an error.
+func (h *Hasher) Verify(ctx context.Context, stored, plaintext string) (bool, error) {
+	if err := validatePlaintext(plaintext); err != nil {
+		return false, err
+	}
+	if stored == "" {
+		return false, ErrNoHash
+	}
+	stdin := []byte(plaintext + "\n")
+	_, err := h.runner.Run(ctx, stdin, binDoveadm, "pw", "-t", withScheme(stored))
+	for i := range stdin {
+		stdin[i] = 0
+	}
+	if errors.Is(err, sys.ErrNonZeroExit) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("dovecotpw: doveadm pw -t: %w", err)
+	}
+	return true, nil
+}
+
+// withScheme returns a stored hash with its scheme prefix. Mailbox rows keep the
+// bare argon2 string; doveadm needs the {ARGON2ID} prefix to verify it.
+func withScheme(stored string) string {
+	if strings.HasPrefix(stored, "{") {
+		return stored
+	}
+	return "{" + Scheme + "}" + stored
+}

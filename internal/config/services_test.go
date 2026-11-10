@@ -6,7 +6,8 @@ import (
 )
 
 func goodWebmail() Webmail {
-	return Webmail{Enabled: true, Domain: "webmail.kiefer-networks.de", Version: "v1",
+	return Webmail{Enabled: true, Domain: "webmail.kiefer-networks.de",
+		URL:    "https://github.com/MalteKiefer/mailadmin/releases/download/v1.30.1/alps-linux-amd64",
 		SHA256: strings.Repeat("a", 64), Listen: "127.0.0.1:8081"}
 }
 
@@ -27,7 +28,8 @@ func TestWebmailValidate(t *testing.T) {
 	}
 	for name, mut := range map[string]func(*Webmail){
 		"bad domain": func(w *Webmail) { w.Domain = "not a host" },
-		"no version": func(w *Webmail) { w.Version = "" },
+		"no url":     func(w *Webmail) { w.URL = "" },
+		"http url":   func(w *Webmail) { w.URL = "http://example.org/alps" },
 		"short sum":  func(w *Webmail) { w.SHA256 = "abc" },
 		"upper hex":  func(w *Webmail) { w.SHA256 = strings.Repeat("A", 64) },
 		"bad listen": func(w *Webmail) { w.Listen = "nope" },

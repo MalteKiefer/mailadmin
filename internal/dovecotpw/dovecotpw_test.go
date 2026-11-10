@@ -136,3 +136,15 @@ func TestParseHash(t *testing.T) {
 		})
 	}
 }
+
+// Mailbox rows store the bare argon2 string; the scheme must be added for doveadm.
+func TestWithSchemeAddsDefaultScheme(t *testing.T) {
+	bare := "$argon2id$v=19$m=65536,t=3,p=1$salt$hash"
+	if got := withScheme(bare); got != "{ARGON2ID}"+bare {
+		t.Fatalf("withScheme(bare) = %q", got)
+	}
+	prefixed := "{ARGON2ID}" + bare
+	if got := withScheme(prefixed); got != prefixed {
+		t.Fatalf("withScheme(prefixed) = %q", got)
+	}
+}
