@@ -227,3 +227,20 @@ func ensureLine(path, line string, prepend bool) error {
 	}
 	return nil
 }
+
+// GrantMailadminRead lets the mailadmin role read every table and sequence the
+// migrations create. They run as postgres, so without this the role cannot read
+// schema_migrations or the sequences, and pg_dump in backup create fails. The
+// default privileges cover tables and sequences that later migrations add.
+func GrantMailadminRead(ctx context.Context, x Exec) error {
+	const sql = `GRANT SELECT ON ALL TABLES IN SCHEMA public TO mailadmin;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO mailadmin;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO mailadmin;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO mailadmin;
+`
+	if _, err := x.Run(ctx, []byte(sql), asPostgres(
+		"psql", "-XqA", "-v", "ON_ERROR_STOP=1", "-d", PgDatabase, "-f", "-")...); err != nil {
+		return fmt.Errorf("grant read to mailadmin: %w", err)
+	}
+	return nil
+}

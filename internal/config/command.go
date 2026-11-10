@@ -96,12 +96,14 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 	secretsOK, secretsDetail := secretsFileState(c.secretsPath())
 	add("secrets_file", secretsOK, secretsDetail)
 
-	add("njalla_token", s.HasNjalla(), configuredDetail(s.HasNjalla()))
-	add("desec_token", s.HasDeSEC(), configuredDetail(s.HasDeSEC()))
-	add("cloudflare_api_token", s.HasCloudflare(), configuredDetail(s.HasCloudflare()))
-	add("inwx", s.HasINWX(), configuredDetail(s.HasINWX()))
-	add("servercow", s.HasServercow(), configuredDetail(s.HasServercow()))
-	add("servfail", s.HasServfail(), configuredDetail(s.HasServfail()))
+	// Provider credentials are optional: a domain needs only the one for its provider,
+	// and dns publish reports a missing token for that domain.
+	add("njalla_token", true, optionalDetail(s.HasNjalla()))
+	add("desec_token", true, optionalDetail(s.HasDeSEC()))
+	add("cloudflare_api_token", true, optionalDetail(s.HasCloudflare()))
+	add("inwx", true, optionalDetail(s.HasINWX()))
+	add("servercow", true, optionalDetail(s.HasServercow()))
+	add("servfail", true, optionalDetail(s.HasServfail()))
 	add("rspamd_controller_pw", s.RspamdControllerPW() != "", configuredDetail(s.RspamdControllerPW() != ""))
 
 	switch c.Notify.URL {
@@ -110,7 +112,7 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 	default:
 		add("notify_url", true, c.Notify.URL)
 	}
-	add("ntfy_token", s.HasNtfy(), configuredDetail(s.HasNtfy()))
+	add("ntfy_token", true, optionalDetail(s.HasNtfy()))
 
 	return results, nil
 }
@@ -130,6 +132,14 @@ func secretsFileState(path string) (ok bool, detail string) {
 		return false, err.Error()
 	}
 	return true, fmt.Sprintf("%s mode %#o", path, fi.Mode().Perm())
+}
+
+// optionalDetail describes a setting that is not required.
+func optionalDetail(ok bool) string {
+	if ok {
+		return "configured"
+	}
+	return "not configured (optional)"
 }
 
 func configuredDetail(ok bool) string {

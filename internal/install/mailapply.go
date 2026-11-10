@@ -155,7 +155,7 @@ func ApplyPostfix(ctx context.Context, x Exec, hostname string) error {
 			return err
 		}
 	}
-	for _, s := range PostfixSettings(hostname) {
+	for _, s := range PostfixSettings(hostname, installedTLSGroups(ctx, x)) {
 		if _, err := x.Run(ctx, nil, "postconf", "-e", s.Key+"="+s.Value); err != nil {
 			return fmt.Errorf("postconf %s: %w", s.Key, err)
 		}
@@ -173,7 +173,7 @@ func ApplyPostfix(ctx context.Context, x Exec, hostname string) error {
 
 // ApplyDovecot writes dovecot.conf and validates it with doveconf.
 func ApplyDovecot(ctx context.Context, x Exec) error {
-	if err := writeManaged(DovecotConfPath, []byte(DovecotConf()), 0o644); err != nil {
+	if err := writeManaged(DovecotConfPath, []byte(DovecotConf(installedTLSGroups(ctx, x))), 0o644); err != nil {
 		return err
 	}
 	if _, err := x.Run(ctx, nil, "doveconf", "-n"); err != nil {

@@ -113,7 +113,7 @@ func TestPostfixMapsNeverContainPasswords(t *testing.T) {
 }
 
 func TestDovecotConfHasNoSystemPassdb(t *testing.T) {
-	c := DovecotConf()
+	c := DovecotConf(TLSGroups("OpenSSL 3.5.0"))
 	if strings.Contains(c, "auth-system") || strings.Contains(c, "passwd") {
 		t.Fatal("dovecot must not authenticate system accounts")
 	}

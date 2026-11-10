@@ -24,6 +24,24 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.25.0] - 2026-11-10
+
+### Added
+- `mailadmin install` hardens the host along BSI SYS.1.3 and the CIS Debian Benchmark, Level 1 and 2. See `docs/HARDENING.md` for every control and the deliberate deviations.
+- SSH: key only login (only when an authorized key exists, so nobody is locked out), no forwarding, `MaxAuthTries 3`, `MaxSessions 2`, hybrid post quantum key exchange `mlkem768x25519`, AEAD ciphers, SHA 2 MACs, RSA keys of at least 3072 bit. The config is checked with `sshd -t` and rolled back if rejected.
+- TLS for Postfix and Dovecot: TLS 1.2 and 1.3 only, ECDHE with AEAD only, `X25519MLKEM768` first where OpenSSL 3.5 is installed, server cipher preference. IMAP port 143 is closed. Caddy sends HSTS on the mail host.
+- Postfix: strict HELO, sender and recipient checks, per client rate limits, banner without version.
+- System: sysctl hardening, blocked kernel modules, no core dumps, persistent journal, auditd rules, AIDE, AppArmor, time sync, `login.defs` policy, pwquality, libpam-tmpdir, process accounting, sysstat, debsums, cron and PostgreSQL config permissions, legal login banner.
+- Updates: unattended-upgrades for the distribution and the vendor repositories with reboot at 04:00 when needed, needrestart, and a first update run during install.
+- CrowdSec with the nftables bouncer replaces fail2ban. The repository key is checked like the others (`--crowdsec-fingerprint`). `--crowdsec-enroll-key` (asked during an interactive install) enrolls the instance in the CrowdSec console.
+
+### Fixed
+- `backup create` failed because the migrations left `schema_migrations` and the sequences unreadable for the mailadmin role. Install now grants read access.
+- `doctor` checks port 587.
+- `config check` no longer fails for provider tokens that are not used.
+- The missing fingerprint error names the right flag (`--caddy-fingerprint`).
+- mailadmin runs with umask 022, so files it creates for other services stay readable under a hardened login umask. Repository keyrings are written with an explicit mode.
+
 ## [v1.24.1] - 2026-11-10
 
 ### Fixed

@@ -23,6 +23,12 @@ func main() {
 // of main lets the signal-forwarding context's stop() defer run before the
 // process exits (os.Exit in main itself would skip it).
 func run() int {
+	// Files and directories mailadmin creates for other services (apt keyrings,
+	// Caddy includes, the MTA-STS web root, rspamd local.d) must be readable by
+	// them. A hardened login umask such as 027 would make them root only, so the
+	// process sets 022. Secrets and keys are always written with explicit modes.
+	syscall.Umask(0o022)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

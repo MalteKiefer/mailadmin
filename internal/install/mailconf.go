@@ -37,7 +37,8 @@ const (
 
 // DovecotConf renders the dovecot.conf mailadmin owns (Dovecot 2.4 syntax).
 // It does not include the Debian conf.d tree, so no system account can log in.
-func DovecotConf() string {
+// groups are the TLS key exchange groups, preferred first (see TLSGroups).
+func DovecotConf(groups []string) string {
 	return `# Managed by mailadmin install. The Debian default is kept as dovecot.conf.mailadmin-orig.
 dovecot_config_version = 2.4.0
 dovecot_storage_version = 2.4.0
@@ -54,6 +55,10 @@ ssl_server {
   key_file = ` + TLSPrivkey + `
 }
 ssl_min_protocol = TLSv1.2
+ssl_cipher_list = ` + TLS12Ciphers + `
+ssl_cipher_suites = ` + TLS13Suites + `
+ssl_curve_list = ` + strings.Join(groups, ":") + `
+ssl_server_prefer_ciphers = server
 
 auth_mechanisms = plain login
 auth_allow_cleartext = no
@@ -108,6 +113,13 @@ service lmtp {
   }
 }
 
+# IMAP over implicit TLS (993) only: the cleartext port 143 is not opened.
+service imap-login {
+  inet_listener imap {
+    port = 0
+  }
+}
+
 # ManageSieve for clients (port 4190, STARTTLS required by ssl = required).
 service managesieve-login {
   inet_listener sieve {
@@ -132,8 +144,9 @@ first_valid_uid = 5000
 type PostfixSetting struct{ Key, Value string }
 
 // PostfixSettings returns the main.cf keys the mail stack depends on. Postfix
-// keeps every other key from the distribution default.
-func PostfixSettings(hostname string) []PostfixSetting {
+// keeps every other key from the distribution default. groups are the TLS key
+// exchange groups, preferred first (see TLSGroups).
+func PostfixSettings(hostname string, groups []string) []PostfixSetting {
 	return []PostfixSetting{
 		{"myhostname", hostname},
 		{"myorigin", "$myhostname"},
@@ -156,7 +169,37 @@ func PostfixSettings(hostname string) []PostfixSetting {
 		{"smtpd_tls_auth_only", "yes"},
 		{"smtp_tls_security_level", "may"},
 		{"smtpd_relay_restrictions", "permit_mynetworks, permit_sasl_authenticated, defer_unauth_destination"},
-		{"smtpd_recipient_restrictions", "permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination"},
+		{"smtpd_recipient_restrictions", "reject_non_fqdn_recipient, reject_unknown_recipient_domain, " +
+			"permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination"},
+		{"smtpd_helo_restrictions", "permit_mynetworks, permit_sasl_authenticated, " +
+			"reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname"},
+		{"smtpd_sender_restrictions", "reject_non_fqdn_sender, reject_unknown_sender_domain"},
+		{"smtpd_data_restrictions", "reject_unauth_pipelining"},
+		{"smtpd_banner", "$myhostname ESMTP"},
+		// TLS 1.2 and 1.3 with forward secret AEAD ciphers only, in both directions.
+		{"smtpd_tls_protocols", ">=TLSv1.2"},
+		{"smtpd_tls_mandatory_protocols", ">=TLSv1.2"},
+		{"smtp_tls_protocols", ">=TLSv1.2"},
+		{"smtp_tls_mandatory_protocols", ">=TLSv1.2"},
+		{"smtpd_tls_ciphers", "high"},
+		{"smtpd_tls_mandatory_ciphers", "high"},
+		{"smtp_tls_ciphers", "high"},
+		{"smtp_tls_mandatory_ciphers", "high"},
+		{"tls_high_cipherlist", TLS12Ciphers},
+		{"tls_preempt_cipherlist", "yes"},
+		{"tls_eecdh_auto_curves", strings.Join(groups, " ")},
+		{"tls_ssl_options", "NO_COMPRESSION, NO_RENEGOTIATION"},
+		{"smtpd_tls_received_header", "yes"},
+		{"smtpd_tls_loglevel", "1"},
+		{"smtp_tls_loglevel", "1"},
+		// Rate limits per client; $mynetworks is exempt by default.
+		{"smtpd_client_connection_rate_limit", "30"},
+		{"smtpd_client_message_rate_limit", "60"},
+		{"smtpd_client_recipient_rate_limit", "200"},
+		{"smtpd_client_auth_rate_limit", "10"},
+		{"smtpd_soft_error_limit", "3"},
+		{"smtpd_hard_error_limit", "10"},
+		{"smtpd_junk_command_limit", "20"},
 		{"smtpd_milters", "inet:" + PostfixMilterAddr},
 		{"non_smtpd_milters", "inet:" + PostfixMilterAddr},
 		{"milter_protocol", "6"},
@@ -246,6 +289,11 @@ func CaddyfileMain(hostname string, tlsInternal bool) string {
 %simport %s/*.caddy
 
 %s {
+	header {
+		Strict-Transport-Security "max-age=63072000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
 	respond "mailadmin" 404
 }
 `, global, CaddyIncludeDir, hostname)
