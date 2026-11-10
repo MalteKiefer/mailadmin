@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -20,8 +21,12 @@ import (
 	"mailadmin/internal/valid"
 )
 
-// DefaultPath is the standard config location.
+// DefaultPath is the config location used when nothing else is configured.
+// Discover finds the config file in the directory of this path.
 const DefaultPath = "/etc/mailadmin/config.toml"
+
+// ConfigDir is the directory mailadmin keeps its single config file in.
+const ConfigDir = "/etc/mailadmin"
 
 // SecretsFile is the fixed basename of the secrets file, resolved relative to
 // the directory holding the TOML config.
@@ -43,6 +48,9 @@ const (
 	keyNtfyToken        = "NTFY_TOKEN"           // #nosec G101 -- env-var name, not a credential value
 )
 
+// reFingerprint matches an OpenPGP primary key fingerprint (40 hex digits).
+var reFingerprint = regexp.MustCompile(`^[0-9A-Fa-f]{40}$`)
+
 // ErrInvalidConfig is wrapped by all validation failures.
 var ErrInvalidConfig = errors.New("invalid config")
 
@@ -63,6 +71,28 @@ type Mail struct {
 	// TLSCert is the mail host's TLS certificate (PEM) used to derive DANE TLSA
 	// records. Optional; when empty, TLSA is read live via STARTTLS on port 25.
 	TLSCert string `toml:"tls_cert"`
+	// TLSMode is "acme" (public CA, the default) or "internal" (Caddy's local CA).
+	TLSMode string `toml:"tls_mode"`
+	// QuotaDefault is the quota in bytes for mailbox add without --quota; 0 means 5 GiB.
+	QuotaDefault int64 `toml:"quota_default"`
+}
+
+// Hardening switches the parts of install's host hardening on or off. Unset
+// values mean on, so a config without the table keeps the full hardening.
+type Hardening struct {
+	System   *bool `toml:"system"`
+	SSH      *bool `toml:"ssh"`
+	CrowdSec *bool `toml:"crowdsec"`
+}
+
+// On reports whether a switch is on (unset counts as on).
+func On(b *bool) bool { return b == nil || *b }
+
+// Repos holds the expected fingerprints of the vendor repository keys.
+type Repos struct {
+	PGDGFingerprint     string `toml:"pgdg_fingerprint"`
+	CaddyFingerprint    string `toml:"caddy_fingerprint"`
+	CrowdSecFingerprint string `toml:"crowdsec_fingerprint"`
 }
 
 // Server holds the public server addresses.
@@ -100,15 +130,20 @@ type Notify struct {
 	URL string `toml:"url"`
 }
 
-// Config is the fully-parsed, validated, non-secret configuration.
+// Config is the fully-parsed, validated configuration. Secrets are part of it
+// in the [secrets] table (same key names as secrets.env); the config file then
+// has to be 0600.
 type Config struct {
-	Postgres Postgres `toml:"postgres"`
-	Mail     Mail     `toml:"mail"`
-	Server   Server   `toml:"server"`
-	DNS      DNS      `toml:"dns"`
-	Backup   Backup   `toml:"backup"`
-	Logs     Logs     `toml:"logs"`
-	Notify   Notify   `toml:"notify"`
+	Postgres  Postgres          `toml:"postgres"`
+	Mail      Mail              `toml:"mail"`
+	Server    Server            `toml:"server"`
+	DNS       DNS               `toml:"dns"`
+	Backup    Backup            `toml:"backup"`
+	Logs      Logs              `toml:"logs"`
+	Notify    Notify            `toml:"notify"`
+	Hardening Hardening         `toml:"hardening"`
+	Repos     Repos             `toml:"repos"`
+	Secrets   map[string]string `toml:"secrets"`
 
 	// Path is the file this config was loaded from (not serialised).
 	Path string `toml:"-"`
@@ -199,8 +234,12 @@ func (s *Secrets) GoString() string { return "config.Secrets{REDACTED}" }
 // It fails closed: any decode, override, validation, or secrets error returns a
 // wrapped error and nil results.
 func Load(path string) (*Config, *Secrets, error) {
+	text, err := readTOML(path)
+	if err != nil {
+		return nil, nil, err
+	}
 	var c Config
-	md, err := toml.DecodeFile(path, &c)
+	md, err := toml.Decode(string(text), &c)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
@@ -216,11 +255,34 @@ func Load(path string) (*Config, *Secrets, error) {
 		return nil, nil, err
 	}
 
-	secrets, err := LoadSecrets(c.secretsPath())
+	secrets, err := c.loadSecrets()
 	if err != nil {
 		return nil, nil, err
 	}
 	return &c, secrets, nil
+}
+
+// loadSecrets merges the [secrets] table of the config file with a legacy
+// secrets.env next to it (the table wins). A config that holds secrets must be
+// owner-only, like secrets.env.
+func (c *Config) loadSecrets() (*Secrets, error) {
+	m, err := readSecretsFile(c.secretsPath())
+	if err != nil {
+		return nil, err
+	}
+	if len(c.Secrets) > 0 {
+		fi, err := os.Stat(c.Path)
+		if err != nil {
+			return nil, fmt.Errorf("config: stat: %w", err)
+		}
+		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+			return nil, fmt.Errorf("%w: %s holds secrets and has mode %#o, want 0600", ErrInsecureSecrets, c.Path, perm)
+		}
+		for k, v := range c.Secrets {
+			m[k] = v
+		}
+	}
+	return SecretsFromMap(m), nil
 }
 
 // secretsPath returns secrets.env in the same directory as the TOML config.
@@ -326,6 +388,18 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Mail.TLSMode != "" && c.Mail.TLSMode != "acme" && c.Mail.TLSMode != "internal" {
+		return fmt.Errorf("%w: mail.tls_mode must be acme or internal", ErrInvalidConfig)
+	}
+	if c.Mail.QuotaDefault < 0 {
+		return fmt.Errorf("%w: mail.quota_default must be >= 0", ErrInvalidConfig)
+	}
+	for _, fp := range []string{c.Repos.PGDGFingerprint, c.Repos.CaddyFingerprint, c.Repos.CrowdSecFingerprint} {
+		if fp != "" && !reFingerprint.MatchString(fp) {
+			return fmt.Errorf("%w: repos.*_fingerprint must be 40 hex digits", ErrInvalidConfig)
+		}
+	}
+
 	if c.DNS.Resolver == "" {
 		return fmt.Errorf("%w: dns.resolver is required", ErrInvalidConfig)
 	}
@@ -382,76 +456,67 @@ func validateHostPort(s string) error {
 // permissions, and returns the parsed Secrets. A missing file is not an error
 // (returns empty Secrets so unconfigured providers simply report absent).
 func LoadSecrets(path string) (*Secrets, error) {
+	m, err := readSecretsFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return SecretsFromMap(m), nil
+}
+
+// SecretsFromMap builds Secrets from secret keys (the secrets.env names). Unknown
+// keys are ignored: they may be read by other tools, and no error echoes a value.
+func SecretsFromMap(m map[string]string) *Secrets {
+	return &Secrets{
+		njallaToken:      m[keyNjallaToken],
+		desecToken:       m[keyDeSECToken],
+		cloudflareToken:  m[keyCloudflareToken],
+		inwxUser:         m[keyINWXUser],
+		inwxPassword:     m[keyINWXPassword],
+		inwxSharedSecret: m[keyINWXSharedSecret],
+		servercowUser:    m[keyServercowUser],
+		servercowPass:    m[keyServercowPass],
+		servfailAPIKey:   m[keyServfailAPIKey],
+		servfailServer:   m[keyServfailServer],
+		rspamdControllPW: m[keyRspamdPW],
+		ntfyToken:        m[keyNtfyToken],
+	}
+}
+
+// readSecretsFile returns the KEY=VALUE pairs of secrets.env, or none when the
+// file is missing. The file must be a regular 0600 file.
+func readSecretsFile(path string) (map[string]string, error) {
 	fi, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Secrets{}, nil
+		return map[string]string{}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("secrets: stat: %w", err)
 	}
-	mode := fi.Mode()
-	if mode&os.ModeSymlink != 0 {
+	if fi.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%w: %s must not be a symlink", ErrInsecureSecrets, path)
 	}
-	if !mode.IsRegular() {
+	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: %s is not a regular file", ErrInsecureSecrets, path)
 	}
-	if perm := mode.Perm(); perm&0o077 != 0 {
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 		return nil, fmt.Errorf("%w: %s has mode %#o, want 0600 (no group/other access)", ErrInsecureSecrets, path, perm)
 	}
-
-	// path is the secrets file location from the operator's config/--config flag
-	// (root CLI); mode was already verified 0600 above. No untrusted input.
-	f, err := os.Open(path) // #nosec G304 -- operator-supplied config path, permission-checked above
+	f, err := os.Open(path) // #nosec G304 -- secrets file next to the config, permission-checked above
 	if err != nil {
 		return nil, fmt.Errorf("secrets: open: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-
-	s := &Secrets{}
+	m := map[string]string{}
 	sc := bufio.NewScanner(f)
-	line := 0
 	for sc.Scan() {
-		line++
-		key, val, ok := parseEnvLine(sc.Text())
-		if !ok {
-			continue
-		}
-		switch key {
-		case keyNjallaToken:
-			s.njallaToken = val
-		case keyDeSECToken:
-			s.desecToken = val
-		case keyCloudflareToken:
-			s.cloudflareToken = val
-		case keyINWXUser:
-			s.inwxUser = val
-		case keyINWXPassword:
-			s.inwxPassword = val
-		case keyINWXSharedSecret:
-			s.inwxSharedSecret = val
-		case keyServercowUser:
-			s.servercowUser = val
-		case keyServercowPass:
-			s.servercowPass = val
-		case keyServfailAPIKey:
-			s.servfailAPIKey = val
-		case keyServfailServer:
-			s.servfailServer = val
-		case keyRspamdPW:
-			s.rspamdControllPW = val
-		case keyNtfyToken:
-			s.ntfyToken = val
-		default:
-			// Unknown keys are ignored deliberately: secrets.env may hold
-			// values consumed by other tools; error messages never echo the
-			// key's value.
+		if key, val, ok := parseEnvLine(sc.Text()); ok {
+			m[key] = val
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("secrets: read: %w", err)
 	}
-	return s, nil
+	return m, nil
 }
 
 // parseEnvLine parses a single KEY=VALUE secrets line. It skips blanks and

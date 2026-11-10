@@ -187,6 +187,14 @@ refresh the helpers, units and hardening files.
 
 ## Configuration
 
+Everything is set in one file, `/etc/mailadmin/config.<ext>` (TOML, YAML or JSON;
+keep exactly one). `mailadmin config init` writes the default file of the latest
+release, with every key documented. Secrets sit in its `[secrets]` table and the
+file must be owner-only.
+
+To remove mailadmin and what `install` added: `mailadmin uninstall`. It writes a
+full backup first (`--no-backup` skips that).
+
 Two files, by default under `/etc/mailadmin` (create them with `mailadmin config init`).
 
 ### `config.toml` (world-readable, non-secret)

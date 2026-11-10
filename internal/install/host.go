@@ -54,23 +54,23 @@ func (a *Answers) Validate() error {
 	return nil
 }
 
-// RenderConfig returns config.toml in the layout ARCHITECTURE.md documents.
-// Non-secret values only; tokens and the rspamd password go to secrets.env.
-func RenderConfig(a Answers) []byte {
+// RenderConfig returns the config file for the answers. The rspamd controller
+// password is stored under [secrets]; the file is written 0600.
+func RenderConfig(a Answers, rspamdPW string) []byte {
 	return config.RenderTemplate(config.Template{
 		Header: "Managed by mailadmin install.", Service: PgService, ServiceFile: PgServiceFile,
-		Hostname: a.Hostname, Selector: a.Selector, TLSCert: TLSFullchain, IPv4: a.IPv4, IPv6: a.IPv6,
+		Hostname: a.Hostname, Selector: a.Selector, TLSCert: TLSFullchain,
+		IPv4: a.IPv4, IPv6: a.IPv6, RspamdPW: rspamdPW,
 	})
 }
 
-// RenderSecrets returns secrets.env with a freshly generated rspamd controller
-// password. The file is written 0600 and never logged.
-func RenderSecrets() ([]byte, error) {
+// RenderSecrets returns a freshly generated rspamd controller password.
+func RenderSecrets() (string, error) {
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {
-		return nil, fmt.Errorf("generate rspamd password: %w", err)
+		return "", fmt.Errorf("generate rspamd password: %w", err)
 	}
-	return []byte("RSPAMD_CONTROLLER_PW=" + base64.RawURLEncoding.EncodeToString(buf) + "\n"), nil
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 // ErrExists is returned when a file install must create already exists.
@@ -81,6 +81,9 @@ var ErrExists = errors.New("file already exists")
 // The content is written to a temp file and linked to path only when complete,
 // so a crash cannot leave a truncated file under the final name.
 func writeNew(path string, data []byte, mode os.FileMode) error {
+	if err := recordFile(path); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
@@ -112,32 +115,52 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-// WriteConfig writes config.toml (0644) and secrets.env (0600) into dir. Both
-// files are attempted, so a crash between the two writes does not leave a rerun
-// without config.toml. Files that already exist are kept. ErrExists is returned
-// only when both already existed. A missing file next to an existing one is
-// completed on a rerun, which is how an interrupted install recovers.
+// WriteConfig writes the single config file config.toml (0600) into dir. An
+// existing config file is kept and reported as ErrExists.
 func WriteConfig(dir string, a Answers) error {
-	// #nosec G301 -- config dir is deliberately traversable, secrets.env is 0600
+	// #nosec G301 -- the directory is traversable; the config file is 0600
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-	secrets, err := RenderSecrets()
+	pw, err := RenderSecrets()
 	if err != nil {
 		return err
 	}
-	secErr := writeNew(filepath.Join(dir, "secrets.env"), secrets, 0o600)
-	if secErr != nil && !errors.Is(secErr, ErrExists) {
-		return secErr
+	return writeNew(filepath.Join(dir, "config.toml"), RenderConfig(a, pw), 0o600)
+}
+
+// MigrateSecrets moves a legacy secrets.env into the [secrets] table of the TOML
+// config and removes the file. It does nothing when there is no secrets.env,
+// when the config is YAML or JSON (the file is kept and read as before), or
+// when the config already has a [secrets] table.
+func MigrateSecrets(dir string) (migrated bool, err error) {
+	cfgPath := filepath.Join(dir, "config.toml")
+	secPath := filepath.Join(dir, config.SecretsFile)
+	if _, err := os.Lstat(secPath); errors.Is(err, fs.ErrNotExist) {
+		return false, nil
 	}
-	cfgErr := writeNew(filepath.Join(dir, "config.toml"), RenderConfig(a), 0o644)
-	if cfgErr != nil && !errors.Is(cfgErr, ErrExists) {
-		return cfgErr
+	cfg, rerr := os.ReadFile(cfgPath) // #nosec G304 -- config in the fixed config dir
+	if errors.Is(rerr, fs.ErrNotExist) {
+		return false, nil // no config file here: nothing to migrate into
 	}
-	if secErr != nil && cfgErr != nil {
-		return secErr
+	if rerr != nil {
+		return false, fmt.Errorf("read %s: %w", cfgPath, rerr)
 	}
-	return nil
+	if config.HasSecretsTable(cfg) {
+		return false, nil
+	}
+	m, err := config.ReadSecretsEnv(secPath)
+	if err != nil {
+		return false, err
+	}
+	text := strings.TrimRight(string(cfg), "\n") + "\n" + config.SecretsTOML(m)
+	if err := writeAtomic(cfgPath, []byte(text), 0o600); err != nil {
+		return false, err
+	}
+	if err := os.Remove(secPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return true, fmt.Errorf("remove %s: %w", secPath, err)
+	}
+	return true, nil
 }
 
 // HostDir is one directory the mail stack needs, with its owner and mode.

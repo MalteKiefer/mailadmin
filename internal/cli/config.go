@@ -2,9 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"mailadmin/defaults"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -42,14 +42,20 @@ func newConfigCmd(app *App) *cobra.Command {
 		},
 	}
 
+	var force, offline bool
 	initCmd := &cobra.Command{
 		Use:   "init",
-		Short: "Write starter config.toml and secrets.env",
-		Args:  cobra.NoArgs,
+		Short: "Write the default config file (from the latest release, or built in)",
+		Long: "Writes /etc/mailadmin/config.toml (0600) from the default file of the latest\n" +
+			"release. Without network access the copy built into this binary is used.\n" +
+			"Convert the file to YAML or JSON if you prefer; mailadmin reads all three.",
+		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runConfigInit(app)
+			return runConfigInit(app, c, force, offline)
 		},
 	}
+	initCmd.Flags().BoolVar(&force, "force", false, "replace an existing config file")
+	initCmd.Flags().BoolVar(&offline, "offline", false, "use the copy built into the binary, do not download")
 
 	cmd.AddCommand(show, check, edit, initCmd)
 	return cmd
@@ -202,29 +208,26 @@ func splitFields(s string) []string {
 	return out
 }
 
-// runConfigInit writes a starter config.toml (0644) and secrets.env (0600) next
-// to the --config path, refusing to overwrite existing files.
-func runConfigInit(app *App) error {
-	dir := filepath.Dir(app.flags.configPath)
-
-	if app.flags.dryRun {
-		r, err := app.Renderer()
-		if err != nil {
-			return err
-		}
-		r.Message("dry-run: would write config.toml and secrets.env in %s", dir)
-		return nil
-	}
-
-	configPath, secretsPath, err := config.Init(dir)
-	if err != nil {
-		return err
-	}
+// runConfigInit writes the default config file into the config directory.
+func runConfigInit(app *App, c *cobra.Command, force, offline bool) error {
 	r, err := app.Renderer()
 	if err != nil {
 		return err
 	}
-	r.Message("wrote %s (0644)", configPath)
-	r.Message("wrote %s (0600), set NJALLA_TOKEN / RSPAMD_CONTROLLER_PW / NTFY_TOKEN", secretsPath)
+	dir := config.ConfigDir
+	if app.flags.dryRun {
+		r.Message("dry-run: would write the default config into %s", dir)
+		return nil
+	}
+	content, source := defaults.ConfigTOML, "built-in copy (--offline)"
+	if !offline {
+		content, source = config.FetchDefault(ctx(c), config.DefaultConfigURL, defaults.ConfigTOML)
+	}
+	path, err := config.Init(dir, content, force)
+	if err != nil {
+		return err
+	}
+	r.Message("wrote %s (0600) from %s", path, source)
+	r.Message("fill in the values marked required, then run: mailadmin config check")
 	return nil
 }

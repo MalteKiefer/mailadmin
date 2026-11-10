@@ -156,3 +156,19 @@ func Conflicts(ctx context.Context, x Exec, root string) []string {
 	}
 	return out
 }
+
+// InstalledPackages lists the packages dpkg has fully installed.
+func InstalledPackages(ctx context.Context, x Exec) ([]string, error) {
+	res, err := x.Run(ctx, nil, "dpkg-query", "-W", "-f=${Package} ${db:Status-Abbrev}\n")
+	if err != nil {
+		return nil, fmt.Errorf("list packages: %w", err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(res.Stdout), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && strings.HasPrefix(f[1], "ii") {
+			out = append(out, f[0])
+		}
+	}
+	return out, nil
+}

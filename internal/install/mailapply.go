@@ -33,6 +33,10 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 // file that already holds data with mode is left alone: no new inode or mtime
 // for AIDE to report, and callers can skip reloads.
 func writeAtomicChanged(path string, data []byte, mode os.FileMode) (bool, error) {
+	// Recorded even when unchanged: the file is install's, and uninstall must know it.
+	if err := recordFile(path); err != nil {
+		return false, err
+	}
 	if sameFile(path, data, mode, -1, -1) {
 		return false, nil
 	}
@@ -64,6 +68,9 @@ func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group s
 	if err != nil {
 		return err
 	}
+	if err := recordFile(path); err != nil {
+		return err
+	}
 	if sameFile(path, data, mode, uid, gid) {
 		return nil
 	}
@@ -80,6 +87,9 @@ func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group s
 // writeAtomicWith is the shared temp-file-and-rename path. prepare, when set, runs
 // on the temp file before it is renamed into place.
 func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(f *os.File) error) error {
+	if err := recordFile(path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- config directories
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
@@ -298,6 +308,9 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 			return fmt.Errorf("nft check: %w", err)
 		}
 		return nil
+	}
+	if err := recordFile(NftPersistPath); err != nil {
+		return err
 	}
 	if !sameFile(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o600, -1, -1) {
 		if err := writeAtomicWith(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o600, check); err != nil {
