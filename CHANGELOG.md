@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.28.0] - 2026-11-10
 
 ### Added
 - One configuration file for everything: `/etc/mailadmin/config.<ext>`, where `<ext>` is `toml`, `yaml`, `yml` or `json`. Exactly one file is allowed. Secrets are in its `[secrets]` table (owner-only, 0600). A legacy `secrets.env` is still read and moved into the file by `install --adopt`.
