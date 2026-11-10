@@ -14,7 +14,7 @@
 //	                     <local>@<domain>.sieve
 //	  config.toml     -- copy of mailadmin's own config.toml
 //
-// secrets.env is deliberately never included in a bundle, see SecretsWarning.
+// The [secrets] table is never included in a bundle, see SecretsWarning.
 //
 // This package holds the mechanical, unprivileged parts (manifest shape,
 // path/argv construction, directory copying, bundle discovery) so they can be
@@ -76,9 +76,9 @@ func ValidComponent(name string) bool {
 const manifestSchemaVersion = 1
 
 // SecretsWarning is stamped into every manifest and echoed to the operator at
-// backup time, so nobody assumes secrets.env travels with a bundle.
-const SecretsWarning = "secrets.env is NOT included in this bundle (API tokens, rspamd controller password). " +
-	"Back it up separately through a secrets-appropriate channel and restore it by hand."
+// backup time, so nobody assumes the secrets travel with a bundle.
+const SecretsWarning = "secrets are NOT included in this bundle: config.toml is stored without its [secrets] table " +
+	"(API tokens, rspamd controller password). After a restore, add the [secrets] table back by hand."
 
 // Manifest is the metadata written alongside every bundle.
 type Manifest struct {

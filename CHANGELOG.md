@@ -24,6 +24,13 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.29.2] - 2026-11-10
+
+### Fixed
+- Security: `backup create` copied `config.toml` with its `[secrets]` table into the bundle, so API tokens and the rspamd controller password were in the bundle. The bundle now stores the config without `[secrets]`. After a restore, add the table back by hand.
+- `config check` failed `secrets_file` with "secrets.env missing" because secrets live in `config.toml` since v1.28. The check now reads the mode of the config file and reports a legacy `secrets.env` only as information.
+- The mailadmin read grants moved from install code into migration `005_mailadmin_grants.sql`, so a database built from the migrations matches an installed one.
+
 ## [v1.29.1] - 2026-11-10
 
 ### Fixed

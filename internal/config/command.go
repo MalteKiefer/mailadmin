@@ -94,7 +94,7 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 		add("postgres_service_file", fileExists(c.Postgres.ServiceFile), c.Postgres.ServiceFile)
 	}
 
-	secretsOK, secretsDetail := secretsFileState(c.secretsPath())
+	secretsOK, secretsDetail := secretsState(c)
 	add("secrets_file", secretsOK, secretsDetail)
 
 	// Provider credentials are optional: a domain needs only the one for its provider,
@@ -118,21 +118,24 @@ func Check(c *Config, s *Secrets) ([]CheckResult, error) {
 	return results, nil
 }
 
-// secretsFileState reports whether secrets.env exists with owner-only 0600
-// permissions, reusing the same rules LoadSecrets enforces. It never reveals
-// file contents.
-func secretsFileState(path string) (ok bool, detail string) {
-	if _, err := LoadSecrets(path); err != nil {
-		return false, err.Error()
-	}
-	fi, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, path + " missing"
-	}
+// secretsState reports where the secrets live. Since v1.28 they sit in the
+// [secrets] table of the config file, which must be owner-only (no group or
+// other bits). A legacy secrets.env is still read, so it is reported, not required.
+func secretsState(c *Config) (ok bool, detail string) {
+	fi, err := os.Lstat(c.Path)
 	if err != nil {
 		return false, err.Error()
 	}
-	return true, fmt.Sprintf("%s mode %#o", path, fi.Mode().Perm())
+	if !fi.Mode().IsRegular() {
+		return false, c.Path + " is not a regular file"
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return false, fmt.Sprintf("%s mode %#o: secrets need 0600", c.Path, fi.Mode().Perm())
+	}
+	if _, err := os.Lstat(c.secretsPath()); err == nil {
+		return true, fmt.Sprintf("%s mode %#o; legacy %s is still read", c.Path, fi.Mode().Perm(), c.secretsPath())
+	}
+	return true, fmt.Sprintf("%s mode %#o (secrets in [secrets])", c.Path, fi.Mode().Perm())
 }
 
 // optionalDetail describes a setting that is not required.
