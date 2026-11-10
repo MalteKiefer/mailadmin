@@ -46,6 +46,7 @@ const (
 	keyServfailServer   = "SERVFAIL_SERVER"      // #nosec G101 -- env-var name, not a credential value
 	keyRspamdPW         = "RSPAMD_CONTROLLER_PW" // #nosec G101 -- env-var name, not a credential value
 	keyNtfyToken        = "NTFY_TOKEN"           // #nosec G101 -- env-var name, not a credential value
+	keyBorgPassphrase   = "BORG_PASSPHRASE"      // #nosec G101 -- env-var name, not a credential value
 )
 
 // reFingerprint matches an OpenPGP primary key fingerprint (40 hex digits).
@@ -113,6 +114,8 @@ type Backup struct {
 	// full DR bundles (DB dump + DKIM keys + Sieve scripts + config.toml).
 	// Optional: unset means the operator must pass --out/--dir explicitly.
 	Dir string `toml:"dir"`
+	// Borg archives the bundles of backup create to a Borg repository.
+	Borg BorgBackup `toml:"borg"`
 }
 
 // Logs holds the unit allowlist for the log/journal commands.
@@ -139,6 +142,7 @@ type Config struct {
 	Server    Server            `toml:"server"`
 	DNS       DNS               `toml:"dns"`
 	Backup    Backup            `toml:"backup"`
+	Webmail   Webmail           `toml:"webmail"`
 	Logs      Logs              `toml:"logs"`
 	Notify    Notify            `toml:"notify"`
 	Hardening Hardening         `toml:"hardening"`
@@ -164,7 +168,14 @@ type Secrets struct {
 	servfailServer   string
 	rspamdControllPW string
 	ntfyToken        string
+	borgPassphrase   string
 }
+
+// BorgPassphrase returns the Borg repository passphrase (empty if unset).
+func (s *Secrets) BorgPassphrase() string { return s.borgPassphrase }
+
+// HasBorgPassphrase reports whether a Borg passphrase is configured.
+func (s *Secrets) HasBorgPassphrase() bool { return s.borgPassphrase != "" }
 
 // NjallaToken returns the Njalla API token (empty if unset).
 func (s *Secrets) NjallaToken() string { return s.njallaToken }
@@ -303,6 +314,8 @@ func (c *Config) normalize() {
 	c.DNS.Resolver = strings.TrimSpace(c.DNS.Resolver)
 	c.Backup.DNSBackupDir = strings.TrimSpace(c.Backup.DNSBackupDir)
 	c.Backup.Dir = strings.TrimSpace(c.Backup.Dir)
+	c.Webmail.Domain = strings.ToLower(strings.TrimSpace(c.Webmail.Domain))
+	c.Backup.Borg.Repo = strings.TrimSpace(c.Backup.Borg.Repo)
 	c.Notify.URL = strings.TrimSpace(c.Notify.URL)
 	for i := range c.Logs.Units {
 		c.Logs.Units[i] = strings.TrimSpace(c.Logs.Units[i])
@@ -418,6 +431,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: backup.dir must be an absolute path", ErrInvalidConfig)
 	}
 
+	if err := c.Webmail.validate(); err != nil {
+		return err
+	}
+	if err := c.Backup.Borg.validate(c.Backup.Dir); err != nil {
+		return err
+	}
+
 	if c.Notify.URL != "" && !strings.HasPrefix(c.Notify.URL, "https://") && !strings.HasPrefix(c.Notify.URL, "http://") {
 		return fmt.Errorf("%w: notify.url must start with http:// or https://", ErrInvalidConfig)
 	}
@@ -479,6 +499,7 @@ func SecretsFromMap(m map[string]string) *Secrets {
 		servfailServer:   m[keyServfailServer],
 		rspamdControllPW: m[keyRspamdPW],
 		ntfyToken:        m[keyNtfyToken],
+		borgPassphrase:   m[keyBorgPassphrase],
 	}
 }
 
