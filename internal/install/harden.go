@@ -33,7 +33,7 @@ const (
 	UnattendedConfPath    = "/etc/apt/apt.conf.d/52mailadmin-unattended-upgrades"
 	AutoUpgradesPath      = "/etc/apt/apt.conf.d/20auto-upgrades"
 	NeedrestartConfPath   = "/etc/needrestart/conf.d/90-mailadmin.conf"
-	PwqualityConfPath     = "/etc/security/pwquality.conf.d/90-mailadmin.conf"
+	PwqualityConfPath     = "/etc/security/pwquality.conf.d/90-mailadmin.conf" // #nosec G101 -- file path, not a credential
 	LoginDefsPath         = "/etc/login.defs"
 	IssueNetPath          = "/etc/issue.net"
 	IssuePath             = "/etc/issue"
@@ -452,7 +452,7 @@ APT::Periodic::AutocleanInterval "7";
 
 // hardeningFiles are the drop-ins written as they are.
 func hardeningFiles() map[string]string {
-	return map[string]string{
+	return map[string]string{ // #nosec G101 -- file paths and contents, no credentials
 		SysctlHardeningPath:   SysctlHardening(),
 		ModprobeHardeningPath: ModprobeHardening(),
 		LimitsHardeningPath:   "# Managed by mailadmin install. No core dumps (CIS 1.5.1).\n* hard core 0\n",
@@ -529,14 +529,14 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 	// PostgreSQL's config files are readable by the postgres group only (CIS 6.1).
 	pgConfs, _ := filepath.Glob("/etc/postgresql/*/main/*.conf")
 	for _, f := range pgConfs {
-		if err := os.Chmod(f, 0o640); err != nil {
+		if err := os.Chmod(f, 0o640); err != nil { // #nosec G302 -- tighter than the 0644 default, postgres group reads it
 			return fmt.Errorf("chmod %s: %w", f, err)
 		}
 	}
 	// Cron is root only (CIS 5.1).
 	_ = os.Chmod("/etc/crontab", 0o600)
 	for _, d := range []string{"/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly"} {
-		if err := os.Chmod(d, 0o700); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := os.Chmod(d, 0o700); err != nil && !errors.Is(err, fs.ErrNotExist) { // #nosec G302 -- directory, root only
 			return fmt.Errorf("chmod %s: %w", d, err)
 		}
 	}
