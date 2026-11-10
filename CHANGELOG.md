@@ -24,6 +24,14 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.29.3] - 2026-11-10
+
+### Fixed
+- Security and data: `backup restore` replaced the live `config.toml` with the bundle copy. Since v1.29.2 that copy has no `[secrets]` table, so a restore dropped API tokens and the rspamd controller password. The live `[secrets]` table is now kept. Bundles that still carry secrets win.
+- `backup restore` refuses a live config that is YAML or JSON, instead of writing TOML under that name. The file is replaced atomically at mode 0600, and a symlink at the config path is followed.
+- `config check` requires mode 0600 only for a config that holds secrets, as `load` does. A 0644 config without secrets no longer fails.
+- `update` names the config in use (`--config`) when it prints the new-keys hint.
+
 ## [v1.29.2] - 2026-11-10
 
 ### Fixed
