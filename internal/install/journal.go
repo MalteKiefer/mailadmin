@@ -138,8 +138,8 @@ func (j *journal) recordFile(path string) error {
 			return fmt.Errorf("save original of %s: %w", path, rerr)
 		}
 		name := backupName(path)
-		// name is a hash of path; the copy lives in the state dir.
-		if werr := os.WriteFile(filepath.Join(originalsDir(), name), data, 0o600); werr != nil {
+		// name is a hex digest of path: the copy lives in the state dir.
+		if werr := os.WriteFile(filepath.Join(originalsDir(), name), data, 0o600); werr != nil { // #nosec G703 -- hex digest name, state dir only
 			return fmt.Errorf("save original of %s: %w", path, werr)
 		}
 		f.Existed = true
