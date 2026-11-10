@@ -90,6 +90,8 @@ passdb apppw {
 userdb mailbox {
   driver = sql
   sql_query = SELECT 5000 AS uid, 5000 AS gid, CASE WHEN quota_bytes > 0 THEN quota_bytes::text ELSE 'unlimited' END AS quota_storage_size FROM mailbox WHERE username = '%{user|username}' AND domain = '%{user|domain}' AND active
+  # Lists every mailbox for doveadm -A (quota get, sieve, index).
+  sql_iterate_query = SELECT username || '@' || domain AS user FROM mailbox WHERE active
 }
 
 # Postfix talks to Dovecot over these sockets inside its chroot.
@@ -105,6 +107,12 @@ service auth {
     user = postfix
     group = postfix
   }
+}
+# Auth workers run the SQL lookups that do not go through the auth process,
+# such as listing users for doveadm -A. They connect with peer authentication as
+# the dovecot role, so they must run as the dovecot user, not root.
+service auth-worker {
+  user = dovecot
 }
 service lmtp {
   unix_listener lmtp-postfix {
