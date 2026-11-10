@@ -26,8 +26,13 @@ func TestRestoreConfigKeepsLiveSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	cfg := &config.Config{Path: live}
+	merged, err := readConfigRestore(cfg, bundle)
+	if err != nil {
+		t.Fatalf("readConfigRestore: %v", err)
+	}
 	a := &App{}
-	if err := a.restoreConfig(nil, &config.Config{Path: live}, bundle); err != nil {
+	if err := a.restoreConfig(nil, cfg, merged); err != nil {
 		t.Fatalf("restoreConfig: %v", err)
 	}
 	got, err := os.ReadFile(live)
@@ -43,5 +48,29 @@ func TestRestoreConfigKeepsLiveSecrets(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %o, want 600", fi.Mode().Perm())
+	}
+}
+
+// A live YAML config is refused before anything is written, so a restore never
+// half-applies: the refusal must come from the read step, not from a write.
+func TestReadConfigRestoreRefusesYAMLLive(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(live, []byte("mail:\n  hostname: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(dir, "bundle")
+	if err := os.MkdirAll(bundle, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundle, backup.ConfigFile), []byte("[mail]\nhostname = \"mx.example.com\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readConfigRestore(&config.Config{Path: live}, bundle); err == nil {
+		t.Fatal("YAML live config must be refused")
+	}
+	got, _ := os.ReadFile(live)
+	if !strings.Contains(string(got), "hostname: old") {
+		t.Fatalf("live config changed by a refused read:\n%s", got)
 	}
 }

@@ -280,9 +280,17 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 	if a.flags.dryRun {
 		return a.backupRestoreDryRun(cmd, cfg, bundlePath, man, components, r)
 	}
+	if os.Geteuid() != 0 {
+		return errors.New("backup restore must run as root (try: sudo mailadmin backup restore ...)")
+	}
 
 	warn := fmt.Sprintf("RESTORE overwrites live data for component(s): %s. This cannot be undone automatically.", strings.Join(components, ", "))
 	if err := a.confirm(warn + " Continue?"); err != nil {
+		return err
+	}
+
+	configMerged, err := restorePreflight(cfg, bundlePath, man, components)
+	if err != nil {
 		return err
 	}
 
@@ -291,39 +299,54 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		return err
 	}
 
-	for _, comp := range components {
-		switch comp {
-		case backup.ComponentDB:
-			if err := a.restoreDomainDB(cmd, cfg, bundlePath); err != nil {
-				return err
-			}
-		case backup.ComponentDKIM:
-			if err := a.restoreDKIM(cmd, cfg, bundlePath); err != nil {
-				return err
-			}
-		case backup.ComponentSieve:
-			if err := a.restoreSieve(cmd, bundlePath, man); err != nil {
-				return err
-			}
-		case backup.ComponentConfig:
-			if err := a.restoreConfig(cmd, cfg, bundlePath); err != nil {
-				return err
-			}
-		}
-	}
-
-	if err := rec.Record(ctx(cmd), "backup.restore", bundlePath, nil, map[string]any{"components": components}); err != nil {
-		return err
-	}
-	r.Message("restore complete: %s", strings.Join(components, ", "))
-	// The domain table changed under the selector map and the Caddy includes.
-	if contains(components, backup.ComponentDB) {
+	done, restoreErr := a.restoreComponents(cmd, cfg, bundlePath, man, components, configMerged, r)
+	// Recorded and synced even when a later component failed: the components that
+	// finished have already changed the host.
+	recErr := rec.Record(ctx(cmd), "backup.restore", bundlePath, nil, map[string]any{"components": done, "complete": restoreErr == nil})
+	if contains(done, backup.ComponentDB) {
+		// The domain table changed under the selector map and the Caddy includes.
 		a.syncDomainState(ctx(cmd), r)
 	}
+	if restoreErr != nil {
+		// Both are reported: a missing audit entry for a partial restore matters as much.
+		return errors.Join(restoreErr, recErr)
+	}
+	if recErr != nil {
+		return recErr
+	}
+	r.Message("restore complete: %s", strings.Join(components, ", "))
 	if contains(components, backup.ComponentConfig) {
 		r.Message("config.toml was replaced, review it before restarting any mailadmin-managed service")
 	}
 	return nil
+}
+
+// restoreComponents applies the components in bundle order and returns the ones
+// that completed. It stops at the first failure, so the caller can record what
+// already changed.
+func (a *App) restoreComponents(cmd *cobra.Command, cfg *config.Config, bundlePath string, man backup.Manifest, components []string, configMerged []byte, r *output.Renderer) ([]string, error) {
+	var done []string
+	for _, comp := range components {
+		var err error
+		switch comp {
+		case backup.ComponentDB:
+			err = a.restoreDomainDB(cmd, cfg, bundlePath)
+		case backup.ComponentDKIM:
+			err = a.restoreDKIM(cmd, cfg, bundlePath)
+		case backup.ComponentSieve:
+			err = a.restoreSieve(cmd, bundlePath, man)
+		case backup.ComponentConfig:
+			err = a.restoreConfig(cmd, cfg, configMerged)
+			if err == nil && !config.HasSecretsTable(configMerged) {
+				r.Message("warning: the restored config has no [secrets] table (the bundle carries none and this host has none): add the secrets back before starting services")
+			}
+		}
+		if err != nil {
+			return done, err
+		}
+		done = append(done, comp)
+	}
+	return done, nil
 }
 
 // backupRestoreDryRun prints exactly what a restore would change, per
@@ -331,13 +354,23 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 // `pg_restore --list`, which is read-only against the dump file and never
 // connects to a database.
 func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundlePath string, man backup.Manifest, components []string, r *output.Renderer) error {
+	// The real restore refuses in this preflight before it changes anything, so a
+	// dry-run that passes here must not hide a refusal.
+	if _, err := restorePreflight(cfg, bundlePath, man, components); err != nil {
+		return err
+	}
 	for _, comp := range components {
 		switch comp {
 		case backup.ComponentDB:
 			dumpPath := filepath.Join(bundlePath, backup.DBDumpFile)
 			toc, err := a.runner().Output(ctx(cmd), backup.PgRestoreListArgs(dumpPath)...)
+			if errors.Is(err, sys.ErrNonZeroExit) {
+				// pg_restore ran and rejected the dump: the real restore fails the same way.
+				return fmt.Errorf("backup restore: domain-db: %s is not a readable dump: %w", dumpPath, err)
+			}
 			if err != nil {
-				r.Message("dry-run: domain-db: could not read %s (%v), pg_restore not available in this environment?", dumpPath, err)
+				// pg_restore could not be started here; the dry-run still shows the rest of the plan.
+				r.Message("dry-run: domain-db: pg_restore not available in this environment? (%v)", err)
 				continue
 			}
 			r.Message("dry-run: domain-db: would run pg_restore --clean --if-exists into service %q; table of contents:", cfg.Postgres.Service)
@@ -350,15 +383,7 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 			r.Message("dry-run: sieve: would overwrite the active script for %d mailbox(es): %s",
 				len(man.SieveScripts), strings.Join(man.SieveScripts, ", "))
 		case backup.ComponentConfig:
-			bundle, err := os.ReadFile(filepath.Join(bundlePath, backup.ConfigFile)) // #nosec G304 -- bundle path from the operator
-			if err != nil {
-				r.Message("dry-run: config: could not read the bundle's config.toml (%v)", err)
-				continue
-			}
-			if _, err := config.MergeRestored(bundle, cfg.Path); err != nil {
-				r.Message("dry-run: config: restore would be refused: %v", err)
-				continue
-			}
+			// The refusal of a live YAML or JSON config was checked by the preflight above.
 			r.Message("dry-run: config: would replace %s from the bundle's config.toml, keeping the live [secrets] table when the bundle has none (review before restarting services)", cfg.Path)
 		}
 	}
@@ -419,22 +444,30 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 	return chownDKIM(dir)
 }
 
-// chownDKIM gives the restored key directory the owner the installer uses.
-// rspamd runs as _rspamd and cannot read keys that root owns.
-func chownDKIM(dir string) error {
+// dkimOwner returns the uid and gid the restored key directory gets: the mailadmin
+// user and the _rspamd group, as the installer creates them.
+func dkimOwner() (uid, gid int, err error) {
 	owner, err := user.Lookup("mailadmin")
 	if err != nil {
-		return fmt.Errorf("lookup mailadmin: %w", err)
+		return 0, 0, fmt.Errorf("lookup mailadmin: %w", err)
 	}
 	group, err := user.LookupGroup("_rspamd")
 	if err != nil {
-		return fmt.Errorf("lookup _rspamd: %w", err)
+		return 0, 0, fmt.Errorf("lookup _rspamd: %w", err)
 	}
-	uid, err := strconv.Atoi(owner.Uid)
-	if err != nil {
-		return err
+	if uid, err = strconv.Atoi(owner.Uid); err != nil {
+		return 0, 0, err
 	}
-	gid, err := strconv.Atoi(group.Gid)
+	if gid, err = strconv.Atoi(group.Gid); err != nil {
+		return 0, 0, err
+	}
+	return uid, gid, nil
+}
+
+// chownDKIM gives the restored key directory the owner the installer uses.
+// rspamd runs as _rspamd and cannot read keys that root owns.
+func chownDKIM(dir string) error {
+	uid, gid, err := dkimOwner()
 	if err != nil {
 		return err
 	}
@@ -518,17 +551,61 @@ func (a *App) restoreSieve(cmd *cobra.Command, bundlePath string, man backup.Man
 	return nil
 }
 
-// restoreConfig replaces the live config with the bundle's copy. The live
-// [secrets] table is kept, since bundles from v1.29.2 on carry none.
-func (a *App) restoreConfig(_ *cobra.Command, cfg *config.Config, bundlePath string) error {
+// restorePreflight checks everything the components read before any of them
+// changes the host: the config merge (refused for a live YAML or JSON config), the
+// database dump and the sieve scripts. A failure here changes nothing. A failure
+// later would leave the host half restored. It returns the merged config, or nil
+// when the config is not restored.
+func restorePreflight(cfg *config.Config, bundlePath string, man backup.Manifest, components []string) ([]byte, error) {
+	var configMerged []byte
+	for _, comp := range components {
+		switch comp {
+		case backup.ComponentDB:
+			if _, err := os.Stat(filepath.Join(bundlePath, backup.DBDumpFile)); err != nil {
+				return nil, fmt.Errorf("backup restore: domain-db: %w", err)
+			}
+		case backup.ComponentSieve:
+			for _, addr := range man.SieveScripts {
+				fp := filepath.Join(bundlePath, backup.SieveDir, backup.SieveFileName(addr))
+				if _, err := os.Stat(fp); err != nil {
+					return nil, fmt.Errorf("backup restore: sieve %s: %w", addr, err)
+				}
+			}
+		case backup.ComponentDKIM:
+			// Both checks ran after the database restore before this change.
+			if err := refuseSymlinkDir(filepath.Clean(cfg.Mail.DKIMDir)); err != nil {
+				return nil, fmt.Errorf("backup restore: dkim: %w", err)
+			}
+			if _, _, err := dkimOwner(); err != nil {
+				return nil, fmt.Errorf("backup restore: dkim: %w", err)
+			}
+		case backup.ComponentConfig:
+			merged, err := readConfigRestore(cfg, bundlePath)
+			if err != nil {
+				return nil, err
+			}
+			configMerged = merged
+		}
+	}
+	return configMerged, nil
+}
+
+// readConfigRestore returns the config a restore writes: the bundle's config.toml
+// with the live [secrets] table kept when the bundle has none. It writes nothing.
+func readConfigRestore(cfg *config.Config, bundlePath string) ([]byte, error) {
 	bundle, err := os.ReadFile(filepath.Join(bundlePath, backup.ConfigFile)) // #nosec G304 -- bundle path from the operator
 	if err != nil {
-		return fmt.Errorf("backup restore: config: %w", err)
+		return nil, fmt.Errorf("backup restore: config: %w", err)
 	}
 	merged, err := config.MergeRestored(bundle, cfg.Path)
 	if err != nil {
-		return fmt.Errorf("backup restore: config: %w", err)
+		return nil, fmt.Errorf("backup restore: config: %w", err)
 	}
+	return merged, nil
+}
+
+// restoreConfig replaces the live config with the merged bytes from readConfigRestore.
+func (a *App) restoreConfig(_ *cobra.Command, cfg *config.Config, merged []byte) error {
 	if err := config.WriteSecretFile(cfg.Path, merged); err != nil {
 		return fmt.Errorf("backup restore: config: %w", err)
 	}

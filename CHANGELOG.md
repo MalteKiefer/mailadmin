@@ -24,6 +24,15 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.29.5] - 2026-11-10
+
+### Fixed
+- `backup restore` checks everything before the first change: the config merge, the database dump, the sieve scripts, the DKIM directory and its owner. A refusal no longer leaves the host half restored. `--dry-run` runs the same checks.
+- `backup restore` records the audit entry and syncs Caddy and rspamd for components that finished before a failure. A failed audit write is reported next to a failed restore.
+- `backup restore` requires root, as `install` does. The dry-run stays available without root.
+- `backup restore --dry-run` fails for an unreadable database dump, as the real restore does.
+- Migration 002 sets the `p37.nexus` provider only while it is still `manual`, so a replay after a restore cannot undo a later choice.
+
 ## [v1.29.4] - 2026-11-10
 
 ### Fixed
