@@ -11,4 +11,7 @@ ALTER TABLE domain
     -- values: 'manual' (no automation) | 'njalla'
 
 -- p37.nexus is hosted at Njalla.
-UPDATE domain SET dns_provider = 'njalla' WHERE name = 'p37.nexus';
+-- Only a domain still on the default is set. A restore can rewind schema_migrations
+-- to a dump taken before this statement, and a rerun must not undo a provider that
+-- was chosen since.
+UPDATE domain SET dns_provider = 'njalla' WHERE name = 'p37.nexus' AND dns_provider = 'manual';
