@@ -350,7 +350,16 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 			r.Message("dry-run: sieve: would overwrite the active script for %d mailbox(es): %s",
 				len(man.SieveScripts), strings.Join(man.SieveScripts, ", "))
 		case backup.ComponentConfig:
-			r.Message("dry-run: config: would overwrite %s from the bundle's config.toml (review before restarting services)", cfg.Path)
+			bundle, err := os.ReadFile(filepath.Join(bundlePath, backup.ConfigFile)) // #nosec G304 -- bundle path from the operator
+			if err != nil {
+				r.Message("dry-run: config: could not read the bundle's config.toml (%v)", err)
+				continue
+			}
+			if _, err := config.MergeRestored(bundle, cfg.Path); err != nil {
+				r.Message("dry-run: config: restore would be refused: %v", err)
+				continue
+			}
+			r.Message("dry-run: config: would replace %s from the bundle's config.toml, keeping the live [secrets] table when the bundle has none (review before restarting services)", cfg.Path)
 		}
 	}
 	return nil

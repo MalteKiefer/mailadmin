@@ -77,7 +77,7 @@ func liveSecrets(path string) (map[string]any, error) {
 func WriteSecretFile(path string, data []byte) error {
 	target, err := filepath.EvalSymlinks(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		target = path
+		target = danglingTarget(path)
 	} else if err != nil {
 		return fmt.Errorf("resolve %s: %w", path, err)
 	}
@@ -106,4 +106,22 @@ func WriteSecretFile(path string, data []byte) error {
 		return fmt.Errorf("install %s: %w", target, err)
 	}
 	return nil
+}
+
+// danglingTarget returns the file a dangling symlink at path names, one level
+// deep. Writing there creates that file, as writing through the link did before,
+// instead of replacing the link. Any other path is returned unchanged.
+func danglingTarget(path string) string {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return path
+	}
+	link, err := os.Readlink(path)
+	if err != nil {
+		return path
+	}
+	if !filepath.IsAbs(link) {
+		link = filepath.Join(filepath.Dir(path), link)
+	}
+	return link
 }

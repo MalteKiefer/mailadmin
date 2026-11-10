@@ -121,13 +121,6 @@ func CopyFile(src, dst string) (int64, error) {
 	return copyFile(src, dst, syscall.O_NOFOLLOW)
 }
 
-// CopyFileFollow is CopyFile for an operator-owned target that may legitimately
-// be a symlink, such as a config file managed through a link. The write follows
-// the link. Use CopyFile for anything inside a backup tree.
-func CopyFileFollow(src, dst string) (int64, error) {
-	return copyFile(src, dst, 0)
-}
-
 func copyFile(src, dst string, extraFlags int) (int64, error) {
 	info, err := os.Stat(src)
 	if err != nil {

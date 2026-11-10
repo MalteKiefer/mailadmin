@@ -110,3 +110,44 @@ func TestSecretsStateModeRule(t *testing.T) {
 		t.Fatal("0644 config holding secrets must fail")
 	}
 }
+
+// A dangling symlink must get the file it names, not be replaced by a regular file.
+func TestWriteSecretFileCreatesDanglingLinkTarget(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "managed.toml")
+	link := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(missing, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSecretFile(link, []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("dangling symlink replaced by a regular file")
+	}
+	data, err := os.ReadFile(missing)
+	if err != nil || string(data) != "new\n" {
+		t.Fatalf("named file = %q, %v", data, err)
+	}
+}
+
+// A symlinked --config path must be judged by its target, as Load does.
+func TestSecretsStateFollowsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.toml")
+	writeTestFile(t, real, "[mail]\n", 0o600)
+	link := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	c := validConfig()
+	c.Path = link
+	c.Secrets = map[string]string{"DESEC_TOKEN": "tok"}
+	if ok, detail := secretsState(&c); !ok {
+		t.Fatalf("symlinked 0600 config with secrets must pass: %s", detail)
+	}
+}
