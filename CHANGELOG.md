@@ -24,6 +24,13 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.30.0] - 2026-11-10
+
+### Added
+- Webmail: `install` sets up the alps webmail client when `[webmail] enabled = true`. The release zip is refused unless its sha256 matches the pinned `[webmail] sha256`. alps runs as the `alps` system user (`mailadmin-webmail.service`), listens on `[webmail] listen` and is routed through Caddy for `[webmail] domain`.
+- Config: `[webmail]` and `[backup.borg]` sections, validated only when enabled. `BORG_PASSPHRASE` is a `[secrets]` key. Borg archiving itself is not installed yet.
+- The managed Dovecot config enables IMAP METADATA (`mail_attribute`, `imap_metadata`), which the webmail needs to store its settings.
+
 ## [v1.29.6] - 2026-11-10
 
 ### Added

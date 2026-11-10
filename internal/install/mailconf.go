@@ -49,6 +49,17 @@ protocols {
   sieve = yes
 }
 
+# Mailbox attributes back the IMAP METADATA extension, which the webmail (alps)
+# needs to store its settings.
+mail_attribute {
+  dict file {
+    path = %{home}/dovecot-attributes
+  }
+}
+protocol imap {
+  imap_metadata = yes
+}
+
 ssl = required
 ssl_server {
   cert_file = ` + TLSFullchain + `

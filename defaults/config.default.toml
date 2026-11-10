@@ -50,6 +50,36 @@ dns_backup_dir = "/var/lib/mailadmin/dns-backups"
 # Directory for full disaster recovery bundles (backup create). Empty: pass --out.
 dir = "/var/lib/mailadmin/backups"
 
+[backup.borg]
+# Archive the backup bundles to a Borg repository, run by a systemd timer. Off by default.
+enabled = false
+# ssh://user@host:port/./path (e.g. a storage box) or an absolute local or mounted path.
+repo = ""
+# Private key for ssh:// repositories (absolute, mode 0600) and the pinned host keys.
+ssh_key = "/root/.ssh/borg_ed25519"
+known_hosts = "/root/.ssh/known_hosts_borg"
+# repokey-blake2 (default), repokey, keyfile-blake2, keyfile or none. The passphrase
+# is BORG_PASSPHRASE in [secrets] below.
+encryption = "repokey-blake2"
+# borg --compression value.
+compression = "zstd,6"
+# Directory whose contents are archived. Empty: backup.dir.
+source = ""
+# systemd OnCalendar expression of the timer.
+schedule = "*-*-* 03:30:00"
+# Remove archives outside the retention below after each run.
+prune = true
+# Run borg compact after prune, to free the space of removed archives.
+compact = true
+# Run borg check at this interval, e.g. "1w" or "30d". Empty: never.
+check_every = "1w"
+
+[backup.borg.retention]
+# Archives kept per period. At least one value must be above zero.
+daily = 7
+weekly = 4
+monthly = 6
+
 [logs]
 # Units that doctor, service and log may read or control.
 units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
@@ -57,6 +87,16 @@ units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall
 [notify]
 # ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
 url = ""
+
+[webmail]
+# alps webmail client (https://github.com/migadu/alps), served on domain through Caddy.
+# Off by default. The release zip is refused unless its checksum matches sha256.
+enabled = false
+domain = "webmail.example.com"
+version = "v1"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# Local address alps listens on. Caddy proxies the domain to it.
+listen = "127.0.0.1:8081"
 
 [hardening]
 # Master switch for install's system hardening (sysctl, modules, auditd, AIDE,
