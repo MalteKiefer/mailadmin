@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.29.1] - 2026-11-10
+
+### Fixed
+- `install` aborted on a fresh host when the CrowdSec firewall bouncer started before its API key was registered ("access forbidden"). The bouncer is now enabled after the key is set.
+
 ## [v1.29.0] - 2026-11-10
 
 ### Added

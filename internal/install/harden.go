@@ -932,7 +932,7 @@ func ApplyCrowdSec(ctx context.Context, x Exec, hostname, enrollKey string) erro
 		return err
 	}
 	changed = changed || acquisChanged
-	if err := runSteps(ctx, x, []string{"systemctl", "enable", "--now", "crowdsec", "crowdsec-firewall-bouncer"}); err != nil {
+	if err := runSteps(ctx, x, []string{"systemctl", "enable", "--now", "crowdsec"}); err != nil {
 		return err
 	}
 	if changed {
@@ -948,8 +948,13 @@ func ApplyCrowdSec(ctx context.Context, x Exec, hostname, enrollKey string) erro
 			return fmt.Errorf("create crowdsec allowlist: %w", err)
 		}
 	}
+	// The bouncer must get its key before it starts: started with the placeholder
+	// it fails with "access forbidden" and stops the install.
 	registered, err := registerBouncer(ctx, x)
 	if err != nil {
+		return err
+	}
+	if err := runSteps(ctx, x, []string{"systemctl", "enable", "--now", "crowdsec-firewall-bouncer"}); err != nil {
 		return err
 	}
 	if registered {
