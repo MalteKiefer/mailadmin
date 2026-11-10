@@ -1,6 +1,7 @@
 package install
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,7 @@ func TestSSHHardeningConfKeepsPasswordLoginWithoutKeys(t *testing.T) {
 		Ciphers: map[string]bool{"chacha20-poly1305@openssh.com": true, "aes128-ctr": true},
 		MACs:    map[string]bool{"hmac-sha2-512-etm@openssh.com": true, "hmac-sha1": true},
 		KeySigs: map[string]bool{"ssh-ed25519": true, "rsa-sha2-512": true, "ssh-rsa": true}}
-	on := SSHHardeningConf(caps, true, []string{"/etc/ssh/ssh_host_ed25519_key"})
+	on := SSHHardeningConf(caps, true, true, []string{"/etc/ssh/ssh_host_ed25519_key"})
 	for _, want := range []string{"PasswordAuthentication no\n", "AuthenticationMethods publickey\n", "PermitRootLogin prohibit-password\n",
 		"KexAlgorithms mlkem768x25519-sha256,curve25519-sha256\n", "Ciphers chacha20-poly1305@openssh.com\n",
 		"MACs hmac-sha2-512-etm@openssh.com\n", "RequiredRSASize 3072\n", "HostKey /etc/ssh/ssh_host_ed25519_key\n", "X11Forwarding no\n"} {
@@ -38,11 +39,12 @@ func TestSSHHardeningConfKeepsPasswordLoginWithoutKeys(t *testing.T) {
 			t.Errorf("weak algorithm %q must not be offered:\n%s", weak, on)
 		}
 	}
-	off := SSHHardeningConf(caps, false, nil)
-	if strings.Contains(off, "PasswordAuthentication no") || strings.Contains(off, "AuthenticationMethods") {
-		t.Fatalf("without an authorized key, password login must stay on:\n%s", off)
+	off := SSHHardeningConf(caps, false, false, nil)
+	if strings.Contains(off, "PasswordAuthentication no") || strings.Contains(off, "AuthenticationMethods") ||
+		strings.Contains(off, "PermitRootLogin") {
+		t.Fatalf("without a usable key, password login (root included) must stay on:\n%s", off)
 	}
-	old := SSHHardeningConf(SSHCaps{Version: "OpenSSH_8.9p1"}, true, nil)
+	old := SSHHardeningConf(SSHCaps{Version: "OpenSSH_8.9p1"}, true, true, nil)
 	if strings.Contains(old, "RequiredRSASize") || strings.Contains(old, "KexAlgorithms") {
 		t.Fatalf("options sshd 8.9 does not know, or empty lists, must be left out:\n%s", old)
 	}
@@ -61,6 +63,46 @@ func TestAuthorizedKeyIn(t *testing.T) {
 	}
 	if !authorizedKeyIn([]string{empty, key}) {
 		t.Fatal("a key line must be found")
+	}
+}
+
+// rsaKey builds an ssh-rsa public key blob with a modulus of the given size.
+func rsaKey(bits int) string {
+	n := make([]byte, bits/8)
+	n[0] = 0x80
+	var blob []byte
+	for _, part := range [][]byte{[]byte("ssh-rsa"), {1, 0, 1}, append([]byte{0}, n...)} {
+		blob = append(blob, byte(len(part)>>24), byte(len(part)>>16), byte(len(part)>>8), byte(len(part)))
+		blob = append(blob, part...)
+	}
+	return base64.StdEncoding.EncodeToString(blob)
+}
+
+func TestUsableKeyMatchesHardenedSSHD(t *testing.T) {
+	for line, want := range map[string]bool{
+		"ssh-ed25519 AAAA x":                                  true,
+		"ecdsa-sha2-nistp256 AAAA x":                          true,
+		"sk-ecdsa-sha2-nistp256@openssh.com AAAA yubikey":     true,
+		"ssh-rsa " + rsaKey(4096) + " big":                    true,
+		"ssh-rsa " + rsaKey(2048) + " small":                  false,
+		`command="/usr/bin/rrsync /srv" ssh-ed25519 AAAA bkp`: false,
+		"restrict,port-forwarding ssh-ed25519 AAAA tunnel":    false,
+		`from="10.0.0.1" ssh-ed25519 AAAA admin`:              true,
+		"ssh-dss AAAA old":                                    false,
+	} {
+		if got := usableKey(line); got != want {
+			t.Errorf("usableKey(%.40q) = %v, want %v", line, got, want)
+		}
+	}
+	// Every accepted key type must also be in PubkeyAcceptedAlgorithms.
+	accepted := strings.Join(sshUserSig, ",")
+	for typ := range loginKeyTypes {
+		if typ == "ssh-rsa" {
+			continue // signed with rsa-sha2-256/512
+		}
+		if !strings.Contains(accepted, typ) {
+			t.Errorf("usableKey accepts %s but sshd would refuse it", typ)
+		}
 	}
 }
 
@@ -96,7 +138,8 @@ func TestHardenedMailTLS(t *testing.T) {
 	d := DovecotConf(groups)
 	for _, want := range []string{"ssl_cipher_list = " + TLS12Ciphers, "ssl_cipher_suites = " + TLS13Suites,
 		"ssl_curve_list = X25519MLKEM768:X25519:prime256v1:secp384r1", "ssl_server_prefer_ciphers = server",
-		"inet_listener imap {\n    port = 0"} {
+		"inet_listener imap {\n    port = 0", "protocol lmtp {\n  mail_plugins {\n    quota = yes\n    sieve = yes",
+		"sieve_script personal {", `quota "User quota" {`, "AS quota_storage_size"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("dovecot.conf misses %q", want)
 		}
@@ -125,9 +168,18 @@ func TestCrowdSecReplacesFail2ban(t *testing.T) {
 		}
 	}
 	a := CrowdSecAcquis()
-	for _, unit := range []string{"ssh.service", "postfix@-.service", "dovecot.service"} {
+	for _, unit := range []string{"postfix.service", "postfix@-.service", "dovecot.service"} {
 		if !strings.Contains(a, "_SYSTEMD_UNIT="+unit) {
 			t.Errorf("acquisition misses %s", unit)
+		}
+	}
+	if strings.Contains(a, "ssh.service") {
+		t.Error("cscli setup already reads ssh.service; a second source counts every failure twice")
+	}
+	u := UnattendedUpgrades()
+	for _, site := range []string{"apt.postgresql.org", "dl.cloudsmith.io", "packagecloud.io"} {
+		if !strings.Contains(u, `"site=`+site+`";`) {
+			t.Errorf("unattended-upgrades misses vendor site %s:\n%s", site, u)
 		}
 	}
 	if _, ok := hardeningFiles()[CrowdSecAcquisPath]; !ok {

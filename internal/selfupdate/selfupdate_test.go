@@ -21,7 +21,11 @@ func TestIsNewer(t *testing.T) {
 		{"1.25.0-dev", "v1.25.0", true}, // dev build of the released version
 		{"1.13.1", "1.13.1-rc1", false}, // release is newer than its pre-release
 		{"1.13.1-rc1", "1.13.1-rc2", false},
-		{"1.13.1+build5", "1.13.1", false}, // build metadata ignored
+		{"1.13.1+build5", "1.13.1", false},            // build metadata ignored
+		{"1.25.1-3-g274e6ea", "v1.25.1", false},       // git describe: built after the tag
+		{"1.25.1-dirty", "v1.25.1", false},            // git describe of a modified tree
+		{"1.25.1-3-g274e6ea-dirty", "v1.25.1", false}, // both
+		{"1.25.1-3-g274e6ea", "v1.25.2", true},        // a newer release still wins
 	}
 	for _, tc := range cases {
 		if got := IsNewer(tc.current, tc.latest); got != tc.want {

@@ -174,9 +174,13 @@ func parseList(out string) []Script {
 	return scripts
 }
 
-// trimActiveSuffix strips a trailing "(active)" marker (any case, any spacing)
-// and reports whether it was present.
+// trimActiveSuffix strips the active marker and reports whether it was present.
+// Pigeonhole 2.4 prints "name ACTIVE" (a second, upper-case column); older
+// releases and ManageSieve style output use a trailing "(active)" in any case.
 func trimActiveSuffix(line string) (string, bool) {
+	if name, ok := strings.CutSuffix(line, "ACTIVE"); ok && name != strings.TrimRight(name, " \t") {
+		return strings.TrimSpace(name), true
+	}
 	const marker = "(active)"
 	if len(line) < len(marker) {
 		return line, false

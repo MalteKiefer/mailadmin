@@ -17,6 +17,7 @@ import (
 	"mailadmin/internal/config"
 	"mailadmin/internal/output"
 	"mailadmin/internal/sieve"
+	"mailadmin/internal/sys"
 )
 
 func newBackupCmd(app *App) *cobra.Command {
@@ -333,6 +334,9 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 	return nil
 }
 
+// restoreTimeout bounds pg_restore, which can take minutes on a large audit log.
+const restoreTimeout = 30 * time.Minute
+
 // restoreDomainDB replaces the live database with the bundle's pg_dump, via
 // pg_restore --clean --if-exists (drops known objects first, then recreates
 // them — a clean replacement rather than a merge with what is currently live).
@@ -341,7 +345,20 @@ func (a *App) restoreDomainDB(cmd *cobra.Command, cfg *config.Config, bundlePath
 	if _, err := os.Stat(dumpPath); err != nil {
 		return fmt.Errorf("backup restore: domain-db: %w", err)
 	}
-	if _, err := a.runner().Run(ctx(cmd), nil, backup.PgRestoreArgs(cfg.Postgres.Service, dumpPath)...); err != nil {
+	if cfg.Postgres.ServiceFile == "" {
+		return errors.New("backup restore: domain-db: postgres.service_file is not set, so the database name is unknown")
+	}
+	dbname, err := backup.ServiceDBName(cfg.Postgres.ServiceFile, cfg.Postgres.Service)
+	if err != nil {
+		return fmt.Errorf("backup restore: domain-db: %w", err)
+	}
+	// The dump goes in on stdin: the bundle directory is root only, and pg_restore
+	// runs as postgres. A restore takes longer than the default command timeout.
+	dump, err := os.ReadFile(dumpPath) // #nosec G304 -- path inside the validated bundle
+	if err != nil {
+		return fmt.Errorf("backup restore: domain-db: %w", err)
+	}
+	if _, err := sys.New(restoreTimeout, nil).Run(ctx(cmd), dump, backup.PgRestoreArgs(dbname)...); err != nil {
 		return fmt.Errorf("backup restore: pg_restore: %w", err)
 	}
 	return nil

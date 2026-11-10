@@ -106,15 +106,30 @@ func KeyFingerprint(ctx context.Context, x Exec, armored []byte) (string, error)
 	return parseFingerprint(res.Stdout)
 }
 
-// parseFingerprint returns the first (primary key) fpr record of gpg colon output.
+// parseFingerprint returns the primary key fingerprint of gpg colon output (the
+// fpr record that follows the pub record; later fpr records belong to subkeys).
+// The download must hold exactly one primary key: gpg --dearmor puts every key
+// into the keyring apt trusts for the repository, so a second key appended to
+// the genuine one would be trusted without ever being checked.
 func parseFingerprint(colons []byte) (string, error) {
+	pubs := 0
+	fpr := ""
 	for _, line := range strings.Split(string(colons), "\n") {
 		f := strings.Split(line, ":")
-		if len(f) > 9 && f[0] == "fpr" && f[9] != "" {
-			return normalizeFingerprint(f[9]), nil
+		switch {
+		case f[0] == "pub":
+			pubs++
+		case pubs == 1 && fpr == "" && len(f) > 9 && f[0] == "fpr" && f[9] != "":
+			fpr = normalizeFingerprint(f[9])
 		}
 	}
-	return "", errors.New("gpg reported no fingerprint for the key")
+	if pubs > 1 {
+		return "", fmt.Errorf("the key download holds %d primary keys, expected exactly one: refusing to trust it", pubs)
+	}
+	if fpr == "" {
+		return "", errors.New("gpg reported no fingerprint for the key")
+	}
+	return fpr, nil
 }
 
 // normalizeFingerprint compares fingerprints without spaces and case.

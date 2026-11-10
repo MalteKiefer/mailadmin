@@ -172,3 +172,16 @@ func TestIsFail2banPong(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDecisionsNestedAlerts(t *testing.T) {
+	data := []byte(`[{"id":7,"scenario":"crowdsecurity/ssh-bf","simulated":false,"decisions":[
+		{"value":"203.0.113.7","scenario":"crowdsecurity/ssh-bf","type":"ban","duration":"3h","origin":"crowdsec","scope":"Ip","simulated":false},
+		{"value":"203.0.113.8","type":"ban","simulated":true}]}]`)
+	got, err := parseDecisions(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].IP != "203.0.113.7" || got[0].Scenario != "crowdsecurity/ssh-bf" {
+		t.Fatalf("got %+v, want the one enforced nested decision", got)
+	}
+}

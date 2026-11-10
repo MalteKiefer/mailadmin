@@ -1,6 +1,8 @@
 package backup
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -30,16 +32,28 @@ func TestPgRestoreListArgs(t *testing.T) {
 }
 
 func TestPgRestoreArgs(t *testing.T) {
-	got := PgRestoreArgs("mail-admin", "/tmp/db.dump")
+	got := PgRestoreArgs("mail")
 	want := []string{
+		RunuserBin, "-u", "postgres", "--",
 		PgRestoreBin,
 		"--format=custom",
+		"--single-transaction",
 		"--clean",
 		"--if-exists",
-		"--dbname=service=mail-admin",
-		"/tmp/db.dump",
+		"--dbname=mail",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("PgRestoreArgs = %v, want %v", got, want)
+	}
+}
+
+func TestServiceDBName(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "svc.conf")
+	_ = os.WriteFile(p, []byte("# x\n[other]\ndbname=nope\n[mail-admin]\ndbname = mail\nuser=mailadmin\n"), 0o600)
+	if got, err := ServiceDBName(p, "mail-admin"); err != nil || got != "mail" {
+		t.Fatalf("ServiceDBName = %q, %v", got, err)
+	}
+	if _, err := ServiceDBName(p, "missing"); err == nil {
+		t.Fatal("an unknown service must fail")
 	}
 }

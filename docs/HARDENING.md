@@ -12,16 +12,21 @@ File: `/etc/ssh/sshd_config.d/00-mailadmin-hardening.conf` (loaded first, so it
 wins over later drop-ins such as cloud-init's).
 
 - Public key login only. Password and keyboard-interactive login are off, but
-  only when an `authorized_keys` file with a key exists for root or a user in
-  `/home`. Without one, password login stays on and install prints a warning, so
-  the operator cannot be locked out.
-- `PermitRootLogin prohibit-password`, `MaxAuthTries 3`, `MaxSessions 2`,
+  only when the account the operator logged in with (the audit login uid, which
+  survives sudo and su) has a key the hardened sshd accepts: Ed25519 or ECDSA
+  (also as FIDO keys), or RSA with at least 3072 bits. Keys bound to a forced
+  command or `restrict` do not count. Without such a key, password login stays
+  on and install prints a warning, so the operator cannot be locked out.
+- `PermitRootLogin prohibit-password`, unless the operator logs in as root with a
+  password and root has no usable key; then root login stays as configured.
+- `MaxAuthTries 3`, `MaxSessions 2`,
   `LoginGraceTime 30`, `MaxStartups 10:30:60`, idle sessions closed after 10
   minutes, `TCPKeepAlive no` (the keepalive runs inside the encrypted channel).
 - No forwarding of any kind (`DisableForwarding`, TCP, agent, X11, tunnels).
 - Key exchange: `mlkem768x25519-sha256` (hybrid post-quantum), `sntrup761x25519`,
   `curve25519`. Ciphers: `chacha20-poly1305`, AES-GCM. MACs: SHA-2 ETM and
-  `umac-128-etm`. Host keys: Ed25519 and RSA (3072 bit minimum). Each list is cut
+  `umac-128-etm`. Host keys: Ed25519 and RSA (3072 bit minimum). User keys:
+  Ed25519, ECDSA and RSA (3072 bit minimum). Each list is cut
   to what the installed OpenSSH supports, so the file also works on older releases.
 - The config is checked with `sshd -t` before the reload. A rejected config is
   rolled back.
@@ -64,7 +69,7 @@ and sends HSTS on the mail host.
 | Core dumps | off (`limits.d` and systemd-coredump) |
 | Logging | journald persistent and compressed |
 | Audit | auditd with rules for identities, sudoers, SSH config, mailadmin config, DKIM keys, TLS keys, firewall, logins, module loads and root commands of logged-in users |
-| Brute force | CrowdSec agent with the linux, sshd, postfix and dovecot collections, reading the journal, and the nftables bouncer (bans in CrowdSec's own table). The CrowdSec repository key is checked like the PGDG and Caddy keys (`--crowdsec-fingerprint`). With `--crowdsec-enroll-key` (asked during an interactive install) the instance joins the CrowdSec console. The agent shares attack signals with the CrowdSec central API in return for the community blocklist. |
+| Brute force | CrowdSec agent with the linux, sshd, postfix and dovecot collections, reading the journal, and the nftables bouncer (bans in CrowdSec's own table). sshd is read through the source `cscli setup` creates, Postfix and Dovecot through mailadmin's own journal sources, so no log line is counted twice. Install creates the allowlist `mailadmin` that `security allowlist` manages. The CrowdSec repository key is checked like the PGDG and Caddy keys (`--crowdsec-fingerprint`). With `--crowdsec-enroll-key` (asked during an interactive install) the instance joins the CrowdSec console. The agent shares attack signals with the CrowdSec central API in return for the community blocklist. |
 | File integrity | AIDE, baseline built in the background on the first install, checked daily by Debian's timer |
 | MAC | AppArmor enabled |
 | Time | NTP sync enabled |
@@ -79,7 +84,7 @@ and sends HSTS on the mail host.
 ## Updates
 
 unattended-upgrades installs every update from the distribution (release,
-updates, security) and from the PostgreSQL and Caddy repositories, removes
+updates, security) and from the PostgreSQL, Caddy and CrowdSec repositories, removes
 unused packages and kernels, and reboots at 04:00 when an update needs it.
 needrestart restarts services after library updates. Install starts one update run
 right away, so a new host does not wait for the daily timer.

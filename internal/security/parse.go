@@ -29,6 +29,14 @@ type cscliDecision struct {
 	Simulated  bool   `json:"simulated"`
 }
 
+// cscliAlert is one element of `cscli decisions list -o json`. Current cscli
+// emits alerts that carry their decisions in a nested array; older releases
+// emitted flat decision objects. Both shapes decode into this type.
+type cscliAlert struct {
+	cscliDecision
+	Decisions []cscliDecision `json:"decisions"`
+}
+
 // parseDecisions decodes `cscli decisions list -o json`. The command emits a
 // JSON array (or the literal `null` when empty). Simulated decisions are
 // dropped — they are not enforced and would mislead an operator reading a ban
@@ -38,10 +46,18 @@ func parseDecisions(data []byte) ([]Decision, error) {
 	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
 		return nil, nil
 	}
-	var raw []cscliDecision
+	var alerts []cscliAlert
 	dec := json.NewDecoder(bytes.NewReader(data))
-	if err := dec.Decode(&raw); err != nil {
+	if err := dec.Decode(&alerts); err != nil {
 		return nil, fmt.Errorf("%w: decode decisions: %w", ErrInvalidResponse, err)
+	}
+	var raw []cscliDecision
+	for _, a := range alerts {
+		if len(a.Decisions) > 0 {
+			raw = append(raw, a.Decisions...)
+		} else {
+			raw = append(raw, a.cscliDecision)
+		}
 	}
 	out := make([]Decision, 0, len(raw))
 	for _, d := range raw {

@@ -140,3 +140,20 @@ func TestNftEmptySetHasNoElementsLine(t *testing.T) {
 		t.Fatalf("empty set rendered an elements line:\n%s", got)
 	}
 }
+
+func TestSetFstabEntryReplacesOldOptions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "fstab")
+	old := "UUID=1 / ext4 defaults 0 1\n/var/run/postgresql " + PostfixPgSocket + " none bind,nofail 0 0\n"
+	if err := os.WriteFile(p, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := setFstabEntry(p, PostfixPgSocket, PostfixPgFstabLine); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := os.ReadFile(p)
+	if want := "UUID=1 / ext4 defaults 0 1\n" + PostfixPgFstabLine + "\n"; string(got) != want {
+		t.Fatalf("fstab = %q, want %q", got, want)
+	}
+}

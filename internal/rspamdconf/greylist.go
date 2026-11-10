@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // GreylistFile is the config file the rspamd greylist module reads from
@@ -71,7 +72,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 	}
 
 	doc := Parse(content)
-	old, err := doc.Set(setting, duration)
+	old, err := doc.Set(setting, uclDuration(duration))
 	if err != nil {
 		return nil, "", err
 	}
@@ -80,6 +81,16 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 		return content, "", fmt.Errorf("rspamdconf: write %s: %w", path, err)
 	}
 	return content, unquote(old), nil
+}
+
+// uclDuration spells a validated duration (5m, 2h) the way libucl reads it. A
+// bare "m" is libucl's mega multiplier (5m = 5,000,000 seconds); minutes are
+// "min". s, h and d are time units in libucl already.
+func uclDuration(d string) string {
+	if n, ok := strings.CutSuffix(d, "m"); ok {
+		return n + "min"
+	}
+	return d
 }
 
 // RestoreFile writes content back to dir's ratelimit.conf/greylist.conf verbatim,

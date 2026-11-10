@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"mailadmin/internal/audit"
 	"mailadmin/internal/config"
 	"mailadmin/internal/db"
+	"mailadmin/internal/install"
 	"mailadmin/internal/output"
 	"mailadmin/internal/sys"
 	"mailadmin/internal/webserver"
@@ -227,6 +229,31 @@ func (a *App) syncMTASTS(c context.Context) error {
 		}
 	}
 	return ws.SyncMTASTS(c, names)
+}
+
+// syncRspamdSelectors rewrites rspamd's DKIM selector map from the database, so
+// a new domain, an enabled or disabled one, or a changed selector is signed (or
+// no longer signed) without install --adopt. A host whose rspamd config predates
+// install has no map and is left alone.
+func (a *App) syncRspamdSelectors(c context.Context) error {
+	if _, err := os.Stat(install.RspamdSelectorMap); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	d, err := a.db(c)
+	if err != nil {
+		return err
+	}
+	domains, err := d.ListDomains(c)
+	if err != nil {
+		return err
+	}
+	var pairs [][2]string
+	for _, dom := range domains {
+		if dom.Active && dom.DKIMSelector != "" {
+			pairs = append(pairs, [2]string{dom.Name, dom.DKIMSelector})
+		}
+	}
+	return install.SyncRspamdSelectors(c, install.Resolve(a.runner()), pairs)
 }
 
 // closeBackends releases pooled resources. Safe to call when nothing was opened.

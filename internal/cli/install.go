@@ -324,13 +324,14 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		return fmt.Errorf("crowdsec: %w", err)
 	}
 	// SSH last: everything else is in place if sshd rejects the new config and it is rolled back.
-	keyOnly, err := install.ApplySSHHardening(pctx, x)
+	keyOnly, account, err := install.ApplySSHHardening(pctx, x)
 	if err != nil {
 		return fmt.Errorf("ssh hardening: %w", err)
 	}
 	_, _ = fmt.Fprintln(out, "system hardening applied (sysctl, modules, auditd, CrowdSec, AIDE, unattended-upgrades, sshd)")
 	if !keyOnly {
-		_, _ = fmt.Fprintln(out, "warning: no authorized_keys found, so SSH password login stays on; add a key and rerun install --adopt")
+		_, _ = fmt.Fprintf(out, "warning: %s has no usable SSH key (Ed25519, ECDSA or RSA with 3072 bits or more), "+
+			"so SSH password login stays on; add a key and rerun install --adopt\n", account)
 	}
 
 	_, _ = fmt.Fprintf(out, `

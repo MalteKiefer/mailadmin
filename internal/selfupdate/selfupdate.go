@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -126,6 +127,10 @@ func IsNewer(current, latest string) bool {
 	return cpre && !lpre
 }
 
+// gitDescribeSuffix matches what the Makefile's `git describe --tags --dirty`
+// appends to a tag: commits since the tag and the hash, and/or "dirty".
+var gitDescribeSuffix = regexp.MustCompile(`^(?:\d+-g[0-9a-f]+)?(?:-?dirty)?$`)
+
 // parseSemver parses "vX.Y.Z" / "X.Y.Z" into a [3]int and reports whether a
 // pre-release suffix ("-...") is present. Build metadata ("+...") is ignored.
 // ok is false if it is not of that shape.
@@ -136,7 +141,9 @@ func parseSemver(s string) (out [3]int, pre bool, ok bool) {
 		s = s[:i]
 	}
 	if i := strings.IndexByte(s, '-'); i >= 0 {
-		s, pre = s[:i], true
+		// A git describe suffix (1.25.1-3-gabc1234, 1.25.1-dirty) marks a build
+		// made after the tag, not a pre-release: it must not rank below the tag.
+		s, pre = s[:i], !gitDescribeSuffix.MatchString(s[i+1:])
 	}
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {

@@ -60,7 +60,7 @@ resolver = "1.1.1.1:53"
 [backup]
 dns_backup_dir = "/var/lib/mailadmin/dns-backups"
 [logs]
-units = ["postfix","dovecot","rspamd","caddy","crowdsec","postgresql"]
+units = ["postfix","dovecot","rspamd","caddy","crowdsec","crowdsec-firewall-bouncer","postgresql"]
 ```
 `/etc/mailadmin/secrets.env` (mode 0600, root): `NJALLA_TOKEN=…`,
 `RSPAMD_CONTROLLER_PW=…`. Loaded into memory; NEVER echoed, logged, or put in

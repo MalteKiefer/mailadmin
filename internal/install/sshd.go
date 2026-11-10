@@ -36,9 +36,14 @@ func parseSSHPorts(config string) []int {
 		}
 	}
 	for _, line := range strings.Split(config, "\n") {
+		// sshd ends a line at a "#" that starts a word (Port 2222 # moved).
+		if i := strings.Index(line, "#"); i == 0 || (i > 0 && (line[i-1] == ' ' || line[i-1] == '\t')) {
+			line = line[:i]
+		}
 		// sshd accepts "Keyword value" and "Keyword=value", with optional blanks around "=".
+		// ListenAddress may carry a trailing "rdomain name".
 		fields := strings.Fields(strings.Replace(line, "=", " ", 1))
-		if len(fields) != 2 {
+		if len(fields) < 2 {
 			continue
 		}
 		switch {
