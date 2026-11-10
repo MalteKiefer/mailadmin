@@ -242,6 +242,9 @@ func (a *App) mailboxAdd(cmd *cobra.Command, address string, quotaBytes int64) e
 	}
 	if quotaBytes == 0 {
 		quotaBytes = DefaultQuotaBytes
+		if cfg, _, cerr := a.Config(); cerr == nil && cfg.Mail.QuotaDefault > 0 {
+			quotaBytes = cfg.Mail.QuotaDefault // [mail] quota_default in config.toml
+		}
 	}
 
 	d, err := a.db(c)

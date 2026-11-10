@@ -80,6 +80,9 @@ func writeAtomicOwned(path string, data []byte, mode os.FileMode, owner, group s
 // writeAtomicWith is the shared temp-file-and-rename path. prepare, when set, runs
 // on the temp file before it is renamed into place.
 func writeAtomicWith(path string, data []byte, mode os.FileMode, prepare func(f *os.File) error) error {
+	if err := recordFile(path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- config directories
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}

@@ -24,6 +24,18 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- One configuration file for everything: `/etc/mailadmin/config.<ext>`, where `<ext>` is `toml`, `yaml`, `yml` or `json`. Exactly one file is allowed. Secrets are in its `[secrets]` table (owner-only, 0600). A legacy `secrets.env` is still read and moved into the file by `install --adopt`.
+- `mailadmin config init` writes the default configuration of the latest release (`config.default.toml`, a release asset). Without network access the copy built into the binary is used (`--offline`). `--force` replaces an existing file.
+- `[mail] quota_default`, `tls_mode`, and `[hardening] system`, `ssh`, `crowdsec` switches (all on by default).
+- `mailadmin uninstall` removes what `install` added. It writes a verified full backup first to `/var/backups/mailadmin-uninstall-<time>/` (database, mail directories, DKIM keys, config with secrets, install record), then removes services, firewall table, packages install installed, repositories, the database and its cluster, users and data directories. `--no-backup` skips the backup, `--dry-run` shows the plan, `--yes` skips the host name prompt.
+- `install` keeps an install record in `/var/lib/mailadmin/install.json`, with a copy of each file it changed. Uninstall uses it to restore the originals.
+
+### Changed
+- `install` writes the single config file (0600) instead of `config.toml` and `secrets.env`.
+
 ## [v1.27.1] - 2026-11-10
 
 ### Fixed

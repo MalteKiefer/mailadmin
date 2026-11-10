@@ -121,7 +121,16 @@ func (a *App) Config() (*config.Config, *config.Secrets, error) {
 	if a.cfg != nil && a.secrets != nil {
 		return a.cfg, a.secrets, nil
 	}
-	cfg, secrets, err := config.Load(a.flags.configPath)
+	path := a.flags.configPath
+	if path == config.DefaultPath {
+		// Default location: use the one config file, whatever its format.
+		if found, derr := config.Discover(config.ConfigDir); derr == nil {
+			path = found
+		} else if !errors.Is(derr, config.ErrNoConfig) {
+			return nil, nil, derr
+		}
+	}
+	cfg, secrets, err := config.Load(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -328,6 +337,7 @@ func NewRootCmd() *cobra.Command {
 		newSecurityCmd(app),
 		newQueueCmd(app),
 		newServiceCmd(app),
+		newUninstallCmd(app),
 		newLogCmd(app),
 		newStatsCmd(app),
 		newSieveCmd(app),

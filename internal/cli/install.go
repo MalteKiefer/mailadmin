@@ -26,7 +26,7 @@ const installTimeout = 15 * time.Minute
 // installBinaryPath is where the mailadmin binary is installed.
 const installBinaryPath = "/usr/local/sbin/mailadmin"
 
-// installConfigDir holds config.toml and secrets.env.
+// installConfigDir holds the single config file (config.toml, with secrets).
 const installConfigDir = "/etc/mailadmin"
 
 type installInputs struct {
@@ -45,7 +45,7 @@ func newInstallCmd(app *App) *cobra.Command {
 		Long: `Installs PostgreSQL and Caddy from their upstream apt repositories, Postfix,
 Dovecot, rspamd and nftables from the distribution, creates the mailadmin
 database and service accounts, and writes /etc/mailadmin/config.toml with a
-generated secrets.env. It refuses to run on a host that already has mail-stack
+generated secrets. It refuses to run on a host that already has mail-stack
 state unless --adopt is given. --dry-run prints the plan and changes nothing.
 
 Repository keys are checked against the fingerprint you confirm. Find the
@@ -129,6 +129,14 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := app.confirm("install and configure the mail stack on " + ans.Hostname + "?"); err != nil {
 		return err
 	}
+	// The journal lets `mailadmin uninstall` undo this run. A host without a record
+	// (installed before the journal existed) gets its packages assumed from the list.
+	_, merr := install.LoadManifest()
+	legacy := errors.Is(merr, install.ErrNoManifest) && fileExists(filepath.Join(installConfigDir, "config.toml"))
+	if err := install.BeginJournal(Version); err != nil {
+		return fmt.Errorf("start install record: %w", err)
+	}
+	defer install.EndJournal()
 
 	pctx := ctx(c)
 	if err := install.AptUpdate(pctx, x); err != nil {
@@ -161,7 +169,22 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.CheckDovecotVersion(pctx, x); err != nil {
 		return err
 	}
+	before, err := install.InstalledPackages(pctx, x)
+	if err != nil {
+		return err
+	}
 	if err := install.AptInstall(pctx, x, pkgs, ans.Hostname); err != nil {
+		return err
+	}
+	after, err := install.InstalledPackages(pctx, x)
+	if err != nil {
+		return err
+	}
+	if legacy {
+		if err := install.AssumePackages(after); err != nil {
+			return err
+		}
+	} else if err := install.RecordPackages(newPackages(before, after)); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintln(out, "packages installed")
@@ -178,6 +201,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return err
 	}
 	if err := install.EnsureUser(pctx, x, "vmail", "/var/vmail", 5000); err != nil {
+		return err
+	}
+	if err := install.RecordUsers("mailadmin", "vmail"); err != nil {
 		return err
 	}
 	if err := install.EnsureHostDirs(pctx, x); err != nil {
@@ -198,6 +224,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.ApplyMigrations(pctx, x, in.adopt); err != nil {
 		return err
 	}
+	if err := install.RecordDatabase(install.PgDatabase, install.PgRoles); err != nil {
+		return err
+	}
 	if err := install.GrantMailadminRead(pctx, x); err != nil {
 		return err
 	}
@@ -214,6 +243,12 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		}
 		_, _ = fmt.Fprintln(out, "kept existing config (--adopt)")
 	}
+	// A config from before the single config file kept its secrets in secrets.env.
+	if moved, err := install.MigrateSecrets(installConfigDir); err != nil {
+		return fmt.Errorf("migrate secrets: %w", err)
+	} else if moved {
+		_, _ = fmt.Fprintln(out, "moved secrets.env into the [secrets] table of config.toml")
+	}
 
 	if err := installMailStack(app, c, in, ans, x, sr, out); err != nil {
 		return err
@@ -226,7 +261,7 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 // idempotent, so rerunning with --adopt converges the host to the same state.
 func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install.Answers, x install.Exec, sr *sys.Runner, out io.Writer) error {
 	pctx := ctx(c)
-	secrets, err := config.LoadSecrets(filepath.Join(installConfigDir, config.SecretsFile))
+	cfg, secrets, err := config.Load(filepath.Join(installConfigDir, "config.toml"))
 	if err != nil {
 		return err
 	}
@@ -291,6 +326,9 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.ApplyFirewall(pctx, x); err != nil {
 		return err
 	}
+	if err := install.RecordNftTable(); err != nil {
+		return err
+	}
 	if err := install.EnableUnit(pctx, x, "caddy"); err != nil {
 		return err
 	}
@@ -320,45 +358,58 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 			return err
 		}
 	}
-	if err := install.ApplySystemHardening(pctx, x); err != nil {
-		return fmt.Errorf("system hardening: %w", err)
+	// The hardening switches of config.toml [hardening] (all on by default).
+	if config.On(cfg.Hardening.System) {
+		if err := install.ApplySystemHardening(pctx, x); err != nil {
+			return fmt.Errorf("system hardening: %w", err)
+		}
+		if err := install.StartAIDEBaseline(pctx, x); err != nil {
+			return err
+		}
 	}
-	if err := install.ApplyCrowdSec(pctx, x, ans.Hostname, in.crowdsecEnrollKey); err != nil {
-		return fmt.Errorf("crowdsec: %w", err)
+	if config.On(cfg.Hardening.CrowdSec) {
+		if err := install.ApplyCrowdSec(pctx, x, ans.Hostname, in.crowdsecEnrollKey); err != nil {
+			return fmt.Errorf("crowdsec: %w", err)
+		}
 	}
 	// SSH last: everything else is in place if sshd rejects the new config and it is rolled back.
-	policy, account, err := install.ApplySSHHardening(pctx, x)
-	if err != nil {
-		return fmt.Errorf("ssh hardening: %w", err)
+	var policy install.SSHPolicy
+	var account string
+	if config.On(cfg.Hardening.SSH) {
+		policy, account, err = install.ApplySSHHardening(pctx, x)
+		if err != nil {
+			return fmt.Errorf("ssh hardening: %w", err)
+		}
 	}
-	if err := install.StartAIDEBaseline(pctx, x); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintln(out, "system hardening applied (sysctl, modules, auditd, CrowdSec, AIDE, unattended-upgrades, sshd)")
-	switch {
-	case account == "":
-		_, _ = fmt.Fprintln(out, "warning: the account you logged in with is unknown (no login uid, or not in /etc/passwd), "+
-			"so SSH password login and root login stay as they were")
-	case policy.KeyOnly:
-		_, _ = fmt.Fprintf(out, "SSH password login is off: %s logged in with a key the hardened sshd accepts\n", account)
-	default:
-		_, _ = fmt.Fprintf(out, "warning: %s did not log in over SSH with a key from its authorized_keys that the hardened sshd "+
-			"accepts (Ed25519, ECDSA, RSA with 3072 bits or more), so SSH password login stays on; "+
-			"log in with such a key and rerun install --adopt\n", account)
-	}
-	if !policy.StrictRSA {
-		_, _ = fmt.Fprintln(out, "warning: an RSA key shorter than 3072 bits is in use, so RequiredRSASize is not set; replace it with an Ed25519 key")
+	_, _ = fmt.Fprintln(out, "hardening applied as configured in [hardening] (system, CrowdSec, SSH)")
+	if !config.On(cfg.Hardening.SSH) {
+		_, _ = fmt.Fprintln(out, "SSH hardening is off ([hardening] ssh = false)")
+	} else {
+		switch {
+		case account == "":
+			_, _ = fmt.Fprintln(out, "warning: the account you logged in with is unknown (no login uid, or not in /etc/passwd), "+
+				"so SSH password login and root login stay as they were")
+		case policy.KeyOnly:
+			_, _ = fmt.Fprintf(out, "SSH password login is off: %s logged in with a key the hardened sshd accepts\n", account)
+		default:
+			_, _ = fmt.Fprintf(out, "warning: %s did not log in over SSH with a key from its authorized_keys that the hardened sshd "+
+				"accepts (Ed25519, ECDSA, RSA with 3072 bits or more), so SSH password login stays on; "+
+				"log in with such a key and rerun install --adopt\n", account)
+		}
+		if !policy.StrictRSA {
+			_, _ = fmt.Fprintln(out, "warning: an RSA key shorter than 3072 bits is in use, so RequiredRSASize is not set; replace it with an Ed25519 key")
+		}
 	}
 
 	_, _ = fmt.Fprintf(out, `
 install: mail stack configured and running.
   binary:    %s
-  config:    %s/config.toml (secrets in %s/secrets.env, mode 0600)
+  config:    %s/config.toml (secrets included, mode 0600)
   database:  %s (roles %s)
   firewall:  inbound limited to 22 plus %v (edit with mailadmin-fw-port)
 
 Add this DNS record for %s (selector %s):
-`, installBinaryPath, installConfigDir, installConfigDir, install.PgDatabase,
+`, installBinaryPath, installConfigDir, install.PgDatabase,
 		strings.Join(install.PgRoles, ", "), install.DefaultTCPPorts, ans.Domain, ans.Selector)
 	pub, err := os.ReadFile(filepath.Join(install.DKIMDirPath, ans.Domain+"."+ans.Selector+".key.pub")) // #nosec G304 -- fixed dkim dir
 	if err == nil {
@@ -462,7 +513,7 @@ func printInstallPlan(out io.Writer, d install.Distro, a install.Answers, confli
 	_, _ = fmt.Fprintf(out, "  mail:      postfix, dovecot, rspamd, caddy configured for %s\n", a.Domain)
 	_, _ = fmt.Fprintf(out, "  firewall:  nftables, inbound limited to 22 and mail/web ports\n")
 	_, _ = fmt.Fprintf(out, "  hardening: sshd (keys only once the login account logs in with a key), sysctl, modules, auditd, CrowdSec, AIDE, AppArmor, unattended-upgrades\n")
-	_, _ = fmt.Fprintf(out, "  writes:    %s/config.toml, %s/secrets.env, %s\n", installConfigDir, installConfigDir, installBinaryPath)
+	_, _ = fmt.Fprintf(out, "  writes:    %s/config.toml, %s\n", installConfigDir, installBinaryPath)
 	if len(conflicts) > 0 {
 		_, _ = fmt.Fprintf(out, "  adopting existing state: %s\n", strings.Join(conflicts, ", "))
 	}
@@ -473,4 +524,24 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// newPackages returns the packages in after that are not in before.
+func newPackages(before, after []string) []string {
+	had := map[string]bool{}
+	for _, p := range before {
+		had[p] = true
+	}
+	var out []string
+	for _, p := range after {
+		if !had[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

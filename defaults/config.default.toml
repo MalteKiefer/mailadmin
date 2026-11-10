@@ -1,0 +1,92 @@
+# mailadmin configuration: the single source of truth for this host.
+#
+# Location: /etc/mailadmin/config.<ext>. Accepted formats: TOML (this file),
+# YAML (config.yaml or config.yml) and JSON (config.json). Keep exactly one.
+# Every key below is optional unless the comment says "required".
+# Precedence: built-in defaults < this file < MAILADMIN_* environment variables.
+#
+# Secrets live in the [secrets] table. The file must then be owner-only:
+#   chmod 0600 /etc/mailadmin/config.toml
+# Keys are the names used in secrets.env. Empty values mean "not configured".
+#
+# After changing a value that generates a file (Postfix, Dovecot, Caddy,
+# nftables, rspamd), run: mailadmin install --adopt --dry-run, then without
+# --dry-run to apply it.
+
+[postgres]
+# Required. libpq service name the mail database is reached through.
+service = "mail-admin"
+# Absolute path of the libpq service file. Default lookup when unset.
+service_file = "/var/lib/mailadmin/.pg_service.conf"
+
+[mail]
+# Required. Public FQDN of the mail host (MX, certificate name).
+hostname = "mail.example.com"
+# Required. Directory where rspamd keeps the DKIM keys.
+dkim_dir = "/var/lib/rspamd/dkim"
+# Required. DKIM selector used for new domains.
+default_selector = "mail2026"
+# Certificate (PEM) used to derive DANE TLSA records. Empty: read via STARTTLS.
+tls_cert = "/etc/ssl/mail/fullchain.pem"
+# How the mail host certificate is obtained: "acme" (public CA) or "internal"
+# (Caddy's local CA, for test hosts only).
+tls_mode = "acme"
+# Default mailbox quota in bytes for `mailbox add` without --quota (5 GiB).
+quota_default = 5368709120
+
+[server]
+# Required. Public IPv4 address of the host.
+ipv4 = "203.0.113.10"
+# Public IPv6 address of the host, optional.
+ipv6 = "2001:db8::10"
+
+[dns]
+# Resolver used for verification queries (host:port).
+resolver = "1.1.1.1:53"
+
+[backup]
+# Required. Directory for DNS zone snapshots.
+dns_backup_dir = "/var/lib/mailadmin/dns-backups"
+# Directory for full disaster recovery bundles (backup create). Empty: pass --out.
+dir = "/var/lib/mailadmin/backups"
+
+[logs]
+# Units that doctor, service and log may read or control.
+units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
+
+[notify]
+# ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
+url = ""
+
+[hardening]
+# Master switch for install's system hardening (sysctl, modules, auditd, AIDE,
+# AppArmor, unattended upgrades, timers).
+system = true
+# SSH hardening drop-in (key only once the login account uses a key).
+ssh = true
+# CrowdSec agent and nftables bouncer.
+crowdsec = true
+
+[repos]
+# Expected fingerprints of the vendor repository keys. install refuses a key
+# that does not match. Empty: the value must be given with --*-fingerprint.
+pgdg_fingerprint = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+caddy_fingerprint = "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
+crowdsec_fingerprint = "6A89E3C2303A901A889971D3376ED5326E93CD0C"
+
+[secrets]
+# DNS provider credentials: set only the one your domains use.
+NJALLA_TOKEN = ""
+DESEC_TOKEN = ""
+CLOUDFLARE_API_TOKEN = ""
+INWX_USER = ""
+INWX_PASSWORD = ""
+INWX_SHARED_SECRET = ""
+SERVERCOW_USERNAME = ""
+SERVERCOW_PASSWORD = ""
+SERVFAIL_API_KEY = ""
+SERVFAIL_SERVER = ""
+# rspamd controller password. install generates it; set your own to change it.
+RSPAMD_CONTROLLER_PW = ""
+# Bearer token for [notify] url.
+NTFY_TOKEN = ""

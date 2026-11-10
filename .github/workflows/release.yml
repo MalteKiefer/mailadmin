@@ -53,7 +53,8 @@ jobs:
       - name: Checksums
         run: |
           set -euo pipefail
-          ( cd dist && sha256sum mailadmin-linux-* *.cdx.json > SHA256SUMS )
+          cp defaults/config.default.toml dist/config.default.toml
+          ( cd dist && sha256sum mailadmin-linux-* *.cdx.json config.default.toml > SHA256SUMS )
           cat dist/SHA256SUMS
 
       - name: Publish release

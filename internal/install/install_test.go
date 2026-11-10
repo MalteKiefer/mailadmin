@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -146,14 +147,7 @@ func TestAnswersValidate(t *testing.T) {
 func TestRenderedConfigLoads(t *testing.T) {
 	dir := t.TempDir()
 	a := Answers{Hostname: "mx.example.com", Domain: "example.com", IPv4: "192.0.2.10", IPv6: "2001:db8::10", Selector: "mail2026"}
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), RenderConfig(a), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	secrets, err := RenderSecrets()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "secrets.env"), secrets, 0o600); err != nil {
+	if err := WriteConfig(dir, a); err != nil {
 		t.Fatal(err)
 	}
 	cfg, sec, err := config.Load(filepath.Join(dir, "config.toml"))
@@ -168,6 +162,39 @@ func TestRenderedConfigLoads(t *testing.T) {
 	}
 }
 
+// A legacy secrets.env is moved into the TOML config and removed; a second run
+// finds nothing to move.
+func TestMigrateSecretsIntoConfig(t *testing.T) {
+	dir := t.TempDir()
+	a := Answers{Hostname: "mx.example.com", Domain: "example.com", IPv4: "192.0.2.10", Selector: "mail2026"}
+	if err := WriteConfig(dir, a); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an old host: no [secrets] table, a secrets.env instead.
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
+	noSecrets := regexp.MustCompile(`(?s)\[secrets\].*`).ReplaceAll(raw, nil)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), noSecrets, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets.env"), []byte("DESEC_TOKEN=\"tok\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := MigrateSecrets(dir)
+	if err != nil || !moved {
+		t.Fatalf("migrate = %v, %v", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secrets.env")); !os.IsNotExist(err) {
+		t.Fatal("secrets.env must be removed after the move")
+	}
+	_, sec, err := config.Load(filepath.Join(dir, "config.toml"))
+	if err != nil || sec.DeSECToken() != "tok" {
+		t.Fatalf("token after migration = %q, %v", sec.DeSECToken(), err)
+	}
+	if again, _ := MigrateSecrets(dir); again {
+		t.Fatal("second migration must do nothing")
+	}
+}
+
 func TestWriteConfigRefusesOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	a := Answers{Hostname: "mx.example.com", Domain: "example.com", IPv4: "192.0.2.10", Selector: "mail2026"}
@@ -178,12 +205,12 @@ func TestWriteConfigRefusesOverwrite(t *testing.T) {
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("second WriteConfig: want ErrExists, got %v", err)
 	}
-	info, err := os.Stat(filepath.Join(dir, "secrets.env"))
+	info, err := os.Stat(filepath.Join(dir, "config.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("secrets.env mode %o, want 600", info.Mode().Perm())
+		t.Fatalf("config.toml mode %o, want 600 (it holds secrets)", info.Mode().Perm())
 	}
 }
 

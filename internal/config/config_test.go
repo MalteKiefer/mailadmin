@@ -248,42 +248,23 @@ func TestViewRedactsSecrets(t *testing.T) {
 
 func TestInitWritesAndRefusesOverwrite(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "mailadmin")
-	cfgPath, secPath, err := Init(dir)
+	body := []byte("[postgres]\nservice = \"mail-admin\"\n")
+	cfgPath, err := Init(dir, body, false)
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	cfgFI, err := os.Stat(cfgPath)
+	fi, err := os.Stat(cfgPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfgFI.Mode().Perm() != 0o644 {
-		t.Errorf("config mode = %#o, want 0644", cfgFI.Mode().Perm())
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("config mode = %#o, want 0600 (it can hold secrets)", fi.Mode().Perm())
 	}
-	secFI, err := os.Stat(secPath)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Init(dir, body, false); err == nil {
+		t.Fatal("expected Init to refuse overwrite without force")
 	}
-	if secFI.Mode().Perm() != 0o600 {
-		t.Errorf("secrets mode = %#o, want 0600", secFI.Mode().Perm())
-	}
-
-	// Second run must refuse to overwrite.
-	if _, _, err := Init(dir); err == nil {
-		t.Fatal("expected Init to refuse overwrite, got nil error")
-	}
-
-	// The starter config must round-trip through Load (decode + validate).
-	if _, _, lerr := Load(cfgPath); lerr != nil {
-		t.Fatalf("starter config should Load cleanly: %v", lerr)
-	}
-
-	// The written secrets file parses cleanly (empty values).
-	s, serr := LoadSecrets(secPath)
-	if serr != nil {
-		t.Fatalf("LoadSecrets on starter: %v", serr)
-	}
-	if s.HasNjalla() {
-		t.Error("starter secrets should have empty njalla token")
+	if _, err := Init(dir, body, true); err != nil {
+		t.Fatalf("force must replace: %v", err)
 	}
 }
 
