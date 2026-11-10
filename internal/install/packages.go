@@ -42,7 +42,7 @@ func aptEnv(args ...string) []string {
 
 // AptUpdate refreshes the package index.
 func AptUpdate(ctx context.Context, x Exec) error {
-	if _, err := x.Run(ctx, nil, "env", "DEBIAN_FRONTEND=noninteractive", trustedBin("apt-get"), "update"); err != nil {
+	if _, err := x.Run(ctx, nil, aptEnv("update")...); err != nil {
 		return fmt.Errorf("apt-get update: %w", err)
 	}
 	return nil

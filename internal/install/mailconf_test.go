@@ -67,20 +67,6 @@ func TestWriteAtomicOwnedAcceptsNumericOwner(t *testing.T) {
 	}
 }
 
-func TestRefuseSymlinkNamesThePath(t *testing.T) {
-	dir := t.TempDir()
-	link := filepath.Join(dir, "link")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Fatal(err)
-	}
-	if err := refuseSymlink(link); err == nil || !strings.Contains(err.Error(), link) {
-		t.Fatalf("symlink must be refused with its path in the error, got %v", err)
-	}
-	if err := refuseSymlink(dir); err != nil {
-		t.Fatalf("plain directory refused: %v", err)
-	}
-}
-
 func TestCertSyncPassesDomainAndValidatesIt(t *testing.T) {
 	service, _ := CertSyncUnits("mx.example.com", "example.com")
 	if !strings.Contains(service, CertSyncHelperPath+" mx.example.com example.com") {

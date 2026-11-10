@@ -42,6 +42,9 @@ func WriteSnapshot(dir string, s Snapshot) (string, error) {
 	if _, err := valid.Domain(s.Domain); err != nil {
 		return "", fmt.Errorf("write snapshot: %w", err)
 	}
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("write snapshot: %s is a symlink, refusing", dir)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -163,6 +166,11 @@ func writeNewFile(path string, data []byte) error {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	// Synced before the caller wipes anything: this file is the undo.
+	if err := f.Sync(); err != nil {
 		_ = f.Close()
 		return err
 	}
