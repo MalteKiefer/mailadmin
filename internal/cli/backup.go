@@ -286,14 +286,9 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		return err
 	}
 
-	// The config is merged before any component changes, so a refusal of the
-	// config (live YAML or JSON) cannot leave the database restored and the
-	// config not.
-	var configMerged []byte
-	if contains(components, backup.ComponentConfig) {
-		if configMerged, err = readConfigRestore(cfg, bundlePath); err != nil {
-			return err
-		}
+	configMerged, err := restorePreflight(cfg, bundlePath, man, components)
+	if err != nil {
+		return err
 	}
 
 	rec, err := a.auditor(ctx(cmd))
@@ -524,6 +519,37 @@ func (a *App) restoreSieve(cmd *cobra.Command, bundlePath string, man backup.Man
 		}
 	}
 	return nil
+}
+
+// restorePreflight checks everything the components read before any of them
+// changes the host: the config merge (refused for a live YAML or JSON config), the
+// database dump and the sieve scripts. A failure here changes nothing. A failure
+// later would leave the host half restored. It returns the merged config, or nil
+// when the config is not restored.
+func restorePreflight(cfg *config.Config, bundlePath string, man backup.Manifest, components []string) ([]byte, error) {
+	var configMerged []byte
+	for _, comp := range components {
+		switch comp {
+		case backup.ComponentDB:
+			if _, err := os.Stat(filepath.Join(bundlePath, backup.DBDumpFile)); err != nil {
+				return nil, fmt.Errorf("backup restore: domain-db: %w", err)
+			}
+		case backup.ComponentSieve:
+			for _, addr := range man.SieveScripts {
+				fp := filepath.Join(bundlePath, backup.SieveDir, backup.SieveFileName(addr))
+				if _, err := os.Stat(fp); err != nil {
+					return nil, fmt.Errorf("backup restore: sieve %s: %w", addr, err)
+				}
+			}
+		case backup.ComponentConfig:
+			merged, err := readConfigRestore(cfg, bundlePath)
+			if err != nil {
+				return nil, err
+			}
+			configMerged = merged
+		}
+	}
+	return configMerged, nil
 }
 
 // readConfigRestore returns the config a restore writes: the bundle's config.toml
