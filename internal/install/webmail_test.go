@@ -145,3 +145,14 @@ func TestDovecotConfEnablesMetadata(t *testing.T) {
 		}
 	}
 }
+
+// Clients need the default folders with their SPECIAL-USE attributes, or alps shows
+// only INBOX.
+func TestDovecotConfCreatesDefaultFolders(t *testing.T) {
+	conf := DovecotConf(nil)
+	for _, want := range []string{"namespace inbox {", "mailbox Sent {", "special_use = \\Sent", "special_use = \\Drafts", "special_use = \\Archive"} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("managed dovecot config lacks %q", want)
+		}
+	}
+}
