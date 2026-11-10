@@ -8,7 +8,8 @@ A single-binary, console-only administration CLI for a self-hosted multi-domain
 mail server (Postfix + Dovecot + Rspamd + PostgreSQL, fronted by Caddy). It
 manages domains, mailboxes, aliases, app passwords, DKIM/DNS, the mail queue,
 services, logs, statistics, Sieve filters, the firewall/ban lists, and keeps an
-audit trail of every change.
+audit trail of every change. `mailadmin install` sets up the whole stack on a
+fresh Debian or Ubuntu host and hardens it.
 
 `mailadmin` is a static Go binary with no runtime dependencies. It runs as root
 over SSH; there is no HTTP server and no web UI.
@@ -17,6 +18,15 @@ over SSH; there is no HTTP server and no web UI.
 
 ## Features
 
+- **Install** — `mailadmin install` installs and configures PostgreSQL, Postfix,
+  Dovecot, Rspamd, Caddy, nftables and CrowdSec on Debian or Ubuntu, with
+  fingerprint-checked vendor repositories. `--adopt` converges an existing host.
+- **Host hardening** — SSH (key only, post-quantum key exchange), strict TLS for
+  Postfix and Dovecot (TLS 1.2+, AEAD, `X25519MLKEM768`), sysctl, auditd, AIDE,
+  AppArmor, unattended upgrades and CrowdSec, along BSI SYS.1.3 and CIS Level 1
+  and 2. See [docs/HARDENING.md](docs/HARDENING.md).
+- **Backup** — self-contained bundles (database, DKIM keys, Sieve, config) with
+  per-component restore. See [docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md).
 - **Domains** — add/remove/enable/disable, DKIM selector management, per-domain
   DNS record set, provider-driven publish/takeover/restore.
 - **Mailboxes** — create/remove (with optional maildir purge), password change
@@ -53,6 +63,9 @@ over SSH; there is no HTTP server and no web UI.
 
 ```
 mailadmin
+  install    [--hostname] [--domain] [--ipv4] [--ipv6] [--selector] [--tls acme|internal] [--adopt]
+             [--pgdg-fingerprint] [--caddy-fingerprint] [--crowdsec-fingerprint] [--crowdsec-enroll-key]
+  backup     create | list | restore
   domain     list | show <d> | add <d> [--selector] [--dns manual|njalla|desec|cloudflare|inwx|servercow|servfail]
              | remove <d> | enable <d> | disable <d>
              | set-dkim <d> <sel> | regen-dkim <d> | set-provider <d> <provider>
@@ -90,7 +103,8 @@ Exit codes: `0` ok · `1` runtime error · `2` usage error · `3` not-found ·
 
 ## Requirements
 
-Server-side components `mailadmin` talks to (it does not install them):
+Server-side components `mailadmin` talks to (`mailadmin install` installs and
+configures them):
 
 | Component | Used for |
 |-----------|----------|
@@ -110,6 +124,7 @@ with validated argument vectors — never a shell string):
 - `mailadmin-fw-port <open|close|list> <tcp|udp> <port>` — edit nftables sets.
 - `mailadmin-mta-sts-sync` — regenerate the Caddy MTA-STS include.
 
+`mailadmin install` runs on Debian or Ubuntu, amd64 or arm64 (tested on Debian 13).
 Build/development requirements: **Go 1.26+** (see `go.mod`).
 
 ---
@@ -127,6 +142,20 @@ curl -fsSLO https://github.com/MalteKiefer/mailadmin/releases/latest/download/SH
 sha256sum --ignore-missing -c SHA256SUMS
 sudo install -m 0755 mailadmin-linux-amd64 /usr/local/sbin/mailadmin
 ```
+
+### Set up a mail host
+
+On a fresh host, as root:
+
+```sh
+mailadmin install --hostname mail.example.com --domain example.com --ipv4 203.0.113.10
+```
+
+Missing values are asked interactively, including the optional CrowdSec console
+enrollment key. `--dry-run` prints the plan first. Install hardens SSH last: with
+an `authorized_keys` entry for root or a user, password login is switched off, so
+check that your key works before you close the session. Add `--adopt` on a host
+that already runs parts of the stack; existing files are kept.
 
 ### From source
 
@@ -147,6 +176,8 @@ sudo mailadmin update            # download + verify checksum + atomically repla
 `update` fetches the platform binary from the latest GitHub release, verifies it
 against the release's `SHA256SUMS` over TLS, and atomically renames it over the
 running executable (requires write access to the install path, i.e. root).
+`update` replaces only the binary. Run `mailadmin install --adopt` afterwards to
+refresh the helpers, units and hardening files.
 
 ---
 
@@ -272,6 +303,9 @@ documented in **[docs/DNS.md](docs/DNS.md)**.
   TTY (never argv).
 - **Audit** — every mutation writes an `audit_log` row; DNS takeovers snapshot
   the zone first.
+- **Host** — `mailadmin install` hardens SSH, TLS, kernel, accounts, logging and
+  updates. Every control and every deliberate deviation is listed in
+  [`docs/HARDENING.md`](docs/HARDENING.md).
 
 A full audit (OWASP Top 10 / ASVS / SOC 2, with CVSS-scored findings) lives in
 [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md). Architecture and engineering
@@ -293,13 +327,13 @@ The same gates run in CI on every push/PR (`.github/workflows/ci.yml`).
 
 ### Releasing
 
-Tag a version and push it — the release workflow builds the static
+Tag a signed version and push it — the release workflow builds the static
 `linux/amd64` + `linux/arm64` binaries, generates `SHA256SUMS`, and publishes a
 GitHub release that `mailadmin update` can consume:
 
 ```sh
-git tag v1.18.0
-git push origin v1.18.0
+git tag -s v1.25.0 -m v1.25.0
+git push origin v1.25.0
 ```
 
 The version embedded in the binary comes from the tag

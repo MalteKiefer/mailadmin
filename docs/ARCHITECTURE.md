@@ -25,9 +25,11 @@ mailadmin
   stats      inbound | outbound | spam | domain <d>
   sieve      show <a> | set <a> <file> | edit <a>
   audit      list [-n]
+  backup     create | list | restore
+  install    [--adopt] ...                 # install, configure and harden the host (docs/HARDENING.md)
   doctor                                   # health check (services, ports, TLS, rspamd config)
   config     show | check | edit | init
-  version | completion <shell>
+  version [--check] | update | completion <shell>
 ```
 
 Conventions:
@@ -78,7 +80,8 @@ error messages. Env `MAILADMIN_*` overrides config keys.
 | `internal/dnscheck` | verify SPF/DKIM/DMARC/MX/MTA-STS/TLS-RPT (miekg/dns) |
 | `internal/sys` | thin, audited exec wrapper (context, timeout, no shell, arg slices) |
 | `internal/postfixq` | postqueue/postsuper |
-| `internal/security` | cscli (crowdsec), nft (read + fw-port), fail2ban |
+| `internal/security` | cscli (crowdsec), nft (read + fw-port), fail2ban status if installed |
+| `internal/install` | `install`: packages, repositories, mail config, firewall, host hardening |
 | `internal/services` | systemctl (explicit unit allowlist) |
 | `internal/logs` | journalctl / caddy logs |
 | `internal/stats` | postfix+rspamd log parsing → series |

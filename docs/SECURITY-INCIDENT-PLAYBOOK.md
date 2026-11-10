@@ -229,7 +229,8 @@ show a sustained volume against the mail ports.
    mailadmin security overview
    ```
    This aggregates active bans, the allowlist, open ports, and whether
-   fail2ban is running, in one call — start here so you don't act on stale
+   fail2ban is running (hosts set up by `mailadmin install` use CrowdSec
+   instead, so it reports false there), in one call — start here so you don't act on stale
    information.
 
 2. **Inspect active bans in detail** if you need to correlate scenario/
