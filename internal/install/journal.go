@@ -1,6 +1,7 @@
 package install
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -136,6 +137,11 @@ func (j *journal) recordFile(path string) error {
 		data, rerr := os.ReadFile(path) // #nosec G304 -- path install is about to change
 		if rerr != nil {
 			return fmt.Errorf("save original of %s: %w", path, rerr)
+		}
+		// A file that already carries install's marker was written by an earlier
+		// mailadmin install: it is ours, not an original to restore.
+		if bytes.Contains(data, []byte(managedMarker)) {
+			break
 		}
 		name := backupName(path)
 		// name is a hex digest of path: the copy lives in the state dir.

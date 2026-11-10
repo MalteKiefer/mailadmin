@@ -103,3 +103,33 @@ func TestSummaryNamesWhatGoes(t *testing.T) {
 		}
 	}
 }
+
+// A file an earlier mailadmin install wrote (it carries the marker) is removed by
+// uninstall, not restored to that earlier content.
+func TestJournalTreatsMarkedFileAsCreated(t *testing.T) {
+	withStateDir(t)
+	file := filepath.Join(t.TempDir(), "90-mailadmin-hardening.conf")
+	if err := os.WriteFile(file, []byte("# Managed by mailadmin install.\nkernel.kptr_restrict = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := BeginJournal("test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(file, []byte("# Managed by mailadmin install.\nkernel.kptr_restrict = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	EndJournal()
+	m, err := LoadManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Files) != 1 || m.Files[0].Existed {
+		t.Fatalf("a marked file must count as created: %+v", m.Files)
+	}
+	if err := restoreFile(m.Files[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatal("marked file must be removed")
+	}
+}
