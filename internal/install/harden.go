@@ -314,12 +314,13 @@ func rsaBits(b64 string) int {
 	}
 	var parts [][]byte
 	for len(blob) >= 4 && len(parts) < 3 {
+		rest := blob[4:]
 		n := binary.BigEndian.Uint32(blob)
-		if uint64(n) > uint64(len(blob)-4) {
+		if n > uint32(min(len(rest), 1<<20)) { // #nosec G115 -- bounded to 1 MiB, fits uint32
 			return 0
 		}
-		parts = append(parts, blob[4:4+n])
-		blob = blob[4+n:]
+		parts = append(parts, rest[:n])
+		blob = rest[n:]
 	}
 	if len(parts) != 3 || string(parts[0]) != "ssh-rsa" {
 		return 0
