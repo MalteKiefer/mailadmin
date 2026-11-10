@@ -24,6 +24,18 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.24.1] - 2026-11-10
+
+### Fixed
+- A trailing slash in `dkim_dir` no longer bypasses the symlink check.
+- Restore creates a missing DKIM directory with mode 0750, not 0700, so rspamd can read the keys.
+- The DKIM helper refuses a link at the key directory. The reload marker is replaced by a rename, so a planted FIFO or file is never opened.
+- The snapshot directory must not be a link. Snapshots are synced before a wipe.
+- `dns restore` checks the snapshot provider before the dry run and the prompt.
+- Audit rows for `dns takeover`, `dns restore` and `dns migrate` are written after Ctrl+C. The clean audit has a 30 second timeout.
+- Prompted hostname and domain, and the selector flag, are lower cased.
+- Disabled records match Unicode case variants the way `EqualFold` does.
+
 ## [v1.24.0] - 2026-11-09
 
 ### Fixed
