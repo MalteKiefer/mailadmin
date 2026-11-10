@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -12,7 +11,8 @@ import (
 // 2.4 or newer. mailadmin writes the 2.4 configuration syntax, which 2.3 rejects.
 // It needs the package index, so call it after AptUpdate.
 func CheckDovecotVersion(ctx context.Context, x Exec) error {
-	res, err := x.Run(ctx, nil, "apt-cache", "policy", "dovecot-core")
+	// C locale: apt prints "Candidate:" only in English.
+	res, err := x.Run(ctx, nil, "env", "LC_ALL=C", trustedBin("apt-cache"), "policy", "dovecot-core")
 	if err != nil {
 		return fmt.Errorf("apt-cache policy dovecot-core: %w", err)
 	}
@@ -42,12 +42,4 @@ func candidateVersion(policy string) string {
 
 var dovecotVersionRe = regexp.MustCompile(`^(?:\d+:)?(\d+)\.(\d+)`)
 
-func dovecot24OrNewer(v string) bool {
-	m := dovecotVersionRe.FindStringSubmatch(v)
-	if m == nil {
-		return false
-	}
-	major, _ := strconv.Atoi(m[1])
-	minor, _ := strconv.Atoi(m[2])
-	return major > 2 || (major == 2 && minor >= 4)
-}
+func dovecot24OrNewer(v string) bool { return versionAtLeast(v, dovecotVersionRe, 2, 4) }

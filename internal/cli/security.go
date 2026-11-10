@@ -16,7 +16,7 @@ import (
 	"mailadmin/internal/valid"
 )
 
-// security() builds the CrowdSec/nft/fail2ban backend on the shared privileged
+// security() builds the CrowdSec/nft backend on the shared privileged
 // runner. It is cheap (no I/O) so each command constructs one on demand.
 func (a *App) security() *security.Service {
 	return security.New(a.runner())
@@ -240,7 +240,9 @@ func runBanAdd(app *App, cmd *cobra.Command, ip, dur string) error {
 	if dur != "" {
 		after["duration"] = dur
 	}
-	app.recordSecurity(cmd, "security.ban.add", value, nil, after)
+	if err := app.recordSecurity(cmd, "security.ban.add", value, nil, after); err != nil {
+		return err
+	}
 
 	r.Message("banned %s", value)
 	return nil
@@ -265,7 +267,9 @@ func runBanRemove(app *App, cmd *cobra.Command, ip string) error {
 	if err := app.security().RemoveBan(ctx(cmd), value); err != nil {
 		return err
 	}
-	app.recordSecurity(cmd, "security.ban.remove", value, map[string]string{"ip": value}, nil)
+	if err := app.recordSecurity(cmd, "security.ban.remove", value, map[string]string{"ip": value}, nil); err != nil {
+		return err
+	}
 	r.Message("removed ban %s", value)
 	return nil
 }
@@ -307,7 +311,9 @@ func runAllowAdd(app *App, cmd *cobra.Command, ip string) error {
 	if err := app.security().AddAllow(ctx(cmd), value); err != nil {
 		return err
 	}
-	app.recordSecurity(cmd, "security.allowlist.add", value, nil, map[string]string{"ip": value})
+	if err := app.recordSecurity(cmd, "security.allowlist.add", value, nil, map[string]string{"ip": value}); err != nil {
+		return err
+	}
 	r.Message("allowlisted %s", value)
 	return nil
 }
@@ -331,7 +337,9 @@ func runAllowRemove(app *App, cmd *cobra.Command, ip string) error {
 	if err := app.security().RemoveAllow(ctx(cmd), value); err != nil {
 		return err
 	}
-	app.recordSecurity(cmd, "security.allowlist.remove", value, map[string]string{"ip": value}, nil)
+	if err := app.recordSecurity(cmd, "security.allowlist.remove", value, map[string]string{"ip": value}, nil); err != nil {
+		return err
+	}
 	r.Message("removed allowlist entry %s", value)
 	return nil
 }
@@ -394,8 +402,10 @@ func runFirewallPort(app *App, cmd *cobra.Command, action, protoArg, portArg str
 	}
 
 	target := fmt.Sprintf("%s/%d", proto, port)
-	app.recordSecurity(cmd, "security.firewall."+action, target,
-		nil, portRow{Proto: proto, Port: port})
+	if err := app.recordSecurity(cmd, "security.firewall."+action, target,
+		nil, portRow{Proto: proto, Port: port}); err != nil {
+		return err
+	}
 	r.Message("%sed %s port %d", action, proto, port)
 	return nil
 }
@@ -418,8 +428,8 @@ func runOverview(app *App, cmd *cobra.Command) error {
 		return r.JSON(overviewJSONFrom(ov))
 	}
 
-	r.Message("bans: %d  allowlist: %d  open ports: %d  fail2ban: %s",
-		len(ov.Decisions), len(ov.Allowlist), len(ov.OpenPorts), yesNo(ov.Fail2ban))
+	r.Message("bans: %d  allowlist: %d  open ports: %d  bouncer: %s",
+		len(ov.Decisions), len(ov.Allowlist), len(ov.OpenPorts), yesNo(ov.BouncerActive))
 
 	banRows := make([][]string, 0, len(ov.Decisions))
 	for _, d := range ov.Decisions {
@@ -450,14 +460,14 @@ func runOverview(app *App, cmd *cobra.Command) error {
 // overviewJSON is the machine-readable shape of an overview: pre-flattened rows
 // so the JSON matches the columns shown in table/plain mode.
 type overviewJSON struct {
-	Bans      []banRow   `json:"bans"`
-	Allowlist []allowRow `json:"allowlist"`
-	OpenPorts []portRow  `json:"open_ports"`
-	Fail2ban  bool       `json:"fail2ban_running"`
+	Bans          []banRow   `json:"bans"`
+	Allowlist     []allowRow `json:"allowlist"`
+	OpenPorts     []portRow  `json:"open_ports"`
+	BouncerActive bool       `json:"bouncer_active"`
 }
 
 func overviewJSONFrom(ov security.Overview) overviewJSON {
-	out := overviewJSON{Fail2ban: ov.Fail2ban}
+	out := overviewJSON{BouncerActive: ov.BouncerActive}
 	for _, d := range ov.Decisions {
 		until := ""
 		if !d.Until.IsZero() {
@@ -488,20 +498,19 @@ func yesNo(b bool) string {
 // A missing/broken audit path must not mask the completed action (the change is
 // already applied), so recorder errors are swallowed after the side effect. The
 // backing DB pool is owned by the App and released via closeBackends.
-func (a *App) recordSecurity(cmd *cobra.Command, action, target string, before, after any) {
-	rec, err := a.auditor(ctx(cmd))
-	if err != nil {
-		return
+func (a *App) recordSecurity(cmd *cobra.Command, action, target string, before, after any) error {
+	if err := a.recordAudit(ctx(cmd), action, target, before, after); err != nil {
+		return fmt.Errorf("change applied but not audited: %w", err)
 	}
-	_ = rec.Record(ctx(cmd), action, target, before, after)
+	return nil
 }
 
 // ---- rspamd Bayes feedback (learn-spam / learn-ham) ------------------------
 //
 // This replaces the deleted mailadmin-rspamd-learn shell helper (see
 // docs/SECURITY-AUDIT.md L-3): a message source is either a Postfix queue id
-// (fetched via postcat) or a file path, which internal/rspamd confines —
-// after symlink resolution — to the vmail root before it ever reaches rspamc.
+// (fetched via postcat) or a file path, which internal/rspamd confines:
+// after symlink resolution, to the vmail root before it ever reaches rspamc.
 
 func newLearnSpamCmd(app *App) *cobra.Command {
 	return &cobra.Command{
@@ -561,7 +570,9 @@ func runLearn(app *App, cmd *cobra.Command, verdict, source string) error {
 		return trainErr
 	}
 
-	app.recordSecurity(cmd, "security.learn-"+verdict, identifier, nil, map[string]string{"kind": kind})
+	if err := app.recordSecurity(cmd, "security.learn-"+verdict, identifier, nil, map[string]string{"kind": kind}); err != nil {
+		return err
+	}
 	r.Message("trained rspamd (learn-%s) on %s %s", verdict, kind, identifier)
 	return nil
 }
@@ -763,7 +774,9 @@ func runRatelimitSet(app *App, cmd *cobra.Command, bucketArg, rateArg string) er
 
 	before := map[string]string{"rate": oldValue}
 	after := map[string]string{"rate": normalized}
-	app.recordSecurity(cmd, "security.ratelimit.set", bucketArg, before, after)
+	if err := app.recordSecurity(cmd, "security.ratelimit.set", bucketArg, before, after); err != nil {
+		return err
+	}
 
 	r.Message("set ratelimit %s to %s", bucketArg, normalized)
 	return nil
@@ -905,7 +918,9 @@ func runGreylistSet(app *App, cmd *cobra.Command, timeout, expire string) error 
 		return err
 	}
 
-	app.recordSecurity(cmd, "security.greylist.set", strings.Join(targets, ","), before, after)
+	if err := app.recordSecurity(cmd, "security.greylist.set", strings.Join(targets, ","), before, after); err != nil {
+		return err
+	}
 
 	for _, chg := range changes {
 		r.Message("set greylist %s to %s", chg.setting, chg.value)

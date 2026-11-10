@@ -26,7 +26,7 @@ func TestSSHHardeningConfKeepsPasswordLoginWithoutKeys(t *testing.T) {
 		Ciphers: map[string]bool{"chacha20-poly1305@openssh.com": true, "aes128-ctr": true},
 		MACs:    map[string]bool{"hmac-sha2-512-etm@openssh.com": true, "hmac-sha1": true},
 		KeySigs: map[string]bool{"ssh-ed25519": true, "rsa-sha2-512": true, "ssh-rsa": true}}
-	on := SSHHardeningConf(caps, true, true, []string{"/etc/ssh/ssh_host_ed25519_key"})
+	on := SSHHardeningConf(caps, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}, []string{"/etc/ssh/ssh_host_ed25519_key"})
 	for _, want := range []string{"PasswordAuthentication no\n", "AuthenticationMethods publickey\n", "PermitRootLogin prohibit-password\n",
 		"KexAlgorithms mlkem768x25519-sha256,curve25519-sha256\n", "Ciphers chacha20-poly1305@openssh.com\n",
 		"MACs hmac-sha2-512-etm@openssh.com\n", "RequiredRSASize 3072\n", "HostKey /etc/ssh/ssh_host_ed25519_key\n", "X11Forwarding no\n"} {
@@ -39,30 +39,78 @@ func TestSSHHardeningConfKeepsPasswordLoginWithoutKeys(t *testing.T) {
 			t.Errorf("weak algorithm %q must not be offered:\n%s", weak, on)
 		}
 	}
-	off := SSHHardeningConf(caps, false, false, nil)
+	off := SSHHardeningConf(caps, SSHPolicy{}, nil)
 	if strings.Contains(off, "PasswordAuthentication no") || strings.Contains(off, "AuthenticationMethods") ||
-		strings.Contains(off, "PermitRootLogin") {
+		strings.Contains(off, "PermitRootLogin") || strings.Contains(off, "RequiredRSASize") {
 		t.Fatalf("without a usable key, password login (root included) must stay on:\n%s", off)
 	}
-	old := SSHHardeningConf(SSHCaps{Version: "OpenSSH_8.9p1"}, true, true, nil)
+	old := SSHHardeningConf(SSHCaps{Version: "OpenSSH_8.9p1"}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}, nil)
 	if strings.Contains(old, "RequiredRSASize") || strings.Contains(old, "KexAlgorithms") {
 		t.Fatalf("options sshd 8.9 does not know, or empty lists, must be left out:\n%s", old)
 	}
 }
 
-func TestAuthorizedKeyIn(t *testing.T) {
+func TestReadAuthorizedKeys(t *testing.T) {
 	dir := t.TempDir()
-	empty := filepath.Join(dir, "empty")
-	comment := filepath.Join(dir, "comment")
-	key := filepath.Join(dir, "key")
-	_ = os.WriteFile(empty, nil, 0o600)
-	_ = os.WriteFile(comment, []byte("# nothing\n\n"), 0o600)
-	_ = os.WriteFile(key, []byte("ssh-ed25519 AAAAC3Nza test\n"), 0o600)
-	if authorizedKeyIn([]string{empty, comment, filepath.Join(dir, "missing")}) {
-		t.Fatal("no key line means no key")
+	p := filepath.Join(dir, "authorized_keys")
+	ed := base64.StdEncoding.EncodeToString([]byte("\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x01k"))
+	_ = os.WriteFile(p, []byte("# comment\n\nssh-ed25519 "+ed+" me\nssh-rsa "+rsaKey(2048)+" old\n"), 0o600)
+	keys := readAuthorizedKeys(p)
+	if len(keys) != 2 || !keys[0].usable || keys[1].usable || keys[1].rsaBits != 2048 ||
+		!strings.HasPrefix(keys[0].fingerprint, "SHA256:") {
+		t.Fatalf("keys = %+v", keys)
 	}
-	if !authorizedKeyIn([]string{empty, key}) {
-		t.Fatal("a key line must be found")
+	if readAuthorizedKeys(filepath.Join(dir, "missing")) != nil {
+		t.Fatal("a missing file has no keys")
+	}
+}
+
+func TestDecideSSHPolicyFollowsTheActualLogin(t *testing.T) {
+	ed := authKey{fingerprint: "SHA256:ed", usable: true}
+	backup := authKey{fingerprint: "SHA256:backup", usable: true}
+	weakRSA := authKey{fingerprint: "SHA256:rsa", usable: false, rsaBits: 2048}
+	key := func(fp, typ string) sshLogin { return sshLogin{method: "publickey", keyType: typ, fingerprint: fp} }
+	cases := []struct {
+		name    string
+		account string
+		known   bool
+		keys    []authKey
+		root    []authKey
+		logins  map[string]sshLogin
+		want    SSHPolicy
+	}{
+		{"root with its own key", "root", true, []authKey{ed}, []authKey{ed},
+			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}},
+		{"root by password, backup key present", "root", true, []authKey{backup}, []authKey{backup},
+			map[string]sshLogin{"root": {method: "password"}}, SSHPolicy{KeyOnly: false, RootKeyOnly: false, StrictRSA: true}},
+		{"admin by key, root has none", "admin", true, []authKey{ed}, nil,
+			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}},
+		{"admin by password", "admin", true, []authKey{ed}, nil,
+			map[string]sshLogin{"admin": {method: "password"}}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
+		{"key from another file", "admin", true, []authKey{ed}, nil,
+			map[string]sshLogin{"admin": key("SHA256:other", "ED25519")}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
+		{"weak RSA in use keeps RSA", "admin", true, []authKey{weakRSA}, nil,
+			map[string]sshLogin{"admin": key("SHA256:rsa", "RSA")}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: false}},
+		{"root used an unknown RSA key", "admin", true, []authKey{ed}, nil,
+			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519"), "root": key("SHA256:x", "RSA")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: false}},
+		{"no login uid", "", false, nil, []authKey{ed},
+			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: false, RootKeyOnly: false, StrictRSA: true}},
+		{"no journal entry", "admin", true, []authKey{ed}, nil, map[string]sshLogin{}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
+	}
+	for _, c := range cases {
+		if got := decideSSHPolicy(c.account, c.known, c.keys, c.root, c.logins); got != c.want {
+			t.Errorf("%s: policy = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestAcceptedLineParsing(t *testing.T) {
+	m := acceptedRe.FindStringSubmatch("Accepted publickey for root from 203.0.113.7 port 51234 ssh2: ED25519 SHA256:abcDEF+/x")
+	if m == nil || m[1] != "publickey" || m[2] != "root" || m[3] != "ED25519" || m[4] != "SHA256:abcDEF+/x" {
+		t.Fatalf("match = %q", m)
+	}
+	if m := acceptedRe.FindStringSubmatch("Accepted password for admin from 2001:db8::1 port 2 ssh2"); m == nil || m[1] != "password" || m[2] != "admin" {
+		t.Fatalf("password match = %q", m)
 	}
 }
 
@@ -167,23 +215,31 @@ func TestCrowdSecReplacesFail2ban(t *testing.T) {
 			t.Fatal("fail2ban must not be installed next to CrowdSec")
 		}
 	}
-	a := CrowdSecAcquis()
-	for _, unit := range []string{"postfix.service", "postfix@-.service", "dovecot.service"} {
-		if !strings.Contains(a, "_SYSTEMD_UNIT="+unit) {
+	both := CrowdSecAcquis(false, false)
+	for _, unit := range []string{"ssh.service", "postfix.service", "postfix@-.service", "dovecot.service"} {
+		if !strings.Contains(both, "_SYSTEMD_UNIT="+unit) {
 			t.Errorf("acquisition misses %s", unit)
 		}
 	}
-	if strings.Contains(a, "ssh.service") {
-		t.Error("cscli setup already reads ssh.service; a second source counts every failure twice")
+	if a := CrowdSecAcquis(true, false); strings.Contains(a, "ssh.service") || !strings.Contains(a, "dovecot.service") {
+		t.Errorf("sshd already read elsewhere must not be added again:\n%s", a)
+	}
+	if CrowdSecAcquis(true, true) != "" {
+		t.Error("nothing missing must give an empty acquisition")
+	}
+	etc := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(etc, "acquis.d"), 0o755)
+	_ = os.WriteFile(filepath.Join(etc, "acquis.d", "setup.sshd.yaml"), []byte("journalctl_filter:\n  - _SYSTEMD_UNIT=ssh.service\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(etc, "acquis.d", "setup.postfix.yaml"), []byte("filenames:\n  - /nonexistent/mail.log\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(etc, "acquis.d", "mailadmin.yaml"), []byte("_SYSTEMD_UNIT=postfix.service\n"), 0o644)
+	if ssh, mail := crowdSecCoverage(etc); !ssh || mail {
+		t.Errorf("coverage = ssh %v mail %v, want true false (own file and missing log files do not count)", ssh, mail)
 	}
 	u := UnattendedUpgrades()
 	for _, site := range []string{"apt.postgresql.org", "dl.cloudsmith.io", "packagecloud.io"} {
 		if !strings.Contains(u, `"site=`+site+`";`) {
 			t.Errorf("unattended-upgrades misses vendor site %s:\n%s", site, u)
 		}
-	}
-	if _, ok := hardeningFiles()[CrowdSecAcquisPath]; !ok {
-		t.Fatal("acquisition file not written")
 	}
 }
 
@@ -207,5 +263,26 @@ func TestSetShellVar(t *testing.T) {
 	}
 	if got := SetShellVar("HISTORY=7", "ENABLED", `"true"`); got != "HISTORY=7\nENABLED=\"true\"\n" {
 		t.Fatalf("append: %q", got)
+	}
+}
+
+func TestOperatorSSHKeepsStricterSettings(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "10-site.conf")
+	_ = os.WriteFile(a, []byte("PermitRootLogin no # site rule\nMatch User x\nAuthenticationMethods any\n"), 0o600)
+	b := filepath.Join(dir, "sshd_config")
+	_ = os.WriteFile(b, []byte("PermitRootLogin yes\nAuthenticationMethods publickey,keyboard-interactive\n"), 0o600)
+	prl, am := operatorSSH([]string{a, b})
+	if prl != "no" || am != "publickey,keyboard-interactive" {
+		t.Fatalf("got %q %q", prl, am)
+	}
+	conf := SSHHardeningConf(SSHCaps{}, SSHPolicy{KeyOnly: true, RootLoginNo: true, AuthMethods: am}, nil)
+	for _, want := range []string{"PermitRootLogin no\n", "AuthenticationMethods publickey,keyboard-interactive\n"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("missing %q:\n%s", want, conf)
+		}
+	}
+	if strings.Contains(conf, "KbdInteractiveAuthentication no") {
+		t.Error("keyboard-interactive is a required factor and must stay on")
 	}
 }

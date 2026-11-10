@@ -10,7 +10,7 @@ import (
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // TestStatusTableAlignment renders a coloured status table and confirms that,
-// once ANSI codes are stripped, every column starts at the same offset — i.e.
+// once ANSI codes are stripped, every column starts at the same offset, i.e.
 // the escape bytes are not counted toward tabwriter width.
 func TestStatusTableAlignment(t *testing.T) {
 	var buf bytes.Buffer

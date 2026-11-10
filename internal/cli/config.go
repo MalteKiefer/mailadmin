@@ -29,7 +29,7 @@ func newConfigCmd(app *App) *cobra.Command {
 		Short: "Validate config and secrets",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runConfigCheck(app)
+			return runConfigCheck(app, c)
 		},
 	}
 
@@ -72,7 +72,7 @@ func runConfigShow(app *App) error {
 // runConfigCheck runs the config/secret sanity checks and renders a table. It
 // returns a runtime error (exit 1) if any check failed so scripts can gate on
 // the exit code, while still printing the full result set first.
-func runConfigCheck(app *App) error {
+func runConfigCheck(app *App, c *cobra.Command) error {
 	cfg, secrets, err := app.Config()
 	if err != nil {
 		return err
@@ -80,6 +80,23 @@ func runConfigCheck(app *App) error {
 	results, err := config.Check(cfg, secrets)
 	if err != nil {
 		return err
+	}
+	// Tokens are optional in general, but a domain on an automated provider needs
+	// that provider's credentials (renewal publishes TLSA through it).
+	if domains, derr := app.listDomains(ctx(c)); derr == nil {
+		for _, d := range domains {
+			if automatedDNS(d.DNSProvider) {
+				ok := providerConfigured(d.DNSProvider, secrets)
+				detail := d.DNSProvider + " credentials present"
+				if !ok {
+					detail = d.DNSProvider + " credentials missing in secrets.env"
+				}
+				results = append(results, config.CheckResult{Name: "dns_provider:" + d.Name, OK: ok, Detail: detail})
+			}
+		}
+	} else {
+		results = append(results, config.CheckResult{Name: "dns_providers", OK: true,
+			Detail: "not checked: database unreachable (" + derr.Error() + ")"})
 	}
 	r, err := app.Renderer()
 	if err != nil {
@@ -208,6 +225,6 @@ func runConfigInit(app *App) error {
 		return err
 	}
 	r.Message("wrote %s (0644)", configPath)
-	r.Message("wrote %s (0600) — set NJALLA_TOKEN / RSPAMD_CONTROLLER_PW / NTFY_TOKEN", secretsPath)
+	r.Message("wrote %s (0600), set NJALLA_TOKEN / RSPAMD_CONTROLLER_PW / NTFY_TOKEN", secretsPath)
 	return nil
 }

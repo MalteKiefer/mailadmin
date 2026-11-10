@@ -14,7 +14,7 @@
 //	                     <local>@<domain>.sieve
 //	  config.toml     -- copy of mailadmin's own config.toml
 //
-// secrets.env is deliberately never included in a bundle — see SecretsWarning.
+// secrets.env is deliberately never included in a bundle, see SecretsWarning.
 //
 // This package holds the mechanical, unprivileged parts (manifest shape,
 // path/argv construction, directory copying, bundle discovery) so they can be

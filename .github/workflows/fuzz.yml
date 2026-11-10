@@ -2,7 +2,7 @@ name: fuzz
 
 # Go native fuzzing for the validators that sit directly between untrusted CLI
 # input and an exec argv / SQL parameter / DNS query (internal/valid). Kept
-# off the push/PR path — each target gets a real, if short, time budget, and
+# off the push/PR path, each target gets a real, if short, time budget, and
 # running that on every push would slow normal iteration for little marginal
 # benefit over the fixed corpus already exercised by `go test`. Runs weekly
 # and can be triggered manually.

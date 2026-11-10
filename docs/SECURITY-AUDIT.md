@@ -1,36 +1,36 @@
-# mailadmin — Security & Quality Audit
+# mailadmin, Security & Quality Audit
 
 Date: 2026-07-15 · Auditor: automated deep review (static analysis + live dep/CVE
 research + manual review vs OWASP Top 10 / ASVS 5.0 / SOC 2). Scope: whole Go
 module (`mailadmin`, root/`mailadmin`-user CLI, Debian) **plus related components**
-— privileged helper scripts under `/usr/local/libexec`, `/etc/sudoers.d/mailadmin`,
+,  privileged helper scripts under `/usr/local/libexec`, `/etc/sudoers.d/mailadmin`,
 `config.toml`, `secrets.env`, deploy method, systemd units. CVSS v4.0 (v3.1 fallback).
 
 Supersedes the 2026-07-14 report. Version audited: **1.13.1** (deployed).
 
 ## Result
 
-**Go binary: PASS — no High+ in application code.** The application layer is
+**Go binary: PASS, no High+ in application code.** The application layer is
 clean and idiomatic. **All High/Medium findings are in server-side related
 components (shell helpers + sudoers), most of them orphaned by the deletion of
 `mailadmin-web`.** Remediation is mostly *removal* of dead privileged surface.
 
-### Remediation status — all findings resolved (2026-07-15)
+### Remediation status, all findings resolved (2026-07-15)
 
-- **H-1, M-1, L-1..L-5** — fixed on the server: `/etc/sudoers.d/mailadmin` and the
+- **H-1, M-1, L-1..L-5**: fixed on the server: `/etc/sudoers.d/mailadmin` and the
   five orphaned helpers (`mailadmin-app-passwd`, `-app-sync`, `-user-dedupe`,
   `-snappymail-domain`, `-rspamd-learn`) removed (backup in
   `/root/mailadmin-audit-backup-20260715`; `visudo -c` clean). Only the three
   CLI-used helpers (`-dkim-gen`, `-fw-port`, `-mta-sts-sync`) remain.
-- **L-6, L-7, I-1, I-3, I-4** — fixed in code (release **1.14.0**): errcheck +
+- **L-6, L-7, I-1, I-3, I-4**: fixed in code (release **1.14.0**): errcheck +
   ineffassign cleared (golangci-lint 0), deSEC typed `*apiError` + `errors.As`,
   five dead functions + the queue-summary cluster removed, stale `db.go` comment
   dropped, `DESEC_TOKEN` added to `config init`/`config check`.
-- **I-2 (cross-package DNS-exchange/MTA-STS DRY)** — accepted/deferred: small,
+- **I-2 (cross-package DNS-exchange/MTA-STS DRY)**: accepted/deferred: small,
   well-tested duplication; a shared package carries more DNS-validation
   regression risk than the duplication warrants.
 
-## Gates (run 2026-07-15, verified — not from memory)
+## Gates (run 2026-07-15, verified, not from memory)
 
 | Gate | Tool | Result |
 |------|------|--------|
@@ -40,18 +40,18 @@ components (shell helpers + sudoers), most of them orphaned by the deletion of
 | Race + unit | `go test -race ./...` | all pass |
 | Static | `staticcheck ./...` | 0 |
 | Security static | `gosec ./...` | 0 issues (17 justified `#nosec`) |
-| Lint | `golangci-lint run` | **4 issues** (see L-4) — prior report's "0" was stale |
+| Lint | `golangci-lint run` | **4 issues** (see L-4), prior report's "0" was stale |
 | Dependency CVEs | `govulncheck ./...` | No vulnerabilities found |
 
 ## Versions (live-verified 2026-07-15 via proxy.golang.org / go.dev / osv.dev)
 
-- **Go 1.26.5** — latest patch of 1.26 (no 1.26.6/1.27 exists); itself a security release.
+- **Go 1.26.5**: latest patch of 1.26 (no 1.26.6/1.27 exists); itself a security release.
 - All direct + indirect deps on latest stable; none behind. No CVE/GHSA affects any
   pinned version. `golang.org/x/net v0.57.0` clean (all fixes ≤ 0.55.0).
 - Precaution: `golang.org/x/crypto` is **not** a dependency; if it ever resolves
   transitively, pin ≥ 0.52.0 (CVE-2026-46595 SSH authz bypass, fixed 0.52.0).
 
-## Findings — by severity, sorted by CVSS
+## Findings, by severity, sorted by CVSS
 
 | ID | Sev | CVSS (v4.0 base) | Component | OWASP / SOC2 |
 |----|-----|------|-----------|--------------|
@@ -62,43 +62,43 @@ components (shell helpers + sudoers), most of them orphaned by the deletion of
 | L-3 | Low | 2.3 | `mailadmin-rspamd-learn` path regex allows `..` | A01 · CC6.1 |
 | L-4 | Low | 2.0 | `mailadmin-snappymail-domain` unvalidated path arg | A03/A05 · CC6.1 |
 | L-5 | Low | 2.0 | `mailadmin-app-sync` non-atomic passwd write | A05 · A1.2 |
-| L-6 | Low | 0.0* | golangci-lint: 3 errcheck + 1 ineffassign | — · PI1.1 |
+| L-6 | Low | 0.0* | golangci-lint: 3 errcheck + 1 ineffassign |, · PI1.1 |
 | L-7 | Low | 0.0* | `desec.go` 404 detection via error-string match | A08 · PI1.1 |
-| I-1 | Info | 0.0 | dead code (5 funcs) | — |
-| I-2 | Info | 0.0 | DRY duplication (DNS exchange ×3, MTA-STS ×2, prompts ×2) | — |
-| I-3 | Info | 0.0 | stale/superfluous comment `db.go:8` (refs deleted module) | — |
+| I-1 | Info | 0.0 | dead code (5 funcs) |, |
+| I-2 | Info | 0.0 | DRY duplication (DNS exchange ×3, MTA-STS ×2, prompts ×2) |, |
+| I-3 | Info | 0.0 | stale/superfluous comment `db.go:8` (refs deleted module) |, |
 | I-4 | Info | 0.0 | config gaps: `DESEC_TOKEN` absent from `init`/`check`; `RSPAMD_CONTROLLER_PW` loaded-never-used | A05 |
 
 `*` quality/robustness, no exploitable security impact → CVSS 0.0.
 
 ---
 
-### H-1 — sudoers wildcard grants root arbitrary file deletion (path traversal)
+### H-1, sudoers wildcard grants root arbitrary file deletion (path traversal)
 **File:** `/etc/sudoers.d/mailadmin:2` (server)
 ```
 mailadmin ALL=(root) NOPASSWD: /bin/rm -rf -- /var/vmail/*
 ```
-**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:N/VI:H/VA:H/SC:N/SI:N/SA:N` — **7.3 High**
+**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:N/VI:H/VA:H/SC:N/SI:N/SA:N`, **7.3 High**
 **OWASP:** A01 Broken Access Control / A05 Security Misconfiguration · **SOC2:** CC6.1, CC6.3
 The sudoers `*` wildcard matches `/` and `..`. The `--` stops flag parsing but not
 path traversal, so the `mailadmin` account can delete **any** path as root:
 `sudo /bin/rm -rf -- /var/vmail/../../etc/<x>`. Classic sudo-wildcard escalation
 (arbitrary-file-deletion → DoS / integrity loss / potential further compromise).
 Live likelihood is reduced now that `mailadmin-web` (the only thing that ran as the
-`mailadmin` user) is deleted — an attacker must first gain code-exec as `mailadmin`
-(nologin, no running service) — but the primitive is real and must not remain.
+`mailadmin` user) is deleted, an attacker must first gain code-exec as `mailadmin`
+(nologin, no running service), but the primitive is real and must not remain.
 **Fix:** Remove the rule. If maildir deletion is ever needed again, add a dedicated
 validating helper `mailadmin-rm-maildir <user@domain>` that builds the path
 *internally*, `realpath`-confines it under `/var/vmail`, and rejects `..`/symlink
-escapes — grant sudo to *that*, never to raw `rm` with a glob.
+escapes, grant sudo to *that*, never to raw `rm` with a glob.
 
-### M-1 — Orphaned privileged surface after `mailadmin-web` deletion
+### M-1, Orphaned privileged surface after `mailadmin-web` deletion
 **Files (server):** `/etc/sudoers.d/mailadmin` (all 5 lines), `/usr/local/libexec/{mailadmin-app-passwd,mailadmin-app-sync,mailadmin-user-dedupe,mailadmin-snappymail-domain,mailadmin-rspamd-learn}`
-**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N` — **5.1 Medium**
+**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N`, **5.1 Medium**
 **OWASP:** A04 Insecure Design / A05 · **SOC2:** CC6.1 (least privilege)
-The deployed CLI invokes only three helpers — `mailadmin-fw-port`,
+The deployed CLI invokes only three helpers, `mailadmin-fw-port`,
 `mailadmin-dkim-gen`, `mailadmin-mta-sts-sync` (verified: `internal/security`,
-`internal/mail`) — and runs them as root (no sudo). The remaining helpers and every
+`internal/mail`), and runs them as root (no sudo). The remaining helpers and every
 `sudoers.d/mailadmin` grant existed only for the now-deleted `mailadmin-web` account
 service. They are dead privileged code: `mailadmin-app-passwd` can mint mailbox
 credentials and `mailadmin-app-sync` rewrites `/etc/dovecot/passwd-app`. Dead
@@ -107,65 +107,65 @@ privilege = attack surface.
 entirely (keep the three CLI helpers, which need no sudo). Removing this file also
 resolves H-1, L-1, L-2, L-3, L-5 in one step.
 
-### L-1 — `mailadmin-app-passwd`: SQL built by shell string-interpolation
-**File:** `/usr/local/libexec/mailadmin-app-passwd` (server) — `sql_esc` + `$PSQL -c "…'$(sql_esc "$x")'…"`
-**Vector:** `CVSS:4.0/AV:L/AC:H/AT:P/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N` — **3.1 Low**
+### L-1, `mailadmin-app-passwd`: SQL built by shell string-interpolation
+**File:** `/usr/local/libexec/mailadmin-app-passwd` (server), `sql_esc` + `$PSQL -c "…'$(sql_esc "$x")'…"`
+**Vector:** `CVSS:4.0/AV:L/AC:H/AT:P/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N`, **3.1 Low**
 **OWASP:** A03 Injection · **SOC2:** PI1.1
 Hand-rolled escaping (`sed s/'/''/g`) is only safe while `standard_conforming_strings=on`
-(the PG default) and no `E''` context — fragile. The `label` field was
+(the PG default) and no `E''` context, fragile. The `label` field was
 attacker-influenced via the web. **Fix:** Removed with M-1. (The Go CLI's
-`internal/db` app-password path is fully parameterized — unaffected.)
+`internal/db` app-password path is fully parameterized, unaffected.)
 
-### L-2 — `mailadmin-app-passwd`: plaintext password on argv
-**File:** `/usr/local/libexec/mailadmin-app-passwd` — `doveadm pw -s ARGON2ID -p "$pw"`
-**Vector:** `CVSS:4.0/AV:L/AC:H/AT:P/PR:L/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N` — **2.4 Low**
+### L-2, `mailadmin-app-passwd`: plaintext password on argv
+**File:** `/usr/local/libexec/mailadmin-app-passwd`, `doveadm pw -s ARGON2ID -p "$pw"`
+**Vector:** `CVSS:4.0/AV:L/AC:H/AT:P/PR:L/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N`, **2.4 Low**
 **OWASP:** A02 Crypto Failures / A09 · **SOC2:** C1.1
 The generated app password is visible in the process table (`ps`) to any local user
 for the lifetime of the `doveadm` call. (The Go CLI's `internal/dovecotpw` correctly
 passes it on stdin.) **Fix:** Removed with M-1; if retained, feed via stdin.
 
-### L-3 — `mailadmin-rspamd-learn`: path regex permits `..`
-**File:** `/usr/local/libexec/mailadmin-rspamd-learn` — `^/var/vmail/[a-z0-9.-]+/[a-z0-9._-]+/.*$`
-**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N` — **2.3 Low**
+### L-3, `mailadmin-rspamd-learn`: path regex permits `..`
+**File:** `/usr/local/libexec/mailadmin-rspamd-learn`, `^/var/vmail/[a-z0-9.-]+/[a-z0-9._-]+/.*$`
+**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:L/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N`, **2.3 Low**
 **OWASP:** A01 · **SOC2:** CC6.1
 Trailing `.*` and dot-permitting components allow `/var/vmail/x/y/../../<file>`;
 `rspamc learn` would read an arbitrary root-readable file into the Bayes DB (no
 content returned to caller, so exposure is indirect). **Fix:** Removed with M-1; if
 retained, `realpath`-confine under `/var/vmail`.
 
-### L-4 — `mailadmin-snappymail-domain`: unvalidated path argument
-**File:** `/usr/local/libexec/mailadmin-snappymail-domain` — `dst="$dir/${domain}.json"` with `domain="$1"`
-**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:H/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N` — **2.0 Low**
+### L-4, `mailadmin-snappymail-domain`: unvalidated path argument
+**File:** `/usr/local/libexec/mailadmin-snappymail-domain`, `dst="$dir/${domain}.json"` with `domain="$1"`
+**Vector:** `CVSS:4.0/AV:L/AC:L/AT:N/PR:H/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N`, **2.0 Low**
 **OWASP:** A03/A05 · **SOC2:** CC6.1
 No validation of `$1` → traversal in the copy destination. Runs as root but not in
 sudoers and not called by the CLI (orphaned). **Fix:** Removed with M-1; if retained,
 validate `domain` against a strict regex before use.
 
-### L-5 — `mailadmin-app-sync`: non-atomic write of hash file
-**File:** `/usr/local/libexec/mailadmin-app-sync` — `cat "$tmp" > /etc/dovecot/passwd-app`
-**Vector:** `CVSS:4.0/AV:L/AC:H/AT:P/PR:L/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N` — **2.0 Low**
+### L-5, `mailadmin-app-sync`: non-atomic write of hash file
+**File:** `/usr/local/libexec/mailadmin-app-sync`, `cat "$tmp" > /etc/dovecot/passwd-app`
+**Vector:** `CVSS:4.0/AV:L/AC:H/AT:P/PR:L/UI:N/VC:L/VI:L/VA:L/SC:N/SI:N/SA:N`, **2.0 Low**
 **OWASP:** A05 · **SOC2:** A1.2 (availability)
-`cat >` truncates then streams — a concurrent Dovecot read can see a partial file;
+`cat >` truncates then streams, a concurrent Dovecot read can see a partial file;
 target perms are inherited, not asserted (file holds argon2 hashes). **Fix:** Removed
 with M-1; if retained, `install -m 0640 -o root -g dovecot "$tmp" /etc/dovecot/passwd-app`
 (atomic rename + explicit perms).
 
-### L-6 — golangci-lint findings (application code)
-- `internal/cli/dns.go:429` — `defer f.Close()` unchecked (errcheck)
-- `internal/dnsprovider/desec.go:62` — `defer resp.Body.Close()` unchecked (errcheck)
-- `internal/webserver/webserver.go:100` — `defer os.Remove(tmpName)` unchecked (errcheck)
-- `internal/dnsaudit/checks.go:158` — `found = true` ineffectual (all returns hardcode the bool)
+### L-6, golangci-lint findings (application code)
+- `internal/cli/dns.go:429`, `defer f.Close()` unchecked (errcheck)
+- `internal/dnsprovider/desec.go:62`, `defer resp.Body.Close()` unchecked (errcheck)
+- `internal/webserver/webserver.go:100`, `defer os.Remove(tmpName)` unchecked (errcheck)
+- `internal/dnsaudit/checks.go:158`, `found = true` ineffectual (all returns hardcode the bool)
 
 No security impact; the prior report's "golangci-lint 0 issues" is inaccurate.
 **Fix:** wrap deferred cleanups as `defer func() { _ = x.Close() }()` (matches the
 codebase's existing pattern) and drop the redundant `found = true`.
 
-### L-7 — `desec.go`: 404 detected via error-string matching
-**File:** `internal/dnsprovider/desec.go:93,187,208` — `strings.Contains(err.Error(), "404")`
+### L-7, `desec.go`: 404 detected via error-string matching
+**File:** `internal/dnsprovider/desec.go:93,187,208`, `strings.Contains(err.Error(), "404")`
 against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" substring).
 **Fix:** return a typed `*apiError{StatusCode int}` and match with `errors.As`.
 
-### I-1..I-4 — Informational (quality, from REQUIREMENTS "definition of done")
+### I-1..I-4, Informational (quality, from REQUIREMENTS "definition of done")
 - **I-1 Dead code:** `sieve.Service.List` (sieve.go:88), `postfixq.Service.Summary`
   (postfixq.go:93), `mail.Manager.SyncMTASTS` (mail.go:135), `dovecotpw.PromptNewPassword`
   (prompt.go:24 + its helper `readSecret`), `valid.IP` (valid.go:96). Zero non-test callers.
@@ -176,7 +176,7 @@ against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" s
   `binSystemctl`/`binJournalctl` ×2). (HTTPS-client duplication partly resolved by
   `dnsprovider/httpclient.go` in 1.13.1.)
 - **I-3 Stale comment:** `internal/db/db.go:8-10` documents "reconstructed from the
-  compiled mailadmin-web binary" — refers to the deleted module; superfluous now.
+  compiled mailadmin-web binary", refers to the deleted module; superfluous now.
 - **I-4 Config:** `DESEC_TOKEN` fully supported at runtime (`dns.go`) but absent from
   the `config init` starter template and `config check` (command.go); `RSPAMD_CONTROLLER_PW`
   is loaded + presence-checked but never consumed by any code path.
@@ -193,7 +193,7 @@ against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" s
   codes; no silent drops beyond the errcheck items in L-6; no `panic` in normal flow.
 - **context:** threaded through every DB/exec/DNS/HTTP call with timeouts; only
   filesystem-local funcs omit it (correct).
-- **Concurrency:** two `go func` sites (`logs.Tail`, `dnsprovider.discover`) — both
+- **Concurrency:** two `go func` sites (`logs.Tail`, `dnsprovider.discover`), both
   leak-free (ctx-honoring select, buffered channel / semaphore + WaitGroup, all
   goroutines bounded by ExchangeContext timeout). `go test -race` clean.
 - **Interfaces:** 6, all small + consumer-side (`audit.Logger`, `sys.Recorder`, …); no god objects.
@@ -201,7 +201,7 @@ against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" s
   (no `InsecureSkipVerify`); no MD5/SHA1/DES/RC4. **DNS (RFC 1035/7208/6376/8461):**
   proper `miekg/dns` `ExchangeContext` + AXFR via `dns.Transfer`; SPF/DKIM/DMARC/MTA-STS/TLS-RPT
   checks. **HTTP:** `NewRequestWithContext` + client timeouts + `io.LimitReader` bodies.
-  **OAuth/JWT:** N/A — OIDC lived only in the deleted `mailadmin-web`.
+  **OAuth/JWT:** N/A, OIDC lived only in the deleted `mailadmin-web`.
 
 ## SOC 2 (control observations, not attestation)
 - **Security (CC6):** strong secret hygiene + input validation + single audited exec
@@ -211,7 +211,7 @@ against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" s
 - **Confidentiality (C1):** secrets 0600, redacted `String()`, never logged/argv/`-o json`. OK.
 - **Change mgmt / audit (CC7/CC8):** every mutation → `audit_log` (actor/action/target/
   before-after, no secrets); **gap:** audit log shares the app DB with no external,
-  append-only/immutable sink (CC7.2 monitoring) — consider shipping to a separate store.
+  append-only/immutable sink (CC7.2 monitoring), consider shipping to a separate store.
 
 ## Residual / assumptions
 - Scanners run on darwin with `GOOS=linux` builds; live daemon behaviour of privileged
@@ -219,29 +219,29 @@ against `fmt.Errorf("desec … %d …")`. Fragile (false-positive on any "404" s
 - Server-side findings (H-1, M-1, L-1..L-5) require changes on the host, not in the Go
   repo; they are remediated by removing the `mailadmin-web` leftovers.
 
-## Addendum (2026-08-30) — `app_password.last_used` never populated
+## Addendum (2026-08-30), `app_password.last_used` never populated
 
 **Finding:** `mailbox app-password list` rendered a `last_used` column that is
-structurally unable to ever hold data — a repo-wide grep found no `UPDATE
+structurally unable to ever hold data, a repo-wide grep found no `UPDATE
 app_password SET last_used=…` anywhere, and the reason isn't a missed call
 site, it's architectural.
 
 **Investigation:** Dovecot authenticates mailbox and app-password logins by
 querying Postgres directly (SQL passdb, `dovecot-pgsql`; see
-`docs/DISASTER-RECOVERY.md` — "point Postfix/Dovecot's SQL maps... pgsql
+`docs/DISASTER-RECOVERY.md`, "point Postfix/Dovecot's SQL maps... pgsql
 virtual-mailbox configuration" is explicitly called out as living **outside**
 this repo, on the mail host). This CLI's `internal/db` code is never on that
-path — it only ever *writes* `app_password` rows (`CreateAppPassword`,
+path, it only ever *writes* `app_password` rows (`CreateAppPassword`,
 `DeleteAppPassword*`), it never runs during a login. The flat-file mechanism
 that briefly existed (`mailadmin-app-sync` regenerating
 `/etc/dovecot/passwd-app`) belonged to the now-deleted `mailadmin-web`
 service and was already removed as dead privileged surface by M-1/L-5 above
-— it was never wired to the CLI's own app-password creation path either, and
+,  it was never wired to the CLI's own app-password creation path either, and
 even when it existed it only handled the flat-file passdb; nothing analogous
 existed to *write back* a use timestamp.
 
 A standard Dovecot SQL `passdb { driver = sql }` is a plain, read-only
-`SELECT` — there is no built-in "run this UPDATE on successful auth" hook in
+`SELECT`, there is no built-in "run this UPDATE on successful auth" hook in
 that config block. The one real mechanism that could get close is Dovecot's
 post-login scripting (`postlogin_socket` / `script-login`), which runs after
 a session authenticates and could shell out to `psql`. It was **not**
@@ -250,13 +250,13 @@ deliberately kept out of version control (see `docs/DISASTER-RECOVERY.md`,
 which treats the Dovecot SQL/passdb config as entirely server-managed), a
 pattern this change should not be the first to break for a "nice to have"
 column; (2) more fundamentally, a post-login hook fires after Dovecot has
-already merged the successful auth into a session — it has no reliable way
+already merged the successful auth into a session, it has no reliable way
 to know *which* `app_password` row (i.e. which label) authenticated the
 session unless the passdb query is restructured to smuggle the label through
 as a passdb extra field, which turns a one-line config change into a
 redesign of the passdb query itself; (3) the security audit above
 (M-1/L-5) just finished removing a very similar class of server-side
-helper script as orphaned privileged surface — adding a new one back in for
+helper script as orphaned privileged surface, adding a new one back in for
 telemetry is the wrong direction.
 
 **Resolution:** honest labeling instead of a fake mechanism (option B).
@@ -265,18 +265,18 @@ telemetry is the wrong direction.
 "never used". `AppPassword.LastUsed` (`internal/db/models.go`) is documented
 as schema-only and kept (no migration) in case a real write mechanism is
 ever added on the Dovecot side later. `app-password list --stale <duration>`
-filters by **age since creation** (`created_at`), not usage — the flag help
+filters by **age since creation** (`created_at`), not usage, the flag help
 text and command `--help` text both say so explicitly, so this never
 overpromises again. `docs/SECURITY-INCIDENT-PLAYBOOK.md`'s "detection signs"
 for a compromised app password previously cited the fictional `last_used`
 timestamp; it now points at `mailadmin log show dovecot` (Dovecot's own auth
-log), noting that the log identifies the mailbox and source IP but — same
-root cause — not which app-password label was used.
+log), noting that the log identifies the mailbox and source IP but, same
+root cause, not which app-password label was used.
 
 **Still fuzzy / out of scope:** whether Dovecot 2.4's auth log format could
 be extended (via `auth_verbose`/extra passdb fields) to include the
 app-password label in its log line, which would make `mailadmin log show
 dovecot` a materially better workaround than "correlate by IP and
 timestamp". That's a genuine Dovecot-config investigation of its own and was
-not pursued here — it doesn't require any change to this repo's Go code or
+not pursued here, it doesn't require any change to this repo's Go code or
 schema either way, so it's a documentation-only follow-up if ever wanted.

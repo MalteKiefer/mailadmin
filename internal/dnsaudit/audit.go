@@ -1,8 +1,8 @@
 // Package dnsaudit evaluates a domain's mail-security posture from live public
 // DNS (SPF, DKIM, DMARC, DNSSEC, DANE, MTA-STS, TLS-RPT, BIMI). Unlike dnscheck (which
 // compares live DNS against a desired record-set), it grades correctness and
-// policy strength per RFC. It uses a fixed configured resolver — no
-// user-controlled resolver, so no SSRF — and one outbound HTTPS GET to the
+// policy strength per RFC. It uses a fixed configured resolver, no
+// user-controlled resolver, so no SSRF, and one outbound HTTPS GET to the
 // domain's own mta-sts host to fetch the STS policy (TLS-verified, no redirects,
 // bounded body).
 package dnsaudit
@@ -92,7 +92,7 @@ type resolverConn interface {
 	mx(ctx context.Context, domain string) ([]string, error)
 	// tlsa returns the raw TLSA record values ("usage selector match hex",
 	// lowercase hex) at name and reports whether the answer was
-	// DNSSEC-authenticated (AD flag) — DANE requires signed TLSA (RFC 7672).
+	// DNSSEC-authenticated (AD flag), DANE requires signed TLSA (RFC 7672).
 	tlsa(ctx context.Context, name string) (values []string, ad bool, err error)
 }
 
@@ -161,7 +161,7 @@ func (a *Auditor) Audit(ctx context.Context, rawDomain string) (Report, error) {
 		rec, _ := a.conn.txt(ctx, s+"._domainkey."+domain)
 		f, found := evalDKIM(s, rec)
 		if !found && a.speculative {
-			continue // a guessed selector that does not exist — not a finding
+			continue // a guessed selector that does not exist, not a finding
 		}
 		fs = append(fs, f)
 	}
@@ -271,7 +271,7 @@ func (a *Auditor) evalDNSSEC(ctx context.Context, domain string) Finding {
 	case !dnskey:
 		f.Status, f.Value, f.Detail = Fail, "unsigned", "zone publishes no DNSKEY"
 	case !ds:
-		f.Status, f.Value, f.Detail = Warn, "signed, not delegated", "DNSKEY present but no DS at the parent — set the DS at your registrar"
+		f.Status, f.Value, f.Detail = Warn, "signed, not delegated", "DNSKEY present but no DS at the parent, set the DS at your registrar"
 	case ad:
 		f.Status, f.Value, f.Detail = Pass, "signed + validated", "DS delegated and validated by the resolver"
 	default:
@@ -308,7 +308,7 @@ func (a *Auditor) evalDANE(ctx context.Context, domain string) Finding {
 	}
 	base := classifyDANE(len(hosts), total, authed)
 	if base.Status != Pass {
-		return base // not deployed / unsigned / no MX — nothing to match
+		return base // not deployed / unsigned / no MX, nothing to match
 	}
 	return a.verifyDANEMatch(ctx, tlsaHosts, perHost, base)
 }
@@ -326,7 +326,7 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts []string, perHost m
 		}
 	}
 	if len(cands) == 0 {
-		base.Detail += "; TLSA is not 3 1 1 — live-cert match not checked"
+		base.Detail += "; TLSA is not 3 1 1, live-cert match not checked"
 		return base
 	}
 
@@ -364,7 +364,7 @@ func (a *Auditor) verifyDANEMatch(ctx context.Context, hosts []string, perHost m
 		if !daneMatch(perHost[h], results[i].live) {
 			return Finding{Check: "DANE", Status: Fail, Value: "cert mismatch",
 				Detail: "published TLSA does not match live certificate (" + h +
-					") — stale after key rotation, DANE senders will reject mail"}
+					"), stale after key rotation, DANE senders will reject mail"}
 		}
 		probed++
 	}
@@ -391,12 +391,12 @@ func classifyDANE(mxCount, tlsaCount int, authenticated bool) Finding {
 	f := Finding{Check: "DANE"}
 	switch {
 	case mxCount == 0:
-		f.Status, f.Detail = Info, "no MX records — DANE not applicable"
+		f.Status, f.Detail = Info, "no MX records, DANE not applicable"
 	case tlsaCount == 0:
-		f.Status, f.Value, f.Detail = Info, "not deployed", "no TLSA at _25._tcp.<MX> — DANE not configured"
+		f.Status, f.Value, f.Detail = Info, "not deployed", "no TLSA at _25._tcp.<MX>, DANE not configured"
 	case !authenticated:
 		f.Status, f.Value, f.Detail = Fail, "unauthenticated",
-			"TLSA present but not DNSSEC-signed — DANE cannot be trusted (RFC 7672 requires signed TLSA)"
+			"TLSA present but not DNSSEC-signed, DANE cannot be trusted (RFC 7672 requires signed TLSA)"
 	default:
 		f.Status, f.Value, f.Detail = Pass, fmt.Sprintf("%d TLSA, authenticated", tlsaCount),
 			"TLSA published at _25._tcp.<MX> and DNSSEC-validated"

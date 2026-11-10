@@ -20,7 +20,8 @@ func TestValidateRate(t *testing.T) {
 		{"5 / 1h", "5 / 1h", false},
 		{"5.5 / 1h", "5.5 / 1h", false},
 		{"1000 / 1d", "1000 / 1d", false},
-		{"1 / 1w", "1 / 1w", false},
+		{"1 / 1w", "", true}, // rspamd has no week unit
+		{"1 / 7d", "1 / 7d", false},
 		{"", "", true},
 		{"20", "", true},
 		{"20 / 1min", "", true}, // word units not accepted, see doc comment
@@ -94,8 +95,10 @@ func TestReadRatelimit(t *testing.T) {
 func TestReadRatelimitMissingFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if _, err := ReadRatelimit(dir); err == nil {
-		t.Fatal("expected error for missing file")
+	// rspamd ships no local.d/ratelimit.conf: a missing file means defaults.
+	got, err := ReadRatelimit(dir)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("missing file: got %v, %v; want no settings and no error", got, err)
 	}
 }
 

@@ -138,7 +138,7 @@ func Duration(s string) (string, error) {
 // under root) or a path relative to root.
 //
 // The path is resolved with filepath.EvalSymlinks, so it must already exist
-// on disk — this validator is for reading an existing file (e.g. a message
+// on disk, this validator is for reading an existing file (e.g. a message
 // under the vmail spool), not for computing a not-yet-created path. A dangling
 // symlink, a missing file, or a resolved target outside root are all rejected.
 //
@@ -159,7 +159,7 @@ func PathUnder(root, raw string) (string, error) {
 	// Resolve both the candidate and root itself through EvalSymlinks before
 	// comparing: root may itself be reached via a symlink (or, as on Windows,
 	// through a different short/long path alias), so comparing un-resolved
-	// forms would either false-reject a legitimate path or — worse — let a
+	// forms would either false-reject a legitimate path or, worse, let a
 	// symlinked root make the prefix check meaningless. The resolved-vs-
 	// resolved comparison below is the actual security boundary.
 	resolved, err := filepath.EvalSymlinks(clean)

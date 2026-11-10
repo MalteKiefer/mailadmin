@@ -2,7 +2,7 @@ name: dependency-review
 
 # Flags newly-introduced dependencies in a PR diff that carry a known
 # vulnerability or an incompatible/disallowed license. This repo pushes
-# directly to main today (no PRs), so this workflow is currently dormant —
+# directly to main today (no PRs), so this workflow is currently dormant:
 # it exists so the check is ready and consistent the moment PRs are used
 # (Dependabot PRs, or a human contributor's PR), rather than being bolted on
 # after the fact. See docs/CI-SECURITY.md for the branch-protection change

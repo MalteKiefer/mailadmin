@@ -12,6 +12,7 @@ package dnsprovider
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -34,7 +35,7 @@ type Record struct {
 // the same name+type (multiple MX, several TXT at the apex), so name+type alone
 // is not enough: for TXT we further discriminate by scheme (SPF, DMARC, DKIM,
 // TLS-RPT, MTA-STS), and any other TXT is keyed by its full content so an
-// unrelated verification TXT is never collapsed into — or clobbered by — an SPF
+// unrelated verification TXT is never collapsed into, or clobbered by, an SPF
 // change. MX/A/AAAA/CNAME group by type+name (the mail set is authoritative for
 // all records of that type at that name).
 func (r Record) identity() string {
@@ -104,6 +105,12 @@ func normContent(r Record) string {
 	if isHostTarget(r.Type) {
 		c = strings.TrimSuffix(c, ".")
 	}
+	// 2001:db8:0:0::1 and 2001:db8::1 are the same address.
+	if t := strings.ToUpper(r.Type); t == "A" || t == "AAAA" {
+		if ip := net.ParseIP(c); ip != nil {
+			c = ip.String()
+		}
+	}
 	return c
 }
 
@@ -165,7 +172,7 @@ type Change struct {
 // Plan reconciles, per managed slot (see Record.identity), the live records
 // against the desired set. Within a slot it keeps exact matches, edits a
 // leftover live record to each remaining desired value, adds when live runs
-// short, and DELETES any live record left over — so a slot ends up holding
+// short, and DELETES any live record left over, so a slot ends up holding
 // exactly the desired records (e.g. two stale MX collapse to the one wanted).
 // Slots not present in `desired` are untouched here (see Stale for those).
 func Plan(live, desired []Record) []Change {
@@ -232,7 +239,7 @@ func reconcileSlot(live, desired []Record) []Change {
 	return out
 }
 
-// Stale returns live records whose identity is NOT in the desired set — records
+// Stale returns live records whose identity is NOT in the desired set, records
 // the mail set does not manage at all (old host A/AAAA, foreign CNAMEs,
 // unrelated verification TXT). These are deletion candidates surfaced for
 // interactive review. Superfluous records WITHIN a managed slot are not here;
@@ -342,7 +349,7 @@ type MailRecordOpts struct {
 	DKIMValue  string // full "v=DKIM1; k=rsa; p=..." string
 	TTL        int    // default 3600
 	ReportTo   string // rua/ruf localpart target domain (usually the primary domain)
-	WithMTASTS bool   // publish _mta-sts + mta-sts host — only once the vhost+cert are live (enforce mode!)
+	WithMTASTS bool   // publish _mta-sts + mta-sts host, only once the vhost+cert are live (enforce mode!)
 }
 
 // DesiredMailRecords builds the standard mail record-set for a domain. This
@@ -367,7 +374,7 @@ func DesiredMailRecords(domain string, o MailRecordOpts) []Record {
 	// Client autodiscovery. SRV records (RFC 6186) let IMAP/submission-capable
 	// clients find the server with no web server involved. autoconfig
 	// (Thunderbird) and autodiscover (Outlook) are CNAMEs to the canonical mail
-	// host — like mailbox.org — so there is no per-domain A/AAAA to maintain and
+	// host, like mailbox.org, so there is no per-domain A/AAAA to maintain and
 	// a single Caddy on-demand-TLS endpoint serves the generic config XML for
 	// every hosted domain.
 	recs = append(recs,
@@ -378,7 +385,7 @@ func DesiredMailRecords(domain string, o MailRecordOpts) []Record {
 		Record{Type: "CNAME", Name: "autodiscover", Content: fqdn(o.MailHost), TTL: o.TTL},
 	)
 
-	// The mta-sts host records only point a name at the mail server — harmless on
+	// The mta-sts host records only point a name at the mail server, harmless on
 	// their own, and required so Caddy can obtain the policy-endpoint cert. They
 	// are always part of the desired set. The _mta-sts TXT is what actually
 	// switches senders into MTA-STS policy lookups, so it stays behind the

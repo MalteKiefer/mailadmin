@@ -48,7 +48,7 @@ type Summary struct {
 }
 
 // BounceEntry is one bounced delivery, parsed from the Postfix log
-// (`queue bounces`). It is a read-only diagnostic view — there is nothing to
+// (`queue bounces`). It is a read-only diagnostic view, there is nothing to
 // act on here; the message was already returned to its sender.
 type BounceEntry struct {
 	Timestamp string `json:"timestamp"`
@@ -60,7 +60,7 @@ type BounceEntry struct {
 
 // QuarantineEntry is one reject/soft-reject/greylist verdict, parsed from the
 // rspamd log (`security quarantine list`). rspamd does not store the message
-// anywhere in this setup — this is a log-derived diagnostic view, not a
+// anywhere in this setup, this is a log-derived diagnostic view, not a
 // message store: there is nothing to release, since a rejected message was
 // never accepted onto disk. From/To/Subject are best-effort: they are only
 // populated when rspamd's configured log_format happens to include them.

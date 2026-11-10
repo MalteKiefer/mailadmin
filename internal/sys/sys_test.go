@@ -73,7 +73,7 @@ func TestHelperProcess(t *testing.T) {
 	case "fail":
 		os.Exit(7)
 	case "flaky":
-		// args: flaky <counterFile> <failCount> — fails (exit 9) until the
+		// args: flaky <counterFile> <failCount>, fails (exit 9) until the
 		// counter file has been touched failCount times, then succeeds. Used to
 		// exercise RunWithRetry's retry-then-succeed path across real, separate
 		// process invocations.
@@ -276,8 +276,8 @@ func TestOutputCapped(t *testing.T) {
 	r := helperRunner(t, 30*time.Second, nil)
 	// Ask for well over maxOutput bytes; captured stdout must be capped.
 	res, err := r.Run(context.Background(), nil, helperCmd("spam", strconv.Itoa(maxOutput+1<<20))...)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+	if !errors.Is(err, ErrOutputTruncated) {
+		t.Fatalf("Run: %v, want ErrOutputTruncated", err)
 	}
 	if len(res.Stdout) > maxOutput {
 		t.Fatalf("stdout len = %d, exceeds cap %d", len(res.Stdout), maxOutput)

@@ -1,6 +1,6 @@
 // Package cli wires the whole mailadmin command tree with cobra. Command
 // definitions live one file per resource group; every RunE calls into a backend
-// package and renders through internal/output — no per-command formatting.
+// package and renders through internal/output, no per-command formatting.
 package cli
 
 import (
@@ -181,17 +181,7 @@ func (a *App) webserver() *webserver.Manager {
 	return webserver.New(a.runner(), "", "", "", "")
 }
 
-// syncAutodiscovery regenerates the managed Caddy autodiscovery include from the
-// current domain list and reloads Caddy.
-func (a *App) syncAutodiscovery(c context.Context) error {
-	d, err := a.db(c)
-	if err != nil {
-		return err
-	}
-	domains, err := d.ListDomains(c)
-	if err != nil {
-		return err
-	}
+func (a *App) syncAutodiscoveryFor(c context.Context, domains []db.Domain) error {
 	names := make([]string, 0, len(domains))
 	for _, dom := range domains {
 		names = append(names, dom.Name)
@@ -199,18 +189,7 @@ func (a *App) syncAutodiscovery(c context.Context) error {
 	return a.webserver().Sync(c, names)
 }
 
-// syncMTASTS regenerates the managed Caddy MTA-STS include from the current
-// active domain list and reloads Caddy. Unlike autodiscovery it is gated on
-// active state: a disabled domain must not advertise an enforce policy endpoint.
-func (a *App) syncMTASTS(c context.Context) error {
-	d, err := a.db(c)
-	if err != nil {
-		return err
-	}
-	domains, err := d.ListDomains(c)
-	if err != nil {
-		return err
-	}
+func (a *App) syncMTASTSFor(c context.Context, domains []db.Domain) error {
 	names := make([]string, 0, len(domains))
 	for _, dom := range domains {
 		if dom.Active {
@@ -236,16 +215,16 @@ func (a *App) syncMTASTS(c context.Context) error {
 // no longer signed) without install --adopt. A host whose rspamd config predates
 // install has no map and is left alone.
 func (a *App) syncRspamdSelectors(c context.Context) error {
+	domains, err := a.listDomains(c)
+	if err != nil {
+		return err
+	}
+	return a.syncRspamdSelectorsFor(c, domains)
+}
+
+func (a *App) syncRspamdSelectorsFor(c context.Context, domains []db.Domain) error {
 	if _, err := os.Stat(install.RspamdSelectorMap); errors.Is(err, fs.ErrNotExist) {
 		return nil
-	}
-	d, err := a.db(c)
-	if err != nil {
-		return err
-	}
-	domains, err := d.ListDomains(c)
-	if err != nil {
-		return err
 	}
 	var pairs [][2]string
 	for _, dom := range domains {
@@ -253,7 +232,40 @@ func (a *App) syncRspamdSelectors(c context.Context) error {
 			pairs = append(pairs, [2]string{dom.Name, dom.DKIMSelector})
 		}
 	}
-	return install.SyncRspamdSelectors(c, install.Resolve(a.runner()), pairs)
+	err := install.SyncRspamdSelectors(c, install.Resolve(a.runner()), pairs)
+	if errors.Is(err, install.ErrNotManaged) {
+		return nil // the operator's own map; install --adopt never replaced it either
+	}
+	return err
+}
+
+// listDomains reads every domain from the shared pool.
+func (a *App) listDomains(c context.Context) ([]db.Domain, error) {
+	d, err := a.db(c)
+	if err != nil {
+		return nil, err
+	}
+	return d.ListDomains(c)
+}
+
+// syncDomainState brings everything derived from the domain table in line with
+// it (rspamd's selector map, the Caddy autodiscovery and MTA-STS includes),
+// reading the table once. Failures are warnings: the database change stands.
+func (a *App) syncDomainState(c context.Context, r *output.Renderer) {
+	domains, err := a.listDomains(c)
+	if err != nil {
+		r.Message("warning: could not read domains to update rspamd and Caddy: %v", err)
+		return
+	}
+	if err := a.syncRspamdSelectorsFor(c, domains); err != nil {
+		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+	}
+	if err := a.syncAutodiscoveryFor(c, domains); err != nil {
+		r.Message("warning: could not update Caddy autodiscovery: %v", err)
+	}
+	if err := a.syncMTASTSFor(c, domains); err != nil {
+		r.Message("warning: could not update Caddy MTA-STS: %v", err)
+	}
 }
 
 // closeBackends releases pooled resources. Safe to call when nothing was opened.

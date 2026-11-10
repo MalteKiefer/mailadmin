@@ -27,6 +27,12 @@ func VendorPackages() []string {
 	return []string{"postgresql", "caddy"}
 }
 
+// AllPackages is everything install puts on the host, in one list for the plan
+// the operator confirms and for apt.
+func AllPackages() []string {
+	return append(append(DistroPackages(), VendorPackages()...), HardeningPackages()...)
+}
+
 // PostfixPreseed answers the postfix debconf questions so apt never prompts.
 // "Internet Site" makes postfix deliver mail itself, which is what a mail host needs.
 func PostfixPreseed(hostname string) []byte {
@@ -37,7 +43,9 @@ func PostfixPreseed(hostname string) []byte {
 
 // aptEnv runs apt-get without prompts.
 func aptEnv(args ...string) []string {
-	return append([]string{"env", "DEBIAN_FRONTEND=noninteractive", trustedBin("apt-get"), "-y", "--no-install-recommends"}, args...)
+	// The lock timeout waits for a running unattended-upgrades instead of failing.
+	return append([]string{"env", "DEBIAN_FRONTEND=noninteractive", trustedBin("apt-get"), "-y",
+		"-o", "DPkg::Lock::Timeout=600", "--no-install-recommends"}, args...)
 }
 
 // AptUpdate refreshes the package index.

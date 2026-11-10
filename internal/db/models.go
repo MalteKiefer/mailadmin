@@ -51,7 +51,7 @@ type AppPassword struct {
 	// outside this repo), bypassing this CLI entirely, so mailadmin has no
 	// path by which it could observe a successful use. It is always nil in
 	// practice today. The CLI (internal/cli/mailbox.go, appPasswordList)
-	// deliberately does not render this field as if it were live data — see
+	// deliberately does not render this field as if it were live data, see
 	// docs/SECURITY-AUDIT.md ("app-password last_used") for the investigation
 	// that established this and the closest available workaround. Kept (not
 	// dropped via migration) so a future post-auth write mechanism, if one is

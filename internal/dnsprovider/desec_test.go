@@ -14,7 +14,7 @@ func TestDesecFormatParse(t *testing.T) {
 		{Type: "TXT", Name: "@", Content: "v=spf1 mx -all"},
 	}
 	for _, r := range cases {
-		val := desecFormat(r)
+		val := rrsetValue(r)
 		rs := desecRRset{Subname: desecSubname(r.Name), Type: r.Type, Records: []string{val}}
 		got := desecToRecord(rs, val)
 		if !strings.EqualFold(strings.TrimSuffix(got.Content, "."), strings.TrimSuffix(r.Content, ".")) {
@@ -48,8 +48,8 @@ func TestDesecTXTChunking(t *testing.T) {
 }
 
 func TestDesecID(t *testing.T) {
-	id := desecID("mta-sts", "A", "203.0.113.1")
-	sub, typ, val, ok := parseDesecID(id)
+	id := rrID("mta-sts", "A", "203.0.113.1")
+	sub, typ, val, ok := parseRRID(id)
 	if !ok || sub != "mta-sts" || typ != "A" || val != "203.0.113.1" {
 		t.Fatalf("id round-trip failed: %q %q %q %v", sub, typ, val, ok)
 	}

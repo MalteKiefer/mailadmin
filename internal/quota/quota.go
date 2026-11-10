@@ -36,7 +36,7 @@ func New(runner *sys.Runner) *Service { return &Service{runner: runner} }
 
 // Get returns storage quota usage for the mailbox address.
 //
-// It runs `doveadm -f flat quota get -u <address>` through the privileged-exec
+// It runs `doveadm quota get -u <address>` through the privileged-exec
 // chokepoint (argv slice, context timeout, capped output) and parses the
 // STORAGE row. A missing/unlimited limit ("-") is reported as LimitBytes 0 and
 // UsedPct 0.
@@ -47,7 +47,7 @@ func (s *Service) Get(ctx context.Context, address string) (Usage, error) {
 	}
 
 	res, err := s.runner.Run(ctx, nil,
-		binDoveadm, "-f", "flat", "quota", "get", "-u", addr)
+		binDoveadm, "-f", "tab", "quota", "get", "-u", addr)
 	if err != nil {
 		return Usage{}, fmt.Errorf("quota.Get: run doveadm: %w", err)
 	}
@@ -79,13 +79,14 @@ func normalizeAddress(address string) (string, error) {
 	return local + "@" + domain, nil
 }
 
-// parseStorage extracts the STORAGE row's (value, limit) from doveadm's flat
-// quota output. Each data line's last three whitespace-separated fields are
+// parseStorage extracts the STORAGE row's (value, limit) in bytes from doveadm's
+// quota output. doveadm reports STORAGE in kilobytes (Dovecot 2.4 has no "flat"
+// formatter; tab and table both work here). Each data line's last three whitespace-separated fields are
 // Type, Value, Limit; the leading "Quota name" column may contain spaces, so
 // fields are counted from the right. A "-" or empty limit means unlimited and
 // is reported as 0.
 //
-// Example (`doveadm -f flat quota get -u u@d`):
+// Example (`doveadm -f tab quota get -u u@d`, values in KiB):
 //
 //	Quota name Type    Value Limit %
 //	User quota STORAGE 12345 102400 12
@@ -108,7 +109,7 @@ func parseStorage(out []byte) (used, limit int64, err error) {
 		if err != nil {
 			return 0, 0, fmt.Errorf("%w: limit %q", ErrParse, limStr)
 		}
-		return used, limit, nil
+		return used * 1024, limit * 1024, nil
 	}
 	return 0, 0, fmt.Errorf("%w: no STORAGE row", ErrParse)
 }

@@ -17,7 +17,7 @@ type CopyResult struct {
 
 // CopyTree copies every regular file under src into dst, preserving the
 // relative path and file mode, creating directories (0700) as needed. A
-// missing src is not an error — it reports a zero CopyResult, since "the DKIM
+// missing src is not an error, it reports a zero CopyResult, since "the DKIM
 // directory does not exist yet" is a valid (if unusual) state to back up.
 //
 // Symlinks and other non-regular entries are skipped, never followed: a
@@ -139,7 +139,7 @@ func copyFile(src, dst string, extraFlags int) (int64, error) {
 
 	// src/dst are constructed by callers from an operator-configured directory
 	// (config path, DKIM dir, bundle dir) walked or joined with fixed/validated
-	// components — not from unsanitised network or request input.
+	// components, not from unsanitised network or request input.
 	in, err := os.Open(src) // #nosec G304 -- path from an operator-configured tree, see callers
 	if err != nil {
 		return 0, err

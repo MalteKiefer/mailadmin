@@ -3,7 +3,7 @@
 // Package db integration tests exercise the pgx-based CRUD layer against a
 // real PostgreSQL instance. They are excluded from the default `go test ./...`
 // run (and therefore from CI unless a job opts in) because they need Docker
-// or another reachable Postgres — see the package doc comment above for why.
+// or another reachable Postgres, see the package doc comment above for why.
 //
 // Run locally with Docker:
 //
@@ -18,11 +18,11 @@
 // is still safe to run in CI without a Postgres service configured.
 //
 // Schema: there is no schema/migration file in this repo for the base tables
-// (only migrations/002_dns_provider.sql, an additive follow-up) — the
+// (only migrations/002_dns_provider.sql, an additive follow-up), the
 // production schema lives on the server. The CREATE TABLE statements below
 // are reconstructed from the columns db.go/apppw.go actually SELECT/INSERT,
 // and are intentionally minimal (no FKs/indexes beyond what the queries need)
-// — they exist to validate query correctness, not to be a schema reference.
+// , they exist to validate query correctness, not to be a schema reference.
 package db
 
 import (
@@ -292,7 +292,7 @@ func TestMailboxCRUDAndUpsert(t *testing.T) {
 // user@domain aliases and the @domain catch-all for the given domain, and
 // must NOT match a similarly-named domain that merely shares a suffix (e.g.
 // filtering "example.com" must not also return aliases on
-// "notexample.com" — a LIKE '%'||$1 pattern without the leading '@' would
+// "notexample.com", a LIKE '%'||$1 pattern without the leading '@' would
 // have that bug).
 func TestAliasDomainScopingLikePattern(t *testing.T) {
 	d := openTestDB(t)
@@ -443,7 +443,7 @@ func TestAuditLog(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("ListAudit returned %d entries; want 2", len(entries))
 	}
-	// ORDER BY ts DESC — most recent (mailbox.add) first.
+	// ORDER BY ts DESC, most recent (mailbox.add) first.
 	if entries[0].Action != "mailbox.add" {
 		t.Fatalf("ListAudit not ordered ts DESC: %+v", entries)
 	}
@@ -500,7 +500,7 @@ func TestAuditLog(t *testing.T) {
 	}
 
 	// Target matches exactly ("alice@example.com") and, per AuditFilter's
-	// doc comment, as an address at a bare-domain target — but here both
+	// doc comment, as an address at a bare-domain target, but here both
 	// recorded targets already are full addresses, so a domain-only filter
 	// like "example.com" should NOT match them (that suffix rule anchors on
 	// '@', it does not substring-match the domain out of an address).

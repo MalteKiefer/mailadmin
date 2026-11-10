@@ -89,7 +89,7 @@ func GenerateVacation(opts VacationOptions) (string, error) {
 
 // writeVacationAction appends one `vacation ... ;` action to b, indented by
 // indent. The reply body is emitted as a Sieve multi-line ("text:") literal so
-// arbitrary message text (newlines, quotes) needs no escaping — only the
+// arbitrary message text (newlines, quotes) needs no escaping, only the
 // dot-stuffing RFC 5228 §2.4.2 requires for a line that would otherwise be
 // mistaken for the terminator. The multi-line literal's content lines and
 // terminating "." are never indented: Sieve matches the terminator line
@@ -124,7 +124,7 @@ func quoteSieveString(s string) string {
 // disabledScript is the no-op script vacation-off installs. mailadmin only
 // tracks one managed script per mailbox (see managedName) and does not keep a
 // history of prior script bodies, so disabling overwrites in place rather
-// than restoring a previous version — `sieve set` from a saved file remains
+// than restoring a previous version, `sieve set` from a saved file remains
 // the way to reinstate a specific prior script.
 const disabledScript = "# vacation disabled by `mailadmin sieve vacation-off`\nkeep;\n"
 

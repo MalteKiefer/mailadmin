@@ -1,7 +1,9 @@
 package rspamdconf
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +44,7 @@ func GreylistPath(dir string) string {
 // Settings absent from the file are omitted (rspamd's built-in default
 // applies); the caller decides how to present that.
 func ReadGreylist(dir string) (map[string]string, error) {
-	content, err := os.ReadFile(GreylistPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
+	content, err := readLocal(GreylistPath(dir)) // #nosec G304 -- fixed, well-known rspamd config path
 	if err != nil {
 		return nil, fmt.Errorf("rspamdconf: read %s: %w", GreylistPath(dir), err)
 	}
@@ -50,7 +52,7 @@ func ReadGreylist(dir string) (map[string]string, error) {
 	out := make(map[string]string, len(GreylistSettings))
 	for _, s := range GreylistSettings {
 		if v, ok := doc.Get(s); ok {
-			out[s] = unquote(v)
+			out[s] = showDuration(unquote(v))
 		}
 	}
 	return out, nil
@@ -66,7 +68,7 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 	}
 
 	path := GreylistPath(dir)
-	content, err := os.ReadFile(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
+	content, err := readLocal(path) // #nosec G304 -- operator-configured rspamd config dir, not user-tainted
 	if err != nil {
 		return nil, "", fmt.Errorf("rspamdconf: read %s: %w", path, err)
 	}
@@ -77,10 +79,47 @@ func SetGreylist(dir, setting, duration string) (oldContent []byte, oldValue str
 		return nil, "", err
 	}
 
-	if err := os.WriteFile(path, doc.Bytes(), 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := writeConf(path, doc.Bytes()); err != nil {
 		return content, "", fmt.Errorf("rspamdconf: write %s: %w", path, err)
 	}
 	return content, unquote(old), nil
+}
+
+// writeConf replaces a local.d file through a synced temp file and a rename, so
+// a crash never leaves rspamd a half-written config. 0644 matches rspamd's own
+// file modes; these files hold no secrets.
+func writeConf(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	_, err = tmp.Write(data)
+	if err == nil {
+		err = tmp.Chmod(0o644)
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
+// readLocal reads a local.d override. rspamd ships only *.example files and
+// install writes neither greylist.conf nor ratelimit.conf, so a missing file is
+// an empty one: set creates it, show reports rspamd's defaults.
+func readLocal(path string) ([]byte, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- rspamd local.d path
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return data, err
 }
 
 // uclDuration spells a validated duration (5m, 2h) the way libucl reads it. A
@@ -93,11 +132,24 @@ func uclDuration(d string) string {
 	return d
 }
 
+// showDuration presents a stored greylist value: "5min" (what set writes) as
+// "5m", and a bare "5m" written before v1.27.0, which libucl reads as
+// 5,000,000 seconds, with that meaning spelled out.
+func showDuration(v string) string {
+	if n, ok := strings.CutSuffix(v, "min"); ok && n != "" {
+		return n + "m"
+	}
+	if n, ok := strings.CutSuffix(v, "m"); ok && n != "" && strings.Trim(n, "0123456789") == "" {
+		return v + " (read by rspamd as " + n + "000000 seconds; set it again)"
+	}
+	return v
+}
+
 // RestoreFile writes content back to dir's ratelimit.conf/greylist.conf verbatim,
 // for rollback after a failed post-write validation. path must be one of
 // RatelimitPath(dir) or GreylistPath(dir).
 func RestoreFile(path string, content []byte) error {
-	if err := os.WriteFile(path, content, 0o644); err != nil { // #nosec G304 G306 G703 -- operator-configured rspamd config dir; 0644 matches rspamd's own file perms, not secret material
+	if err := writeConf(path, content); err != nil {
 		return fmt.Errorf("rspamdconf: restore %s: %w", path, err)
 	}
 	return nil

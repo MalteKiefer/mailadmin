@@ -2,7 +2,7 @@ version: "2"
 
 # mailadmin lint policy. Kept intentionally close to golangci-lint's own
 # "standard" set plus a handful of security/quality linters that overlap with
-# what gosec/staticcheck don't already cover — this repo already runs
+# what gosec/staticcheck don't already cover, this repo already runs
 # staticcheck and gosec as separate CI steps, so this config avoids
 # duplicating them wholesale and instead adds signal golangci-lint is
 # uniquely good at (unused parameters, shadowed variables, unchecked
@@ -51,7 +51,7 @@ linters:
       # commands that are, as of this branch, actively being edited by parallel
       # in-flight branches (dry-run hardening). This branch owns CI/tooling
       # only and must not touch those command-definition files to avoid
-      # stepping on concurrent work — see the branch's task brief. The
+      # stepping on concurrent work, see the branch's task brief. The
       # findings below are real but small and stylistic (non-wrapping %v in an
       # already-%w-wrapped error; an editor-invocation helper not yet
       # threaded with ctx; a couple of always-same-value bool params in

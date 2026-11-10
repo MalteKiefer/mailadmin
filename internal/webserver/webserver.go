@@ -1,6 +1,6 @@
 // Package webserver manages the Caddy autodiscovery include so that
 // autoconfig.<domain> (Thunderbird) and autodiscover.<domain> (Outlook) resolve
-// and serve the host-templated client-config XML for every hosted domain — the
+// and serve the host-templated client-config XML for every hosted domain, the
 // mailbox.org model, a single endpoint for all domains.
 //
 // It also owns the MTA-STS include: mta-sts.<domain> serving the static enforce
@@ -29,7 +29,7 @@ import (
 // reloadAttempts/reloadBackoff bound the retry of `systemctl reload <unit>`.
 // A reload can transiently fail while Caddy is still validating a config it
 // just picked up (or, as observed once in production, while a permission fix
-// on the Caddyfile propagates) — a couple of short retries clears that without
+// on the Caddyfile propagates), a couple of short retries clears that without
 // masking a real, persistent failure (which still surfaces after the last
 // attempt).
 const (
@@ -95,7 +95,7 @@ func (m *Manager) Block(domains []string) string {
 		ad = append(ad, "autodiscover."+d)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Managed by mailadmin — do not edit. Regenerated on domain add/remove.\n")
+	fmt.Fprintf(&b, "# Managed by mailadmin, do not edit. Regenerated on domain add/remove.\n")
 	fmt.Fprintf(&b, "%s {\n\troot * %s\n\ttemplates {\n\t\tmime text/xml application/xml text/html text/plain\n\t}\n\tfile_server\n}\n\n",
 		strings.Join(ac, ", "), m.autoconfigRoot)
 	fmt.Fprintf(&b, "%s {\n\troot * %s\n\t@ms path /autodiscover/autodiscover.xml /Autodiscover/Autodiscover.xml /AutoDiscover/AutoDiscover.xml\n\trewrite @ms /autodiscover.xml\n\tmethod GET\n\ttemplates {\n\t\tmime text/xml application/xml text/html text/plain\n\t}\n\tfile_server\n}\n",
@@ -130,7 +130,7 @@ func (m *Manager) MTASTSBlock(domains []string) string {
 		labels[i] = "mta-sts." + d
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Managed by mailadmin — do not edit. Regenerated on domain add/remove.\n")
+	fmt.Fprintf(&b, "# Managed by mailadmin, do not edit. Regenerated on domain add/remove.\n")
 	fmt.Fprintf(&b, "%s {\n\troot * %s\n\tfile_server\n\t@policy path /.well-known/mta-sts.txt\n\theader @policy Content-Type text/plain\n\tencode zstd gzip\n}\n",
 		strings.Join(labels, ", "), m.mtaStsRoot)
 	return b.String()
@@ -164,6 +164,11 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	// On disk before the rename, or a power loss can leave an empty file.
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
 	}

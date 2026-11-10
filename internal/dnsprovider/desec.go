@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,9 +20,17 @@ import (
 // mutations, reads the RRset, edits its values array, and writes it back. A
 // Record's ID encodes "subname\x1ftype\x1fvalue" so edits/removes target the
 // exact value within its RRset.
+//
+// deSEC limits RRset writes per domain (2/s, 15/min, 100/h). After ListRecords
+// the zone's RRsets are cached, so a write needs no extra GET and creates go
+// straight to POST: one request per changed RRset instead of two or three.
 type DeSEC struct {
 	token  string
 	client *http.Client
+
+	mu     sync.Mutex
+	listed map[string]bool       // domains whose RRsets are cached
+	sets   map[string]desecRRset // domain, subname, type -> RRset
 }
 
 // NewDeSEC builds a client from an API token (desec.io account → Token Management).
@@ -212,28 +221,76 @@ func (d *DeSEC) ListRecords(ctx context.Context, domain string) ([]Record, error
 				out = append(out, desecToRecord(rs, v))
 			}
 		}
+		d.cacheZone(domain, sets)
 		url = "" // single page is enough for a mail record-set
 	}
 	return out, nil
 }
 
+func desecKey(domain, sub, typ string) string {
+	return domain + "\x00" + sub + "\x00" + strings.ToUpper(typ)
+}
+
+// cacheZone remembers a zone's RRsets as just listed.
+func (d *DeSEC) cacheZone(domain string, sets []desecRRset) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.listed == nil {
+		d.listed, d.sets = map[string]bool{}, map[string]desecRRset{}
+	}
+	for k := range d.sets {
+		if strings.HasPrefix(k, domain+"\x00") {
+			delete(d.sets, k)
+		}
+	}
+	for _, rs := range sets {
+		d.sets[desecKey(domain, rs.Subname, rs.Type)] = rs
+	}
+	d.listed[domain] = true
+}
+
+// cached returns the cached RRset and whether the zone is cached at all.
+func (d *DeSEC) cached(domain, sub, typ string) (desecRRset, bool, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.listed[domain] {
+		return desecRRset{}, false, false
+	}
+	rs, ok := d.sets[desecKey(domain, sub, typ)]
+	return rs, ok, true
+}
+
+// remember updates the cache after a successful write.
+func (d *DeSEC) remember(domain string, rs desecRRset) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.listed[domain] {
+		return
+	}
+	if len(rs.Records) == 0 {
+		delete(d.sets, desecKey(domain, rs.Subname, rs.Type))
+		return
+	}
+	d.sets[desecKey(domain, rs.Subname, rs.Type)] = rs
+}
+
 func (d *DeSEC) AddRecord(ctx context.Context, domain string, r Record) error {
-	return d.upsertValue(ctx, domain, r.Name, r.Type, r.TTL, desecFormat(r), "")
+	return d.upsertValue(ctx, domain, r.Name, r.Type, r.TTL, rrsetValue(r), "")
 }
 
 func (d *DeSEC) EditRecord(ctx context.Context, domain string, r Record) error {
-	sub, typ, oldVal, ok := parseDesecID(r.ID)
+	sub, typ, oldVal, ok := parseRRID(r.ID)
 	if !ok {
 		return fmt.Errorf("desec edit: bad record id")
 	}
 	if sub != desecSubname(r.Name) || !strings.EqualFold(typ, r.Type) {
 		return fmt.Errorf("desec edit: id mismatch")
 	}
-	return d.upsertValue(ctx, domain, r.Name, r.Type, r.TTL, desecFormat(r), oldVal)
+	return d.upsertValue(ctx, domain, r.Name, r.Type, r.TTL, rrsetValue(r), oldVal)
 }
 
 func (d *DeSEC) RemoveRecord(ctx context.Context, domain, id string) error {
-	sub, typ, val, ok := parseDesecID(id)
+	sub, typ, val, ok := parseRRID(id)
 	if !ok {
 		return fmt.Errorf("desec remove: bad record id")
 	}
@@ -269,6 +326,12 @@ func (d *DeSEC) upsertValue(ctx context.Context, domain, name, typ string, ttl i
 
 // getRRset fetches one RRset; a 404 yields an empty set (not an error).
 func (d *DeSEC) getRRset(ctx context.Context, domain, sub, typ string) (desecRRset, error) {
+	if rs, ok, zone := d.cached(domain, sub, typ); zone {
+		if !ok {
+			return desecRRset{Subname: sub, Type: strings.ToUpper(typ)}, nil
+		}
+		return rs, nil
+	}
 	url := fmt.Sprintf("%s%s/rrsets/%s/%s/", desecBase, domain, desecURLSub(sub), strings.ToUpper(typ))
 	var rs desecRRset
 	err := d.do(ctx, http.MethodGet, url, nil, &rs)
@@ -285,20 +348,35 @@ func (d *DeSEC) getRRset(ctx context.Context, domain, sub, typ string) (desecRRs
 // the RRset.
 func (d *DeSEC) writeRRset(ctx context.Context, domain, sub, typ string, ttl int, values []string) error {
 	base := fmt.Sprintf("%s%s/rrsets/", desecBase, domain)
+	body := desecRRset{Subname: sub, Type: strings.ToUpper(typ), TTL: ttlOr(ttl), Records: values}
 	if len(values) == 0 {
 		url := fmt.Sprintf("%s%s/%s/", base, desecURLSub(sub), strings.ToUpper(typ))
-		return d.do(ctx, http.MethodDelete, url, nil, nil)
+		if err := d.do(ctx, http.MethodDelete, url, nil, nil); err != nil {
+			return err
+		}
+		d.remember(domain, body)
+		return nil
 	}
-	body := desecRRset{Subname: sub, Type: strings.ToUpper(typ), TTL: ttlOr(ttl), Records: values}
+	// A set the cached zone does not have is created with one POST.
+	if _, ok, zone := d.cached(domain, sub, typ); zone && !ok {
+		if err := d.do(ctx, http.MethodPost, base, body, nil); err != nil {
+			return err
+		}
+		d.remember(domain, body)
+		return nil
+	}
 	// PUT to the collection upserts by (subname,type).
 	url := fmt.Sprintf("%s%s/%s/", base, desecURLSub(sub), strings.ToUpper(typ))
 	if err := d.do(ctx, http.MethodPut, url, body, nil); err != nil {
 		// If the RRset does not exist yet, create it via POST to the collection.
-		if isStatus(err, http.StatusNotFound) {
-			return d.do(ctx, http.MethodPost, base, body, nil)
+		if !isStatus(err, http.StatusNotFound) {
+			return err
 		}
-		return err
+		if err := d.do(ctx, http.MethodPost, base, body, nil); err != nil {
+			return err
+		}
 	}
+	d.remember(domain, body)
 	return nil
 }
 
@@ -321,10 +399,6 @@ func desecURLSub(sub string) string {
 	return sub
 }
 
-// desecFormat renders a Record as a deSEC RRset value (inline priority, quoted
-// TXT). deSEC and PowerDNS share this presentation format (see rrsetValue).
-func desecFormat(r Record) string { return rrsetValue(r) }
-
 // desecToRecord parses one RRset value into a Record, tagged with an ID that
 // encodes its slot + raw value.
 func desecToRecord(rs desecRRset, value string) Record {
@@ -332,26 +406,8 @@ func desecToRecord(rs desecRRset, value string) Record {
 	if name == "" {
 		name = "@"
 	}
-	r := Record{Type: strings.ToUpper(rs.Type), Name: name, TTL: rs.TTL, ID: desecID(rs.Subname, rs.Type, value)}
-	switch r.Type {
-	case "MX":
-		prio, rest := splitPrio(value)
-		r.Prio, r.Content = prio, rest
-	case "SRV":
-		fields := strings.Fields(value)
-		if len(fields) == 4 {
-			r.Prio, _ = strconv.Atoi(fields[0])
-			r.Weight, _ = strconv.Atoi(fields[1])
-			r.Port, _ = strconv.Atoi(fields[2])
-			r.Content = fields[3]
-		} else {
-			r.Content = value
-		}
-	case "TXT":
-		r.Content = unquoteTXT(value)
-	default:
-		r.Content = value
-	}
+	r := Record{Type: strings.ToUpper(rs.Type), Name: name, TTL: rs.TTL, ID: rrID(rs.Subname, rs.Type, value)}
+	rrsetParse(&r, value)
 	return r
 }
 
@@ -428,20 +484,6 @@ func splitQuoted(s string) []string {
 }
 
 // ---- record identity encoding ------------------------------------------
-
-const desecIDSep = "\x1f"
-
-func desecID(sub, typ, value string) string {
-	return sub + desecIDSep + strings.ToUpper(typ) + desecIDSep + value
-}
-
-func parseDesecID(id string) (sub, typ, value string, ok bool) {
-	parts := strings.SplitN(id, desecIDSep, 3)
-	if len(parts) != 3 {
-		return "", "", "", false
-	}
-	return parts[0], parts[1], parts[2], true
-}
 
 func containsValue(vals []string, v string) bool {
 	for _, x := range vals {

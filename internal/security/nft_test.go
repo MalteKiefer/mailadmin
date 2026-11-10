@@ -57,9 +57,9 @@ func TestParseNftPorts(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "set reference skipped",
+			name: "inline set listed",
 			in:   `{"nftables":[` + ruleSet + `]}`,
-			want: nil,
+			want: []FirewallPort{{Proto: "tcp", Port: 22}, {Proto: "tcp", Port: 80}},
 		},
 		{
 			name: "sport ignored",
@@ -167,5 +167,13 @@ func TestParseNftPortsNamedSet(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got %v, want %v", got, want)
 		}
+	}
+}
+
+func TestParseNftPortsInlineSet(t *testing.T) {
+	data := []byte(`{"nftables":[{"rule":{"family":"inet","table":"mailadmin","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":{"set":[22,2222]}}},{"accept":null}]}}]}`)
+	got, err := parseNftPorts(data)
+	if err != nil || len(got) != 2 || got[0].Port != 22 || got[1].Port != 2222 {
+		t.Fatalf("got %v, %v", got, err)
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -38,11 +39,16 @@ func validLabel(s string) (string, error) {
 	return s, nil
 }
 
-// checkNewLabel rejects '+' and '@' in labels being created. They delimit the
-// login user@domain+label. Removal accepts labels created before this rule.
+// newLabelRe is what a label being created may hold. The login is
+// user@domain+label: Dovecot lowercases logins and refuses characters outside
+// auth_username_chars, and '+' and '@' delimit the login itself, so anything
+// else would make the app password unusable. Removal accepts older labels.
+var newLabelRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+// checkNewLabel rejects labels an app password login could not carry.
 func checkNewLabel(label string) error {
-	if strings.ContainsAny(label, "+@") {
-		return fmt.Errorf("label must not contain '+' or '@'")
+	if !newLabelRe.MatchString(label) {
+		return fmt.Errorf("label may hold only lowercase letters, digits, '.', '-' and '_' (got %q)", label)
 	}
 	return nil
 }

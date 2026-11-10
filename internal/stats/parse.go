@@ -62,7 +62,7 @@ func splitSyslog(line string) (ts, ident, msg string, ok bool) {
 	}
 	rest = strings.TrimLeft(rest[sp+1:], " ")
 
-	// ident[pid]: — up to the first ": ".
+	// ident[pid]:, up to the first ": ".
 	colon := strings.Index(rest, ": ")
 	if colon <= 0 {
 		return "", "", "", false
@@ -443,7 +443,7 @@ type postfixBounce struct {
 }
 
 // parseBounces extracts bounced deliveries from raw postfix journal lines.
-// Only delivery-agent lines (smtp/lmtp/local/virtual — never smtpd, which logs
+// Only delivery-agent lines (smtp/lmtp/local/virtual, never smtpd, which logs
 // receive-time rejects under a different vocabulary) that carry
 // "status=bounced" are kept.
 func parseBounces(lines []string) []postfixBounce {
@@ -495,7 +495,7 @@ func statusField(msg string) (status, reason string) {
 	return status, reason
 }
 
-// leadingQueueID returns the token preceding the first ": " in msg — postfix
+// leadingQueueID returns the token preceding the first ": " in msg, postfix
 // delivery-agent lines always start with "<QUEUEID>: to=...". Returns "" if
 // the message has no such prefix.
 func leadingQueueID(msg string) string {

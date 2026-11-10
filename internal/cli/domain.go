@@ -90,7 +90,7 @@ func newDomainCmd(app *App) *cobra.Command {
 		Use:   "set-provider <domain> <provider>",
 		Short: "Set a domain's DNS provider (manual|njalla|desec|cloudflare|inwx|servercow|servfail)",
 		Long: "Point a domain at a DNS backend so `dns publish` (and DANE) manage its\n" +
-			"zone via that provider's API. Use after `dns migrate` moved the zone —\n" +
+			"zone via that provider's API. Use after `dns migrate` moved the zone:\n" +
 			"migrate copies records but leaves the provider unchanged.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error { return runDomainSetProvider(app, c, args[0], args[1]) },
@@ -102,14 +102,14 @@ func newDomainCmd(app *App) *cobra.Command {
 		Short: "Compute and publish the default._bimi TXT record for a domain",
 		Long: "Publishes the default._bimi TXT record (v=BIMI1; l=<logo-url>[; a=<vmc-url>]).\n\n" +
 			"mailadmin does not host the logo itself: host the SVG (and VMC, if you have\n" +
-			"one) somewhere with a stable HTTPS URL first — a static bucket, your own\n" +
-			"web root, whatever — then point --logo-url (and optionally --vmc-url) at\n" +
+			"one) somewhere with a stable HTTPS URL first, a static bucket, your own\n" +
+			"web root, whatever, then point --logo-url (and optionally --vmc-url) at\n" +
 			"it. --logo-file is optional and only used locally: it validates that a\n" +
 			"copy of the SVG you are about to publish is well-formed XML with\n" +
 			"baseProfile=\"tiny-ps\" (the two most common mistakes), catching an\n" +
 			"obviously wrong file before it is published. It is not a full SVG Tiny PS\n" +
 			"conformance check.\n\n" +
-			"BIMI only displays once DMARC enforces (p=quarantine or reject) — see\n" +
+			"BIMI only displays once DMARC enforces (p=quarantine or reject), see\n" +
 			"`dns audit`. Publishing follows the same path as `dns publish`: the\n" +
 			"domain's dns_provider decides whether the record is actually written\n" +
 			"(manual just prints it) or only shown; --dry-run always just shows it.",
@@ -129,12 +129,12 @@ func newDomainCmd(app *App) *cobra.Command {
 		Long: "Generates a NEW DKIM key under a NEW selector and publishes BOTH the\n" +
 			"current and new selector's DNS TXT records. The domain keeps SIGNING\n" +
 			"with the current (old) selector throughout, so mail keeps flowing\n" +
-			"correctly while the new key propagates — no overlap window, unlike\n" +
+			"correctly while the new key propagates, no overlap window, unlike\n" +
 			"`set-dkim`/`regen-dkim`, which cut over instantly in one step.\n\n" +
 			"Once DNS has propagated (wait at least the record TTL, longer for a\n" +
 			"comfortable margin), run `dkim-rotate-finish <domain> <new-selector>`\n" +
 			"to switch signing over. This command prints the exact selector to pass\n" +
-			"it — mailadmin does not persist rotation state between the two steps.",
+			"it, mailadmin does not persist rotation state between the two steps.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			return runDomainDKIMRotateStart(app, c, args[0], rotateSelector)
@@ -146,7 +146,7 @@ func newDomainCmd(app *App) *cobra.Command {
 	dkimRotateFinish := &cobra.Command{
 		Use:   "dkim-rotate-finish <domain> <new-selector>",
 		Short: "Complete a DKIM rotation: switch signing to the new selector",
-		Long: "Switches Dovecot/Rspamd signing over to <new-selector> — the DB cutover\n" +
+		Long: "Switches Dovecot/Rspamd signing over to <new-selector>, the DB cutover\n" +
 			"that `set-dkim`/`regen-dkim` perform instantly, now split out as an\n" +
 			"explicit second step. <new-selector> must already have a published key\n" +
 			"(run `dkim-rotate-start` first).\n\n" +
@@ -269,7 +269,7 @@ func runDomainShow(app *App, c *cobra.Command, rawDomain string) error {
 		case kErr == nil:
 			view.DKIM = key.PublicKey
 		case errors.Is(kErr, mail.ErrNoDKIMKey):
-			view.DKIM = "(key missing — run: mailadmin domain regen-dkim " + d.Name + ")"
+			view.DKIM = "(key missing, run: mailadmin domain regen-dkim " + d.Name + ")"
 		default:
 			return kErr
 		}
@@ -350,20 +350,11 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 
 	// Autoconfig/autodiscover applies to every domain (not just automated DNS):
 	// regenerate the managed Caddy include so autoconfig.<domain> /
-	// autodiscover.<domain> are served. A reload failure is a soft warning — the
+	// autodiscover.<domain> are served. A reload failure is a soft warning, the
 	// domain is already created.
-	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
-		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
-	}
-	if err := app.syncAutodiscovery(ctx(c)); err != nil {
-		r.Message("warning: could not update Caddy autodiscovery: %v", err)
-	}
-	// Bring up the MTA-STS policy endpoint (mta-sts.<domain>) in the same step so
-	// a later `dns publish --with-mta-sts` finds a live enforce policy. A reload
-	// failure is a soft warning — the domain is already created.
-	if err := app.syncMTASTS(ctx(c)); err != nil {
-		r.Message("warning: could not update Caddy MTA-STS: %v", err)
-	}
+	// The MTA-STS policy endpoint (mta-sts.<domain>) comes up in the same step, so
+	// a later `dns publish --with-mta-sts` finds a live enforce policy.
+	app.syncDomainState(ctx(c), r)
 
 	// For an automated registrar, publish the mail record-set straight away so a
 	// new domain is live without a second manual step. MTA-STS is withheld until
@@ -376,7 +367,7 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 		case cerr != nil:
 			return cerr
 		case !configured:
-			r.Message("note: %s token not set — skipping DNS; run `mailadmin dns publish %s` once configured", provider, name)
+			r.Message("note: %s token not set, skipping DNS; run `mailadmin dns publish %s` once configured", provider, name)
 		default:
 			r.Message("publishing DNS for %s at %s ...", name, provider)
 			return app.dnsPublish(c, name, false)
@@ -415,7 +406,16 @@ func runDomainRemove(app *App, c *cobra.Command, rawDomain string) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("domain %s has %d mailbox(es) — remove them first", name, n)
+		return fmt.Errorf("domain %s has %d mailbox(es): remove them first", name, n)
+	}
+	// Aliases keep routing mail for the domain after it is gone, and come back
+	// to life if the name is added again, so they go first too.
+	na, err := database.CountAliasesInDomain(ctx(c), name)
+	if err != nil {
+		return err
+	}
+	if na > 0 {
+		return fmt.Errorf("domain %s has %d alias(es): remove them first (alias list --domain %s)", name, na, name)
 	}
 
 	if app.flags.dryRun {
@@ -437,15 +437,7 @@ func runDomainRemove(app *App, c *cobra.Command, rawDomain string) error {
 		return err
 	}
 	r.Message("removed domain %s", name)
-	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
-		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
-	}
-	if err := app.syncAutodiscovery(ctx(c)); err != nil {
-		r.Message("warning: could not update Caddy autodiscovery: %v", err)
-	}
-	if err := app.syncMTASTS(ctx(c)); err != nil {
-		r.Message("warning: could not update Caddy MTA-STS: %v", err)
-	}
+	app.syncDomainState(ctx(c), r)
 	return nil
 }
 
@@ -500,12 +492,7 @@ func runDomainSetActive(app *App, c *cobra.Command, rawDomain string, active boo
 	r.Message("%s domain %s", verb, name)
 	// MTA-STS is active-gated: enabling must publish the policy endpoint, disabling
 	// must withdraw it. Regenerate the include from the new active set.
-	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
-		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
-	}
-	if err := app.syncMTASTS(ctx(c)); err != nil {
-		r.Message("warning: could not update Caddy MTA-STS: %v", err)
-	}
+	app.syncDomainState(ctx(c), r)
 	return nil
 }
 
@@ -560,6 +547,9 @@ func runDomainSetDKIM(app *App, c *cobra.Command, rawDomain, rawSelector string)
 		return err
 	}
 	r.Message("set DKIM selector for %s to %s", name, selector)
+	r.Message("warning: rspamd signs with %s now; mail fails DKIM until %s._domainkey.%s is published "+
+		"(mailadmin dns publish %s). For a change without that gap use domain dkim-rotate-start.",
+		selector, selector, name, name)
 	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
 		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
 	}
@@ -573,7 +563,7 @@ func runDomainSetDKIM(app *App, c *cobra.Command, rawDomain, rawSelector string)
 }
 
 // runDomainSetProvider changes a domain's DNS backend and audits the change.
-// It does not publish records — the operator runs `dns publish` afterwards.
+// It does not publish records, the operator runs `dns publish` afterwards.
 func runDomainSetProvider(app *App, c *cobra.Command, rawDomain, rawProvider string) error {
 	r, err := app.Renderer()
 	if err != nil {
@@ -646,7 +636,7 @@ func runDomainRegenDKIM(app *App, c *cobra.Command, rawDomain string) error {
 		return err
 	}
 	if d.DKIMSelector == "" {
-		return fmt.Errorf("domain %s has no DKIM selector — set one with: mailadmin domain set-dkim %s <selector>", name, name)
+		return fmt.Errorf("domain %s has no DKIM selector, set one with: mailadmin domain set-dkim %s <selector>", name, name)
 	}
 	if app.flags.dryRun {
 		r.Message("dry-run: would regenerate DKIM key for %s (selector %s)", name, d.DKIMSelector)
@@ -688,8 +678,8 @@ func runDomainRegenDKIM(app *App, c *cobra.Command, rawDomain string) error {
 // --dry-run and the domain's configured dns_provider.
 //
 // Design note (hosting): mailadmin does NOT host the BIMI logo/VMC itself.
-// The alternative — a managed Caddy web root at /srv/caddy/bimi, mirroring
-// internal/webserver's autodiscovery/MTA-STS include pattern — was
+// The alternative, a managed Caddy web root at /srv/caddy/bimi, mirroring
+// internal/webserver's autodiscovery/MTA-STS include pattern, was
 // considered, but BIMI logos need to satisfy stricter, external constraints
 // (SVG Tiny PS conformance, and for the checkmark-in-mailbox display a VMC
 // signed by a commercial CA against the *exact* hosted bytes) that mailadmin
@@ -725,7 +715,6 @@ func runDomainSetBIMI(app *App, c *cobra.Command, rawDomain, logoURL, logoFile, 
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 
 	if app.flags.dryRun {
 		r.Message("dry-run: would publish BIMI record for %s", domain)
@@ -733,7 +722,7 @@ func runDomainSetBIMI(app *App, c *cobra.Command, rawDomain, logoURL, logoFile, 
 	}
 
 	if be.provider == nil {
-		r.Message("%s has no automated DNS provider — add this record yourself:", domain)
+		r.Message("%s has no automated DNS provider, add this record yourself:", domain)
 		return r.TypeTable(recordsTable(desired), 0)
 	}
 
@@ -768,7 +757,7 @@ func autoRotateSelector(current string) string {
 
 // resolveRotateSelector picks and validates the new DKIM selector for a
 // rotation: the operator's --selector if given, else one auto-generated from
-// the current selector — always validated and always distinct from current.
+// the current selector, always validated and always distinct from current.
 // Pure (no I/O) so it is unit-testable without a DB or DKIM keys on disk.
 func resolveRotateSelector(current, requested string) (string, error) {
 	newSelector := strings.TrimSpace(requested)
@@ -788,7 +777,7 @@ func resolveRotateSelector(current, requested string) (string, error) {
 // runDomainDKIMRotateStart generates a new DKIM key under a new selector and
 // publishes it alongside the still-signing old selector's record, so both are
 // live in DNS during the propagation window. It never touches the domain row
-// (that is dkim-rotate-finish's job) — the domain keeps signing with the old
+// (that is dkim-rotate-finish's job), the domain keeps signing with the old
 // selector until the operator explicitly cuts over.
 func runDomainDKIMRotateStart(app *App, c *cobra.Command, rawDomain, rawSelector string) error {
 	r, err := app.Renderer()
@@ -800,14 +789,13 @@ func runDomainDKIMRotateStart(app *App, c *cobra.Command, rawDomain, rawSelector
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 
 	before, err := getDomain(ctx(c), be.db, domain)
 	if err != nil {
 		return err
 	}
 	if before.DKIMSelector == "" {
-		return fmt.Errorf("%w: %s has no DKIM selector yet — run: mailadmin domain set-dkim %s <selector>", ErrUsage, domain, domain)
+		return fmt.Errorf("%w: %s has no DKIM selector yet, run: mailadmin domain set-dkim %s <selector>", ErrUsage, domain, domain)
 	}
 
 	newSelector, err := resolveRotateSelector(before.DKIMSelector, rawSelector)
@@ -841,7 +829,7 @@ func runDomainDKIMRotateStart(app *App, c *cobra.Command, rawDomain, rawSelector
 	}
 
 	if be.provider == nil {
-		r.Message("%s is on manual DNS — add both DKIM TXT records below (keep %s published during the overlap):", domain, before.DKIMSelector)
+		r.Message("%s is on manual DNS, add both DKIM TXT records below (keep %s published during the overlap):", domain, before.DKIMSelector)
 		r.Message("once DNS has propagated, run: mailadmin domain dkim-rotate-finish %s %s", domain, newSelector)
 		return r.Table(recordsTable(desired))
 	}
@@ -858,7 +846,7 @@ func runDomainDKIMRotateStart(app *App, c *cobra.Command, rawDomain, rawSelector
 		}
 		return fmt.Errorf("domain dkim-rotate-start %s: %w", domain, err)
 	}
-	r.Message("published DKIM selector %s for %s at %s — still signing with %s", newSelector, domain, be.provider.Name(), before.DKIMSelector)
+	r.Message("published DKIM selector %s for %s at %s, still signing with %s", newSelector, domain, be.provider.Name(), before.DKIMSelector)
 	r.Message("once DNS has propagated, run: mailadmin domain dkim-rotate-finish %s %s", domain, newSelector)
 	return r.Table(changesTable(applied))
 }
@@ -882,7 +870,6 @@ func runDomainDKIMRotateFinish(app *App, c *cobra.Command, rawDomain, rawNewSele
 	if err != nil {
 		return err
 	}
-	defer be.db.Close()
 
 	before, err := getDomain(ctx(c), be.db, domain)
 	if err != nil {
@@ -930,9 +917,9 @@ func runDomainDKIMRotateFinish(app *App, c *cobra.Command, rawDomain, rawNewSele
 			r.Message("removed old DKIM DNS record for selector %s", before.DKIMSelector)
 		}
 	case removeOld:
-		r.Message("note: %s is manual DNS — remove the old %s._domainkey TXT record yourself", domain, before.DKIMSelector)
+		r.Message("note: %s is manual DNS, remove the old %s._domainkey TXT record yourself", domain, before.DKIMSelector)
 	default:
-		r.Message("old selector %s DNS record left in place for a grace period — remove it later (manually, or rerun finish with --remove-old) once you're sure no in-flight mail still needs it", before.DKIMSelector)
+		r.Message("old selector %s DNS record left in place for a grace period, remove it later (manually, or rerun finish with --remove-old) once you're sure no in-flight mail still needs it", before.DKIMSelector)
 	}
 
 	return r.Value(domainView{

@@ -60,7 +60,7 @@ func TestClassifyDANEOutbound(t *testing.T) {
 			t.Fatalf("status=%s want WARN (detail %q)", got.Status, got.Detail)
 		}
 		if strings.Contains(got.Detail, "smtp_tls_security_level=dnssec") {
-			t.Fatalf("detail %q incorrectly treats dnssec as smtp_tls_security_level — positional parse bug", got.Detail)
+			t.Fatalf("detail %q incorrectly treats dnssec as smtp_tls_security_level, positional parse bug", got.Detail)
 		}
 	})
 }

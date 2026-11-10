@@ -150,29 +150,6 @@ func TestParseAllowlist(t *testing.T) {
 	}
 }
 
-func TestIsFail2banPong(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		in   string
-		want bool
-	}{
-		{"Server replied: pong\n", true},
-		{"pong", true},
-		{"PONG", true},
-		{"", false},
-		{"Failed to access socket path", false},
-		{"ERROR   Unable to contact server", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			t.Parallel()
-			if got := isFail2banPong([]byte(tt.in)); got != tt.want {
-				t.Fatalf("isFail2banPong(%q) = %v, want %v", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseDecisionsNestedAlerts(t *testing.T) {
 	data := []byte(`[{"id":7,"scenario":"crowdsecurity/ssh-bf","simulated":false,"decisions":[
 		{"value":"203.0.113.7","scenario":"crowdsecurity/ssh-bf","type":"ban","duration":"3h","origin":"crowdsec","scope":"Ip","simulated":false},

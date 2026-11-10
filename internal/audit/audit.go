@@ -16,6 +16,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Logger is the minimal db surface audit needs (satisfied by *db.DB).
@@ -42,7 +43,7 @@ func New(log Logger, actor string) *Recorder {
 // Record appends one audit entry describing a single mutation. action names the
 // operation (e.g. "domain.add"), target identifies the object it acted on
 // (e.g. "example.com"), and before/after are optional JSON-serialisable
-// snapshots — pass nil where a side is not meaningful (before for a create,
+// snapshots, pass nil where a side is not meaningful (before for a create,
 // after for a delete).
 //
 // Callers must never place secret values (passwords, hashes, tokens) in
@@ -58,10 +59,12 @@ func (r *Recorder) Record(ctx context.Context, action, target string, before, af
 		return fmt.Errorf("audit.Record: %w: empty action", errInvalid)
 	}
 	target = strings.TrimSpace(target)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("audit.Record: %w", err)
-	}
-	if err := r.log.Log(ctx, r.actor, action, target, before, after, "", ""); err != nil {
+	// Record runs after the mutation it describes. A Ctrl+C or timeout that came
+	// in meanwhile must not drop the entry for a change that already happened, so
+	// the write gets its own short deadline instead of the command's context.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	if err := r.log.Log(wctx, r.actor, action, target, before, after, "", ""); err != nil {
 		return fmt.Errorf("audit.Record %q %q: %w", action, target, err)
 	}
 	return nil
@@ -76,6 +79,9 @@ func (r *Recorder) Actor() string {
 }
 
 var errInvalid = errors.New("invalid audit entry")
+
+// recordTimeout bounds one audit write.
+const recordTimeout = 10 * time.Second
 
 const unknownActor = "unknown"
 

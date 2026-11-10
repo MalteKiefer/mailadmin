@@ -6,7 +6,7 @@ import (
 )
 
 // These cover the pure, DB-free logic in models.go. Everything else in this
-// package requires a live Postgres connection (pgxpool) — see
+// package requires a live Postgres connection (pgxpool), see
 // integration_test.go (build tag "integration") for CRUD coverage against a
 // real database.
 

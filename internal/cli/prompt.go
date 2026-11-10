@@ -69,8 +69,8 @@ func (a *App) interactive() bool {
 }
 
 // readLine reads one line from stdin. On a terminal it uses raw mode so that
-// Esc and Ctrl+C abort immediately (returning ErrDeclined) — matching the
-// user's expectation that either key cancels a prompt — while Enter submits and
+// Esc and Ctrl+C abort immediately (returning ErrDeclined), matching the
+// user's expectation that either key cancels a prompt, while Enter submits and
 // Backspace edits. Off a terminal (scripts/tests) it falls back to a plain
 // buffered line read.
 func (a *App) readLine(prompt string) (string, error) {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"mailadmin/internal/sys"
@@ -62,7 +63,14 @@ func (s *Service) Show(ctx context.Context, qid string) (Mail, error) {
 	if err != nil {
 		return Mail{}, fmt.Errorf("postfixq.Show: %w", err)
 	}
-	mails, err := s.List(ctx)
+	out, err := s.runner.Output(ctx, binPostqueue, "-j")
+	if err != nil {
+		return Mail{}, fmt.Errorf("postfixq.Show: %w", err)
+	}
+	// Only the line that names this queue id is decoded.
+	// postqueue writes `"queue_id": "ID"` (with a blank); the quoted id is enough
+	// to skip the other lines, and the decoded id is compared below.
+	mails, err := parseQueueJSONMatching([]byte(out), []byte(`"`+qid+`"`))
 	if err != nil {
 		return Mail{}, fmt.Errorf("postfixq.Show: %w", err)
 	}
@@ -103,11 +111,22 @@ func (s *Service) postsuper(ctx context.Context, op, flag, qid string) error {
 	if err != nil {
 		return fmt.Errorf("postfixq.%s: %w", op, err)
 	}
-	if _, err := s.runner.Output(ctx, binPostsuper, flag, qid); err != nil {
+	res, err := s.runner.Run(ctx, nil, binPostsuper, flag, qid)
+	if err != nil {
 		return fmt.Errorf("postfixq.%s %s: %w", op, qid, err)
+	}
+	// postsuper exits 0 also when no message has this id; it only reports a
+	// count ("Deleted: 1 message") when it changed something.
+	if !postsuperChanged(res.Stderr) {
+		return fmt.Errorf("postfixq.%s %s: %w", op, qid, ErrNotFound)
 	}
 	return nil
 }
+
+var postsuperCountRe = regexp.MustCompile(`: [1-9][0-9]* messages?`)
+
+// postsuperChanged reports whether postsuper's summary names at least one message.
+func postsuperChanged(stderr []byte) bool { return postsuperCountRe.Match(stderr) }
 
 // queueEntry mirrors the JSON object Postfix emits per message with `-j`
 // (one object per line). Only the fields we surface are decoded.
@@ -125,11 +144,15 @@ type queueEntry struct {
 
 // parseQueueJSON parses the JSONL output of `postqueue -j` into Mails. Blank
 // lines are skipped; a malformed line fails the whole parse (fail closed).
-func parseQueueJSON(data []byte) ([]Mail, error) {
+func parseQueueJSON(data []byte) ([]Mail, error) { return parseQueueJSONMatching(data, nil) }
+
+// parseQueueJSONMatching decodes the lines that contain match (all lines when
+// match is nil). Unknown fields are ignored: Postfix adds fields across releases.
+func parseQueueJSONMatching(data, match []byte) ([]Mail, error) {
 	var mails []Mail
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	// Queue entries can be large; raise the token limit above the 64 KiB default.
-	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	sc.Buffer(make([]byte, 0, 64*1024), 64<<20)
 	line := 0
 	for sc.Scan() {
 		line++
@@ -137,15 +160,12 @@ func parseQueueJSON(data []byte) ([]Mail, error) {
 		if len(raw) == 0 {
 			continue
 		}
+		if match != nil && !bytes.Contains(raw, match) {
+			continue
+		}
 		var e queueEntry
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&e); err != nil {
-			// Unknown fields are tolerated: Postfix may add fields across
-			// versions. Retry with a lenient decoder before giving up.
-			if lerr := json.Unmarshal(raw, &e); lerr != nil {
-				return nil, fmt.Errorf("parse queue line %d: %w", line, lerr)
-			}
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, fmt.Errorf("parse queue line %d: %w", line, err)
 		}
 		mails = append(mails, entryToMail(e))
 	}

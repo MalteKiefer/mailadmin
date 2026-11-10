@@ -10,7 +10,7 @@
 // Show buffers a bounded number of lines through sys.Runner. Tail follows the
 // journal (journalctl --follow) and therefore cannot use the buffered Runner
 // API; it streams argv-only (never "sh -c"), from an absolute binary path, and
-// stops the moment ctx is cancelled — matching the same no-shell, allowlist,
+// stops the moment ctx is cancelled, matching the same no-shell, allowlist,
 // context-timeout guarantees as the rest of the tool.
 package logs
 

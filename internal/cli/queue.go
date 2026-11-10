@@ -84,7 +84,7 @@ func newQueueCmd(app *App) *cobra.Command {
 		Short: "List bounced messages parsed from the Postfix log",
 		Long: "Read-only: parses the Postfix log for delivery-agent lines with\n" +
 			"status=bounced and lists the recipient, DSN code, and reason. The message\n" +
-			"was already returned to its sender — there is nothing to act on here.",
+			"was already returned to its sender, there is nothing to act on here.",
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runQueueBounces(app, c, bouncesSince)

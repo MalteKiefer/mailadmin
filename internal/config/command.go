@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // ConfigView is the redacted, presentable form of a loaded config for
@@ -165,40 +167,57 @@ func fileExists(path string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
-// starterConfig is the commented template written by Init.
-const starterConfig = `[postgres]
-service      = "mail-admin"
-service_file = "/var/lib/mailadmin/.pg_service.conf"
+// Template holds the host values of a config.toml. Init writes it with example
+// values, install with the answers; both render through RenderTemplate, so the
+// defaults (log units, directories) exist once.
+type Template struct {
+	Header      string // first comment line
+	Service     string
+	ServiceFile string
+	Hostname    string
+	Selector    string
+	TLSCert     string // optional; empty leaves the key out
+	IPv4, IPv6  string
+}
 
-[mail]
-hostname         = "mail.example.com"
-dkim_dir         = "/var/lib/rspamd/dkim"
-default_selector = "mail2026"
+// DefaultLogUnits are the units doctor, service and log may touch.
+var DefaultLogUnits = []string{"postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"}
 
-[server]
-ipv4 = "203.0.113.10"
-ipv6 = "2001:db8::10"
-
-[dns]
-resolver = "1.1.1.1:53"
-
-[backup]
-dns_backup_dir = "/var/lib/mailadmin/dns-backups"
-dir            = "/var/lib/mailadmin/backups"
-
-[logs]
-units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
-
-# Optional: ntfy.sh (or a self-hosted instance) target for
+// RenderTemplate renders config.toml for t.
+func RenderTemplate(t Template) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n[postgres]\nservice      = %q\nservice_file = %q\n\n", t.Header, t.Service, t.ServiceFile)
+	fmt.Fprintf(&b, "[mail]\nhostname         = %q\ndkim_dir         = \"/var/lib/rspamd/dkim\"\ndefault_selector = %q\n", t.Hostname, t.Selector)
+	if t.TLSCert != "" {
+		fmt.Fprintf(&b, "tls_cert         = %q\n", t.TLSCert)
+	}
+	fmt.Fprintf(&b, "\n[server]\nipv4 = %q\nipv6 = %q\n\n", t.IPv4, t.IPv6)
+	b.WriteString("[dns]\nresolver = \"1.1.1.1:53\"\n\n")
+	b.WriteString("[backup]\ndns_backup_dir = \"/var/lib/mailadmin/dns-backups\"\ndir            = \"/var/lib/mailadmin/backups\"\n\n")
+	units := make([]string, len(DefaultLogUnits))
+	for i, u := range DefaultLogUnits {
+		units[i] = strconv.Quote(u)
+	}
+	fmt.Fprintf(&b, "[logs]\nunits = [%s]\n\n", strings.Join(units, ", "))
+	b.WriteString(`# Optional: ntfy.sh (or a self-hosted instance) target for
 # "doctor --notify" / "dns drift-check --notify". Leave unset to skip
 # alerting entirely (the flags then no-op). The bearer token goes in
 # secrets.env as NTFY_TOKEN, never here.
 [notify]
 # url = "https://ntfy.sh/your-topic"
-`
+`)
+	return []byte(b.String())
+}
+
+// starterConfig is the commented template written by Init.
+var starterConfig = string(RenderTemplate(Template{
+	Header: "mailadmin configuration (see README).", Service: "mail-admin",
+	ServiceFile: "/var/lib/mailadmin/.pg_service.conf", Hostname: "mail.example.com",
+	Selector: "mail2026", IPv4: "203.0.113.10", IPv6: "2001:db8::10",
+}))
 
 // starterSecrets is the template written by Init (values left blank; 0600).
-const starterSecrets = `# mailadmin secrets — mode 0600, root only. Never commit or share.
+const starterSecrets = `# mailadmin secrets, mode 0600, root only. Never commit or share.
 # Set the credentials for whichever DNS provider you use (only one is needed).
 NJALLA_TOKEN=
 DESEC_TOKEN=

@@ -3,6 +3,7 @@ package rspamdconf
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestReadGreylist(t *testing.T) {
 func TestReadGreylistPartialFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeTemp(t, dir, GreylistFile, "# only timeout tuned\ntimeout = 5m;\n")
+	writeTemp(t, dir, GreylistFile, "# only timeout tuned\ntimeout = 5min;\n")
 
 	got, err := ReadGreylist(dir)
 	if err != nil {
@@ -112,5 +113,14 @@ func TestUCLDurationMinutes(t *testing.T) {
 		if got := uclDuration(in); got != want {
 			t.Errorf("uclDuration(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestShowDurationFlagsLegacyMega(t *testing.T) {
+	if got := showDuration("5m"); !strings.Contains(got, "5000000 seconds") {
+		t.Fatalf("legacy 5m shown as %q", got)
+	}
+	if got := showDuration("10min"); got != "10m" {
+		t.Fatalf("10min shown as %q", got)
 	}
 }

@@ -2,7 +2,7 @@
 // learn_ham) through internal/sys. This replaces the deleted shell helper
 // mailadmin-rspamd-learn (see docs/SECURITY-AUDIT.md L-3): a message source is
 // either a Postfix queue id (fetched via postcat and streamed to rspamc on
-// stdin) or a file path, which must resolve — after symlink resolution — to a
+// stdin) or a file path, which must resolve, after symlink resolution, to a
 // location strictly inside the vmail root (internal/valid.PathUnder). No path
 // reaches rspamc without that confinement check, since this runs as root.
 package rspamd
@@ -20,7 +20,7 @@ import (
 )
 
 // Binary paths (absolute; matches the rest of the codebase's exec chokepoint
-// convention — no PATH lookup, no shell).
+// convention, no PATH lookup, no shell).
 const (
 	binRspamc  = "/usr/bin/rspamc"
 	binPostcat = "/usr/sbin/postcat"
@@ -121,7 +121,9 @@ func (s *Service) resolvePath(source string) (string, error) {
 
 // postcat runs `postcat -q <qid>` and returns the raw message bytes.
 func (s *Service) postcat(ctx context.Context, qid string) ([]byte, error) {
-	res, err := s.runner.Run(ctx, nil, binPostcat, "-q", qid)
+	// -bh prints the message (headers and body) only; plain -q adds envelope
+	// records and markers that rspamd would learn as message content.
+	res, err := s.runner.Run(ctx, nil, binPostcat, "-bh", "-q", qid)
 	if err != nil {
 		return nil, fmt.Errorf("postcat -q %s: %w", qid, wrapDetail(err, res.Stderr))
 	}

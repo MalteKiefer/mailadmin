@@ -159,17 +159,16 @@ func TestRecordNilLogger(t *testing.T) {
 	}
 }
 
-func TestRecordCanceledContext(t *testing.T) {
+func TestRecordAfterCancelStillWrites(t *testing.T) {
 	f := &fakeLogger{}
 	r := New(f, "root")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := r.Record(ctx, "domain.add", "example.com", nil, nil)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled ctx: got %v, want context.Canceled", err)
+	if err := r.Record(ctx, "domain.add", "example.com", nil, nil); err != nil {
+		t.Fatalf("a cancelled command must still record its completed change: %v", err)
 	}
-	if f.calls != 0 {
-		t.Fatal("Log must not be called once context is canceled")
+	if f.calls != 1 {
+		t.Fatalf("Log calls = %d, want 1", f.calls)
 	}
 }
 

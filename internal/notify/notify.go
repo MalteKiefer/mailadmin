@@ -32,7 +32,7 @@ const timeout = 10 * time.Second
 // Config is the minimal ntfy target: a topic URL and its bearer token. The
 // URL is not secret (it lives in config.toml's [notify] section); the token
 // is (secrets.env's NTFY_TOKEN). Both must be non-empty for Configured to be
-// true — a topic with no token, or a token with no topic, is treated as
+// true, a topic with no token, or a token with no topic, is treated as
 // "not configured" rather than guessed at.
 type Config struct {
 	URL   string
@@ -82,7 +82,7 @@ func newHTTPClient() *http.Client {
 // It no-ops cleanly (no request made, nil returned) when cfg is not
 // configured. Any failure to build or send the request, or a non-2xx
 // response, is reported through onWarn (if non-nil) and otherwise swallowed
-// — Send always returns nil. Callers must not treat a nil return as proof the
+// , Send always returns nil. Callers must not treat a nil return as proof the
 // notification was delivered; it only means the failure to deliver it did not
 // propagate.
 func Send(ctx context.Context, cfg Config, msg Message, onWarn func(string)) error {

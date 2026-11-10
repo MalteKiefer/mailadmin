@@ -157,3 +157,18 @@ func TestSetFstabEntryReplacesOldOptions(t *testing.T) {
 		t.Fatalf("fstab = %q, want %q", got, want)
 	}
 }
+
+func TestAliasMapCatchAllAndMultipleDestinations(t *testing.T) {
+	q := PostfixPgsqlMaps()[PostfixMapDir+"/pgsql-virtual-aliases.cf"]
+	if strings.Contains(q, "LIMIT") {
+		t.Errorf("every destination of an alias must be returned:\n%s", q)
+	}
+	for _, want := range []string{"source = '%s'", "source = '@%d'", "FROM mailbox m WHERE m.active AND m.username = '%u' AND m.domain = '%d'"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("alias query misses %q:\n%s", want, q)
+		}
+	}
+	if d := DovecotConf(nil); strings.Contains(d, "~/.dovecot.sieve") || !strings.Contains(d, "/var/vmail/sieve/") {
+		t.Errorf("sieve storage must live outside the Maildir++ root")
+	}
+}

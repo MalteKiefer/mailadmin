@@ -57,6 +57,12 @@ func CaddyRepo() Repo {
 	}
 }
 
+// VendorRepos are the third-party repositories install adds, in order. The
+// install loop and the unattended-upgrades origins both come from this list.
+func VendorRepos(codename string) []Repo {
+	return []Repo{PostgresRepo(codename), CaddyRepo(), CrowdSecRepo()}
+}
+
 // CrowdSecRepo is the official CrowdSec repository, hosted by packagecloud. It
 // carries the agent and the nftables bouncer.
 func CrowdSecRepo() Repo {

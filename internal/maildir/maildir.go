@@ -78,7 +78,7 @@ type UsageReport struct {
 }
 
 // Stat walks the mailbox directory tree read-only and reports how many
-// regular files and bytes it contains — the same information Purge is about
+// regular files and bytes it contains, the same information Purge is about
 // to delete, computed cheaply beforehand so a dry-run preview can show
 // concrete numbers instead of a bare "would purge" message. A missing
 // directory is reported via ErrNotFound, matching Purge.
@@ -167,7 +167,12 @@ func (m *Manager) Dedupe(local, domain string, dryRun bool) (DedupeReport, error
 	if err != nil {
 		return DedupeReport{}, err
 	}
+	// install keeps the Maildir++ root in the home itself (mail_path equals
+	// mail_home); older layouts use <home>/Maildir.
 	box := filepath.Join(p, "Maildir")
+	if fi, err := os.Stat(filepath.Join(p, "cur")); err == nil && fi.IsDir() {
+		box = p
+	}
 	if fi, statErr := os.Stat(box); errors.Is(statErr, os.ErrNotExist) || (statErr == nil && !fi.IsDir()) {
 		return DedupeReport{}, fmt.Errorf("%w: %s", ErrNotFound, box)
 	} else if statErr != nil {
@@ -231,7 +236,9 @@ func messageID(path string) (string, bool) {
 	}
 	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	// Headers are short: start small (the buffer still grows to 1 MiB for a
+	// long folded header) instead of allocating 64 KiB per message.
+	sc.Buffer(make([]byte, 0, 4*1024), 1<<20)
 	for sc.Scan() {
 		line := sc.Text()
 		if line == "" {

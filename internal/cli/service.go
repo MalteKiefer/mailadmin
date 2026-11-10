@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -142,6 +143,16 @@ func runServiceAction(app *App, cmd *cobra.Command, verb, unit string) error {
 		return err
 	}
 
+	beforeRow := serviceRow{Unit: before.Unit, Active: before.Active, Sub: before.Sub, Enabled: before.Enabled}
+	// The audit log lives in PostgreSQL: stopping or restarting it is recorded
+	// before the action, because the database is gone right after it.
+	dbDown := strings.HasPrefix(before.Unit, "postgresql") && (verb == "stop" || verb == "restart")
+	if dbDown {
+		if err := app.recordAudit(ctx(cmd), "service."+verb, before.Unit, beforeRow, map[string]string{"requested": verb}); err != nil {
+			return err
+		}
+	}
+
 	if err := serviceRun(svc, ctx(cmd), verb, before.Unit); err != nil {
 		return err
 	}
@@ -151,10 +162,11 @@ func runServiceAction(app *App, cmd *cobra.Command, verb, unit string) error {
 		return serviceError(err)
 	}
 
-	if err := app.recordAudit(ctx(cmd), "service."+verb, before.Unit,
-		serviceRow{Unit: before.Unit, Active: before.Active, Sub: before.Sub, Enabled: before.Enabled},
-		serviceRow{Unit: after.Unit, Active: after.Active, Sub: after.Sub, Enabled: after.Enabled}); err != nil {
-		return err
+	if !dbDown {
+		if err := app.recordAudit(ctx(cmd), "service."+verb, before.Unit, beforeRow,
+			serviceRow{Unit: after.Unit, Active: after.Active, Sub: after.Sub, Enabled: after.Enabled}); err != nil {
+			return err
+		}
 	}
 
 	r.Message("%s %s", verb, after.Unit)

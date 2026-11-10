@@ -15,7 +15,7 @@ func TestStale(t *testing.T) {
 	desired := []Record{{Type: "MX", Name: "@", Content: "new.mx.", Prio: 10}}
 
 	all := Stale(live, desired, false)
-	if len(all) != 3 { // A@, CNAME, AAAA www — MX matched by key
+	if len(all) != 3 { // A@, CNAME, AAAA www, MX matched by key
 		t.Fatalf("want 3 stale, got %d: %+v", len(all), all)
 	}
 	web := Stale(live, desired, true)

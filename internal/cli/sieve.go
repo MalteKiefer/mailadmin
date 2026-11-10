@@ -48,7 +48,7 @@ func newSieveCmd(app *App) *cobra.Command {
 		Use:   "vacation <address>",
 		Short: "Install an RFC 5230 vacation autoresponder for a mailbox",
 		Long: "Generates a Sieve `vacation` script and installs it as the mailbox's\n" +
-			"active script (replacing whatever was active before — mailadmin manages a\n" +
+			"active script (replacing whatever was active before, mailadmin manages a\n" +
 			"single script per mailbox, see `sieve set`). With --start/--end, the\n" +
 			"responder is wrapped in a date guard so it only fires within that window;\n" +
 			"without them it is always on. --message accepts literal text or @file to\n" +
@@ -68,7 +68,7 @@ func newSieveCmd(app *App) *cobra.Command {
 		Long: "Replaces the mailbox's active Sieve script with a minimal `keep;`\n" +
 			"passthrough. mailadmin does not keep a history of prior script bodies (it\n" +
 			"manages a single script per mailbox), so this cannot restore whatever was\n" +
-			"active before the vacation responder — reinstall a saved script with\n" +
+			"active before the vacation responder, reinstall a saved script with\n" +
 			"`sieve set` if you need that.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error { return app.sieveVacationOff(c, args[0]) },
@@ -259,7 +259,7 @@ func (a *App) sieveVacation(cmd *cobra.Command, address string, opts vacationFla
 // sieveVacationOff replaces address's active Sieve script with a minimal
 // `keep;` passthrough, disabling any autoresponder. mailadmin manages a
 // single script per mailbox (see sieveSet), so this cannot restore whatever
-// script was active before — reinstalling a saved copy via `sieve set` is the
+// script was active before, reinstalling a saved copy via `sieve set` is the
 // way to do that.
 func (a *App) sieveVacationOff(cmd *cobra.Command, address string) error {
 	r, err := a.Renderer()

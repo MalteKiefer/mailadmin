@@ -115,15 +115,9 @@ func runAliasShow(app *App, c *cobra.Command, rawSource string) error {
 	if err != nil {
 		return err
 	}
-	all, err := database.ListAliases(ctx(c), aliasSourceDomain(source))
+	matches, err := database.ListAliasesBySource(ctx(c), source)
 	if err != nil {
 		return err
-	}
-	matches := make([]db.Alias, 0, len(all))
-	for _, a := range all {
-		if a.Source == source {
-			matches = append(matches, a)
-		}
 	}
 	if len(matches) == 0 {
 		return fmt.Errorf("alias %s: %w", source, ErrNotFound)
@@ -269,17 +263,7 @@ func aliasesForSource(c context.Context, database *db.DB, source, dest string) (
 		}
 		return []db.Alias{a}, nil
 	}
-	all, err := database.ListAliases(c, aliasSourceDomain(source))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]db.Alias, 0, len(all))
-	for _, a := range all {
-		if a.Source == source {
-			out = append(out, a)
-		}
-	}
-	return out, nil
+	return database.ListAliasesBySource(c, source)
 }
 
 // aliasDestination validates an alias destination (a full mail address) and

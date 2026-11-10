@@ -78,7 +78,7 @@ func evalSPF(records []string) []Finding {
 	spf := filterByTag(records, "v=spf1")
 	switch {
 	case len(spf) == 0:
-		return []Finding{{Check: "SPF", Status: Fail, Detail: "no v=spf1 record — senders can be spoofed"}}
+		return []Finding{{Check: "SPF", Status: Fail, Detail: "no v=spf1 record, senders can be spoofed"}}
 	case len(spf) > 1:
 		return []Finding{{Check: "SPF", Status: Fail, Value: fmt.Sprintf("%d records", len(spf)),
 			Detail: "must be exactly one SPF record (RFC 7208 §3.2); multiple = permerror"}}
@@ -89,13 +89,13 @@ func evalSPF(records []string) []Finding {
 	qual, found := spfAllQualifier(rec)
 	switch {
 	case !found:
-		f.Status, f.Detail = Warn, "no 'all' mechanism — policy is open-ended"
+		f.Status, f.Detail = Warn, "no 'all' mechanism, policy is open-ended"
 	case qual == "-":
 		f.Detail = "-all (hardfail)"
 	case qual == "~":
-		f.Detail = "~all (softfail) — acceptable, -all is stricter"
+		f.Detail = "~all (softfail), acceptable, -all is stricter"
 	case qual == "?":
-		f.Status, f.Detail = Warn, "?all (neutral) — provides no protection"
+		f.Status, f.Detail = Warn, "?all (neutral), provides no protection"
 	case qual == "+":
 		f.Status, f.Detail = Fail, "+all allows the whole internet to send as this domain"
 	}
@@ -124,7 +124,7 @@ func spfLookupFinding(n int, capped bool) Finding {
 	case capped || n > spfLookupLimit:
 		f.Status = Fail
 		f.Value = fmt.Sprintf(">%d", spfLookupLimit)
-		f.Detail = "exceeds the 10-lookup limit (RFC 7208 §4.6.4) — permerror, SPF ignored"
+		f.Detail = "exceeds the 10-lookup limit (RFC 7208 §4.6.4), permerror, SPF ignored"
 	case n >= 8:
 		f.Status = Warn
 		f.Value = strconv.Itoa(n)
@@ -162,7 +162,7 @@ func evalDKIM(selector string, records []string) (f Finding, found bool) {
 		return f, true
 	}
 	if p == "" {
-		f.Status, f.Detail = Fail, "empty p= — key revoked"
+		f.Status, f.Detail = Fail, "empty p=, key revoked"
 		return f, true
 	}
 	alg := strings.ToLower(tags["k"])
@@ -181,9 +181,9 @@ func evalDKIM(selector string, records []string) (f Finding, found bool) {
 	f.Value = fmt.Sprintf("rsa-%d", bits)
 	switch {
 	case bits < 1024:
-		f.Status, f.Detail = Fail, "key shorter than 1024 bits — trivially breakable"
+		f.Status, f.Detail = Fail, "key shorter than 1024 bits, trivially breakable"
 	case bits < 2048:
-		f.Status, f.Detail = Warn, "1024-bit key — 2048 recommended"
+		f.Status, f.Detail = Warn, "1024-bit key, 2048 recommended"
 	default:
 		f.Status, f.Detail = Pass, "2048-bit or stronger"
 	}
@@ -219,7 +219,7 @@ func evalDMARC(records []string) (policy string, findings []Finding) {
 	dm := filterByTag(records, "v=DMARC1")
 	switch {
 	case len(dm) == 0:
-		return "", []Finding{{Check: "DMARC", Status: Fail, Detail: "no _dmarc record — no spoofing policy or reporting"}}
+		return "", []Finding{{Check: "DMARC", Status: Fail, Detail: "no _dmarc record, no spoofing policy or reporting"}}
 	case len(dm) > 1:
 		return "", []Finding{{Check: "DMARC", Status: Fail, Value: fmt.Sprintf("%d records", len(dm)),
 			Detail: "must be exactly one DMARC record (RFC 7489)"}}
@@ -229,11 +229,11 @@ func evalDMARC(records []string) (policy string, findings []Finding) {
 	main := Finding{Check: "DMARC", Value: "p=" + policy}
 	switch policy {
 	case "reject":
-		main.Status, main.Detail = Pass, "p=reject — strongest enforcement"
+		main.Status, main.Detail = Pass, "p=reject, strongest enforcement"
 	case "quarantine":
-		main.Status, main.Detail = Pass, "p=quarantine — enforced"
+		main.Status, main.Detail = Pass, "p=quarantine, enforced"
 	case "none":
-		main.Status, main.Detail = Warn, "p=none — monitoring only, no enforcement"
+		main.Status, main.Detail = Warn, "p=none, monitoring only, no enforcement"
 	default:
 		main.Status, main.Value, main.Detail = Fail, "p="+tags["p"], "missing or invalid p= policy"
 	}
@@ -250,7 +250,7 @@ func evalDMARC(records []string) (policy string, findings []Finding) {
 	if rua := tags["rua"]; rua != "" {
 		rep.Status, rep.Value, rep.Detail = Pass, "rua set", "aggregate reports enabled"
 	} else {
-		rep.Status, rep.Detail = Warn, "no rua= — you receive no aggregate reports"
+		rep.Status, rep.Detail = Warn, "no rua=, you receive no aggregate reports"
 	}
 	findings = append(findings, rep)
 	return policy, findings
@@ -262,10 +262,10 @@ func evalMTASTSRecord(records []string) Finding {
 	sts := filterByTag(records, "v=STSv1")
 	switch {
 	case len(sts) == 0:
-		f.Status, f.Detail = Info, "no _mta-sts TXT — MTA-STS not deployed"
+		f.Status, f.Detail = Info, "no _mta-sts TXT, MTA-STS not deployed"
 	case len(sts) > 1:
 		f.Status, f.Value, f.Detail = Fail, fmt.Sprintf("%d records", len(sts)),
-			"multiple _mta-sts TXT records — remove the stale one(s)"
+			"multiple _mta-sts TXT records, remove the stale one(s)"
 	default:
 		tags := parseTags(sts[0])
 		if id := tags["id"]; id != "" {
@@ -311,7 +311,7 @@ func evalMTASTSPolicy(body string) Finding {
 		f.Status, f.Detail = Fail, "invalid or missing mode"
 	}
 	if mxCount == 0 && (mode == "enforce" || mode == "testing") {
-		f.Status, f.Detail = Fail, "policy lists no mx — all delivery would fail"
+		f.Status, f.Detail = Fail, "policy lists no mx, all delivery would fail"
 	}
 	return f
 }
@@ -321,7 +321,7 @@ func evalTLSRPT(records []string) Finding {
 	f := Finding{Check: "TLS-RPT"}
 	rpt := filterByTag(records, "v=TLSRPTv1")
 	if len(rpt) == 0 {
-		f.Status, f.Detail = Info, "no _smtp._tls TXT — no TLS failure reporting"
+		f.Status, f.Detail = Info, "no _smtp._tls TXT, no TLS failure reporting"
 		return f
 	}
 	if rua := parseTags(rpt[0])["rua"]; rua != "" {
@@ -338,7 +338,7 @@ func evalBIMI(records []string, dmarcPolicy string) Finding {
 	f := Finding{Check: "BIMI"}
 	bimi := filterByTag(records, "v=BIMI1")
 	if len(bimi) == 0 {
-		f.Status, f.Detail = Info, "no default._bimi record (optional) — provision one with: mailadmin domain set-bimi <domain> --logo-url <url>"
+		f.Status, f.Detail = Info, "no default._bimi record (optional), provision one with: mailadmin domain set-bimi <domain> --logo-url <url>"
 		return f
 	}
 	tags := parseTags(bimi[0])

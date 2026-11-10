@@ -2,7 +2,7 @@
 // request, replaces the running binary with it.
 //
 // Security properties:
-//   - All network calls go to fixed api.github.com / release-asset URLs — no
+//   - All network calls go to fixed api.github.com / release-asset URLs, no
 //     user-controlled endpoint (no SSRF surface).
 //   - TLS 1.2+ with certificate verification (no InsecureSkipVerify).
 //   - The downloaded binary is verified against the SHA256SUMS file published
@@ -230,17 +230,20 @@ func Apply(ctx context.Context, rel Release) error {
 	if gotSum != wantSum {
 		return fmt.Errorf("%w: got %s want %s", ErrChecksumMismatch, gotSum, wantSum)
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("selfupdate: close temp: %w", err)
-	}
-
 	// Preserve the current binary's mode; default to 0755 if it cannot be read.
 	mode := os.FileMode(0o755)
 	if fi, statErr := os.Stat(exe); statErr == nil {
 		mode = fi.Mode().Perm()
 	}
-	if err := os.Chmod(tmpName, mode); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		return fmt.Errorf("selfupdate: chmod: %w", err)
+	}
+	// On disk before the rename, or a power loss can leave an empty binary.
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("selfupdate: sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("selfupdate: close temp: %w", err)
 	}
 	if err := os.Rename(tmpName, exe); err != nil {
 		return fmt.Errorf("selfupdate: install (need write access to %s): %w", exe, err)

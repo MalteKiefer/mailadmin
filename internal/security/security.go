@@ -1,7 +1,7 @@
 // Package security wraps CrowdSec (cscli), the nftables firewall (nft, read +
-// explicit port open/close only), and fail2ban-client, all via internal/sys.
+// explicit port open/close only), and systemctl for the bouncer state, all via internal/sys.
 // IPs/CIDRs, ports and protocols are validated before use; nft is never called
-// with a wildcard ruleset mutation — port changes go through the dedicated
+// with a wildcard ruleset mutation, port changes go through the dedicated
 // setuid helper mailadmin-fw-port, which only ever adds/removes a single
 // proto/port element in the managed set.
 package security
@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"mailadmin/internal/sys"
@@ -31,19 +32,19 @@ const (
 
 // Binary paths (absolute; matches the old system).
 const (
-	binCscli    = "/usr/bin/cscli"
-	binNft      = "/usr/sbin/nft"
-	binFail2ban = "/usr/bin/fail2ban-client"
+	binCscli     = "/usr/bin/cscli"
+	binNft       = "/usr/sbin/nft"
+	binSystemctl = "/usr/bin/systemctl"
 	// binFWPort is the least-privilege helper that adds/removes exactly one
 	// proto/port element in the managed nft set. mailadmin never mutates the
 	// ruleset directly (no `nft add rule …` with attacker-influenced text).
 	binFWPort = "/usr/local/libexec/mailadmin-fw-port"
 )
 
-// allowlistName is the CrowdSec allowlist mailadmin owns. Bans and allowlist
+// AllowlistName is the CrowdSec allowlist mailadmin owns (install creates it). Bans and allowlist
 // entries are scoped to this single, well-known list so a caller can never
 // touch an arbitrary allowlist.
-const allowlistName = "mailadmin"
+const AllowlistName = "mailadmin"
 
 // banType is the CrowdSec decision type mailadmin creates and lists. We never
 // surface captcha/throttle decisions as "bans".
@@ -79,10 +80,12 @@ type Overview struct {
 	Decisions []Decision     `json:"decisions"`
 	Allowlist []AllowEntry   `json:"allowlist"`
 	OpenPorts []FirewallPort `json:"open_ports"`
-	Fail2ban  bool           `json:"fail2ban_running"`
+	// BouncerActive reports whether the nftables bouncer runs: without it the
+	// decisions above are listed but not enforced.
+	BouncerActive bool `json:"bouncer_active"`
 }
 
-// Service runs cscli/nft/fail2ban.
+// Service runs cscli, nft and systemctl.
 type Service struct {
 	runner *sys.Runner
 }
@@ -114,7 +117,7 @@ func (s *Service) AddBan(ctx context.Context, ip, duration string) error {
 	if err != nil {
 		return fmt.Errorf("security.AddBan: %w", err)
 	}
-	argv := []string{binCscli, "decisions", "add", "--ip", value, "--type", banType}
+	argv := []string{binCscli, "decisions", "add", scopeFlag(value), value, "--type", banType}
 	if duration != "" {
 		dur, derr := valid.Duration(duration)
 		if derr != nil {
@@ -128,13 +131,22 @@ func (s *Service) AddBan(ctx context.Context, ip, duration string) error {
 	return nil
 }
 
+// scopeFlag picks cscli's flag for a value: --ip takes one address, a CIDR
+// needs --range.
+func scopeFlag(value string) string {
+	if strings.Contains(value, "/") {
+		return "--range"
+	}
+	return "--ip"
+}
+
 // RemoveBan removes all decisions for ip/cidr.
 func (s *Service) RemoveBan(ctx context.Context, ip string) error {
 	value, err := valid.CIDR(ip)
 	if err != nil {
 		return fmt.Errorf("security.RemoveBan: %w", err)
 	}
-	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "decisions", "delete", "--ip", value); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "decisions", "delete", scopeFlag(value), value); err != nil {
 		return fmt.Errorf("security.RemoveBan %s: %w", value, err)
 	}
 	return nil
@@ -144,7 +156,7 @@ func (s *Service) RemoveBan(ctx context.Context, ip string) error {
 
 // ListAllow returns entries of the managed CrowdSec allowlist, sorted by IP.
 func (s *Service) ListAllow(ctx context.Context) ([]AllowEntry, error) {
-	out, err := s.runner.Output(ctx, binCscli, "allowlists", "inspect", allowlistName, "-o", "json")
+	out, err := s.runner.Output(ctx, binCscli, "allowlists", "inspect", AllowlistName, "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("security.ListAllow: %w", err)
 	}
@@ -162,7 +174,7 @@ func (s *Service) AddAllow(ctx context.Context, ip string) error {
 	if err != nil {
 		return fmt.Errorf("security.AddAllow: %w", err)
 	}
-	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "allowlists", "add", allowlistName, value); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "allowlists", "add", AllowlistName, value); err != nil {
 		return fmt.Errorf("security.AddAllow %s: %w", value, err)
 	}
 	return nil
@@ -174,7 +186,7 @@ func (s *Service) RemoveAllow(ctx context.Context, ip string) error {
 	if err != nil {
 		return fmt.Errorf("security.RemoveAllow: %w", err)
 	}
-	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "allowlists", "remove", allowlistName, value); err != nil {
+	if _, err := s.runner.OutputWithRetry(ctx, cscliAttempts, cscliBackoff, binCscli, "allowlists", "remove", AllowlistName, value); err != nil {
 		return fmt.Errorf("security.RemoveAllow %s: %w", value, err)
 	}
 	return nil
@@ -184,7 +196,8 @@ func (s *Service) RemoveAllow(ctx context.Context, ip string) error {
 
 // ShowFirewall lists managed open ports, sorted by proto then port.
 func (s *Service) ShowFirewall(ctx context.Context) ([]FirewallPort, error) {
-	out, err := s.runner.Output(ctx, binNft, "-j", "list", "ruleset")
+	// Only mailadmin's table: the bouncer's tables hold every banned address.
+	out, err := s.runner.Output(ctx, binNft, "-j", "list", "table", "inet", "mailadmin")
 	if err != nil {
 		return nil, fmt.Errorf("security.ShowFirewall: %w", err)
 	}
@@ -230,10 +243,9 @@ func (s *Service) fwPort(ctx context.Context, op, verb, proto string, port int) 
 
 // ---- overview ----
 
-// Overview aggregates bans, allowlist, firewall and fail2ban status. It fails
-// closed on the security-critical sources (bans, allowlist, firewall) but
-// treats fail2ban as best-effort: fail2ban is optional in this deployment, so
-// its absence is reported as "not running" rather than aborting the overview.
+// Overview aggregates bans, allowlist, firewall and the bouncer state. It fails
+// closed on the security-critical sources (bans, allowlist, firewall); the
+// bouncer state is a probe whose failure reads as "not active".
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	decisions, err := s.ListBans(ctx)
 	if err != nil {
@@ -248,20 +260,15 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 		return Overview{}, fmt.Errorf("security.Overview: %w", err)
 	}
 	return Overview{
-		Decisions: decisions,
-		Allowlist: allow,
-		OpenPorts: ports,
-		Fail2ban:  s.fail2banRunning(ctx),
+		Decisions:     decisions,
+		Allowlist:     allow,
+		OpenPorts:     ports,
+		BouncerActive: s.bouncerActive(ctx),
 	}, nil
 }
 
-// fail2banRunning reports whether fail2ban responds to a ping. fail2ban is
-// optional; any error (missing binary, socket down) yields false without
-// surfacing an error, matching the old system's best-effort probe.
-func (s *Service) fail2banRunning(ctx context.Context) bool {
-	res, err := s.runner.Run(ctx, nil, binFail2ban, "ping")
-	if err != nil || res.ExitCode != 0 {
-		return false
-	}
-	return isFail2banPong(res.Stdout)
+// bouncerActive reports whether the CrowdSec nftables bouncer unit is active.
+func (s *Service) bouncerActive(ctx context.Context) bool {
+	res, err := s.runner.Run(ctx, nil, binSystemctl, "is-active", "crowdsec-firewall-bouncer")
+	return err == nil && strings.TrimSpace(string(res.Stdout)) == "active"
 }

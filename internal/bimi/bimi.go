@@ -4,7 +4,7 @@
 // default._bimi TXT record value (RFC-draft BIMI: "v=BIMI1; l=<url>; a=<url>").
 //
 // mailadmin does not host the logo or VMC itself (see internal/cli/domain.go's
-// runDomainSetBIMI doc comment for the reasoning) — the operator hosts both at
+// runDomainSetBIMI doc comment for the reasoning), the operator hosts both at
 // a stable HTTPS URL and this package only validates a local copy of the SVG
 // and assembles the record that points at it.
 package bimi
@@ -18,7 +18,7 @@ import (
 
 // maxSVGBytes bounds how much of a candidate logo file is parsed, so a
 // mistakenly-huge file cannot cause unbounded work.
-const maxSVGBytes = 1 << 20 // 1 MiB — a Tiny-PS BIMI SVG is expected to be a few KB
+const maxSVGBytes = 1 << 20 // 1 MiB, a Tiny-PS BIMI SVG is expected to be a few KB
 
 // wantBaseProfile is the SVG profile BIMI (and the Authindicators Working
 // Group spec) requires: SVG Tiny Portable/Secure.
@@ -38,7 +38,7 @@ type svgRoot struct {
 // a Tiny-PS BIMI logo: well-formed XML, a root <svg> element, and
 // baseProfile="tiny-ps". This deliberately does NOT attempt full SVG Tiny PS
 // conformance validation (no color-space, no forbidden-element, no size
-// checks) — that is out of scope; it only catches the two most common
+// checks), that is out of scope; it only catches the two most common
 // mistakes (a non-SVG file, or a regular SVG exported without the BIMI
 // profile).
 func ValidateSVG(data []byte) error {
@@ -77,7 +77,7 @@ const RecordName = "default._bimi"
 
 // BuildRecord assembles the default._bimi TXT record from a required logo URL
 // and an optional Verified Mark Certificate (VMC) URL. Both, when given, must
-// be https:// URLs — BIMI implementations require the logo (and any VMC) to
+// be https:// URLs, BIMI implementations require the logo (and any VMC) to
 // be fetched over TLS.
 func BuildRecord(logoURL, vmcURL string) (Record, error) {
 	logoURL = strings.TrimSpace(logoURL)

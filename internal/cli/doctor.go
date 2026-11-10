@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -28,13 +29,13 @@ const (
 
 // tlsCertPath is the fullchain certificate the mail listeners serve, as laid
 // down by the deployment. The old CLI inspected exactly this file.
-const tlsCertPath = "/etc/ssl/mail/fullchain.pem"
+const tlsCertPath = install.TLSFullchain
 
 // expectedPorts are the TCP ports that must be listening for a healthy mail
 // host: SSH (as configured), SMTP (25), HTTP/HTTPS (80, 443), submissions (465),
 // IMAPS (993) and ManageSieve (4190). Mirrors the old `mailadmin test` probe.
 func expectedPorts() []int {
-	return append([]int{25, 80, 443, 465, 587, 993, 4190}, install.SSHPorts()...)
+	return append(append([]int{}, install.DefaultTCPPorts...), install.SSHPorts()...)
 }
 
 // checkStatus is the outcome of one health check, kept as a small closed set so
@@ -118,7 +119,7 @@ func runDoctor(app *App, c *cobra.Command, doNotify, notifyHeartbeat bool) error
 }
 
 // doctorNotifyMessage builds the single ntfy notification for a doctor run,
-// summarising every FAILed check — never one per failing row. WARN/ERROR
+// summarising every FAILed check, never one per failing row. WARN/ERROR
 // rows are advisory (they do not flip doctor's own exit code either, see
 // anyFailed) and deliberately do not page: a WARN is something like a
 // not-yet-issued TLS cert during initial provisioning, not urgent enough to
@@ -163,7 +164,7 @@ var errDoctorUnhealthy = fmt.Errorf("doctor")
 
 // mtaStsEndpointChecks probes, for every active domain, that its MTA-STS policy
 // endpoint (https://mta-sts.<domain>/.well-known/mta-sts.txt) serves a reachable
-// mode: enforce policy — the very condition that must hold before the _mta-sts
+// mode: enforce policy, the very condition that must hold before the _mta-sts
 // TXT record is published. A down endpoint is a WARN (advisory, not fatal): a
 // freshly-added domain may still be waiting on its Caddy certificate, mirroring
 // the tls-cert check's pre-issuance tolerance. A DB/list failure yields one
@@ -171,27 +172,42 @@ var errDoctorUnhealthy = fmt.Errorf("doctor")
 func mtaStsEndpointChecks(ctx context.Context, app *App) []checkResult {
 	database, err := app.db(ctx)
 	if err != nil {
-		return []checkResult{{Name: "mta-sts", Status: statusError, Detail: "opening db: " + firstNonEmptyLine(err.Error())}}
+		// The mail lookups use the same database: unreachable is a failure, not a probe error.
+		return []checkResult{{Name: "database", Status: statusFail, Detail: "opening db: " + firstNonEmptyLine(err.Error())}}
 	}
 	domains, err := database.ListDomains(ctx)
 	if err != nil {
-		return []checkResult{{Name: "mta-sts", Status: statusError, Detail: "listing domains: " + firstNonEmptyLine(err.Error())}}
+		return []checkResult{{Name: "database", Status: statusFail, Detail: "listing domains: " + firstNonEmptyLine(err.Error())}}
 	}
-	var out []checkResult
+	var active []string
 	for _, dom := range domains {
-		if !dom.Active {
-			continue
+		if dom.Active {
+			active = append(active, dom.Name)
 		}
-		res := checkResult{Name: "mta-sts:" + dom.Name}
-		if err := mtaStsReady(ctx, dom.Name); err != nil {
-			res.Status = statusWarn
-			res.Detail = firstNonEmptyLine(err.Error())
-		} else {
-			res.Status = statusOK
-			res.Detail = "policy endpoint serves mode: enforce"
-		}
-		out = append(out, res)
 	}
+	// The endpoints are independent, so they are fetched a few at a time: one
+	// slow host must not stretch doctor by its timeout per domain.
+	out := make([]checkResult, len(active))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, name := range active {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			res := checkResult{Name: "mta-sts:" + name}
+			if err := mtaStsReady(ctx, name); err != nil {
+				res.Status = statusWarn
+				res.Detail = firstNonEmptyLine(err.Error())
+			} else {
+				res.Status = statusOK
+				res.Detail = "policy endpoint serves mode: enforce"
+			}
+			out[i] = res
+		}()
+	}
+	wg.Wait()
 	return out
 }
 
@@ -284,6 +300,14 @@ func tlsCheck(ctx context.Context, runner *sys.Runner) checkResult {
 	}
 	res.Status = statusOK
 	res.Detail = strings.Join(splitNonEmptyLines(out), "; ")
+	// -checkend exits 1 when the certificate expires within the given seconds.
+	if _, err := runner.Output(ctx, binOpenSSL, "x509", "-in", tlsCertPath, "-noout", "-checkend", "0"); err != nil {
+		res.Status = statusFail
+		res.Detail = "certificate expired: " + res.Detail
+	} else if _, err := runner.Output(ctx, binOpenSSL, "x509", "-in", tlsCertPath, "-noout", "-checkend", "1209600"); err != nil {
+		res.Status = statusWarn
+		res.Detail = "certificate expires within 14 days: " + res.Detail
+	}
 	return res
 }
 
@@ -300,11 +324,11 @@ func classifyDANEOutbound(level, support string) checkResult {
 	switch {
 	case !isDane:
 		res.Status = statusWarn
-		res.Detail = "smtp_tls_security_level=" + quoteEmpty(level) + " — outbound DANE not enabled"
+		res.Detail = "smtp_tls_security_level=" + quoteEmpty(level) + ", outbound DANE not enabled"
 	case support != "dnssec":
 		res.Status = statusFail
 		res.Detail = "smtp_tls_security_level=" + level + " but smtp_dns_support_level=" +
-			quoteEmpty(support) + " — DANE inactive without dnssec"
+			quoteEmpty(support) + ", DANE inactive without dnssec"
 	default:
 		fallback := "opportunistic, falls back to plaintext"
 		if level == "dane-only" {
@@ -371,7 +395,7 @@ func daneCertCheck(ctx context.Context, runner *sys.Runner, wantCert string) che
 		res.Detail = "smtpd_tls_cert_file is unset"
 	case got != wantCert:
 		res.Status = statusWarn
-		res.Detail = "smtpd serves " + got + " but DANE TLSA is derived from " + wantCert + " — cert drift"
+		res.Detail = "smtpd serves " + got + " but DANE TLSA is derived from " + wantCert + ", cert drift"
 	default:
 		res.Status = statusOK
 		res.Detail = "smtpd cert matches DANE source: " + got
@@ -381,7 +405,7 @@ func daneCertCheck(ctx context.Context, runner *sys.Runner, wantCert string) che
 
 // classifyResolver inspects resolv.conf nameservers. Outbound DANE needs a local
 // validating resolver to trust the AD flag; a loopback nameserver is the expected
-// topology (OK, best-effort — true validation is not directly probeable), a
+// topology (OK, best-effort, true validation is not directly probeable), a
 // remote resolver is flagged.
 func classifyResolver(resolvConf string) checkResult {
 	res := checkResult{Name: "dane-resolver"}
@@ -394,7 +418,7 @@ func classifyResolver(resolvConf string) checkResult {
 	}
 	if len(ns) == 0 {
 		res.Status = statusWarn
-		res.Detail = "no nameserver in resolv.conf — cannot confirm a validating resolver"
+		res.Detail = "no nameserver in resolv.conf, cannot confirm a validating resolver"
 		return res
 	}
 	for _, n := range ns {
@@ -405,7 +429,7 @@ func classifyResolver(resolvConf string) checkResult {
 		}
 	}
 	res.Status = statusWarn
-	res.Detail = "resolver " + strings.Join(ns, ",") + " not loopback — DANE outbound needs a local validating resolver"
+	res.Detail = "resolver " + strings.Join(ns, ",") + " not loopback, DANE outbound needs a local validating resolver"
 	return res
 }
 

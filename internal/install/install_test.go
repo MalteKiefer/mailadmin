@@ -131,6 +131,14 @@ func TestAnswersValidate(t *testing.T) {
 	if err := bad.Validate(); err == nil {
 		t.Fatal("bad hostname accepted")
 	}
+	norm := Answers{Hostname: "MX.Example.com.", Domain: "Example.COM.", IPv4: "192.0.2.10",
+		IPv6: "2001:DB8:0:0:0:0:0:1", Selector: "mail2026"}
+	if err := norm.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if norm.Hostname != "mx.example.com" || norm.Domain != "example.com" || norm.IPv6 != "2001:db8::1" {
+		t.Fatalf("not normalized: %+v", norm)
+	}
 }
 
 // The rendered config must load through the real config loader, so install

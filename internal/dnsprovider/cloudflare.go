@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -174,6 +175,10 @@ func cfToRecord(cr cfRecord, domain string) Record {
 	if cr.Priority != nil {
 		r.Prio = *cr.Priority
 	}
+	// Cloudflare stores TXT content as quoted character strings ("a" "b").
+	if r.Type == "TXT" && strings.HasPrefix(strings.TrimSpace(r.Content), `"`) {
+		r.Content = unquoteTXT(r.Content)
+	}
 	if r.Type == "SRV" && cr.Data != nil {
 		r.Prio = cr.Data.Priority
 		r.Weight = cr.Data.Weight
@@ -240,6 +245,16 @@ func cfBody(r Record, domain string) map[string]any {
 			"weight":   r.Weight,
 			"port":     r.Port,
 			"target":   r.Content,
+		}
+	case "TLSA":
+		// TLSA is set through its data fields; content is read-only for it.
+		if f := strings.Fields(r.Content); len(f) == 4 {
+			usage, _ := strconv.Atoi(f[0])
+			selector, _ := strconv.Atoi(f[1])
+			mtype, _ := strconv.Atoi(f[2])
+			b["data"] = map[string]any{"usage": usage, "selector": selector, "matching_type": mtype, "certificate": f[3]}
+		} else {
+			b["content"] = r.Content
 		}
 	default:
 		b["content"] = r.Content

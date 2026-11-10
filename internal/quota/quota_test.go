@@ -89,8 +89,9 @@ func TestParseStorage(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected err: %v", err)
 			}
-			if used != tt.wantUsed || limit != tt.wantLimit {
-				t.Fatalf("got used=%d limit=%d, want used=%d limit=%d",
+			// doveadm reports KiB; parseStorage returns bytes.
+			if used != tt.wantUsed*1024 || limit != tt.wantLimit*1024 {
+				t.Fatalf("got used=%d limit=%d bytes, want used=%d limit=%d KiB",
 					used, limit, tt.wantUsed, tt.wantLimit)
 			}
 		})

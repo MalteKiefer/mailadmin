@@ -4,7 +4,7 @@
 // greylist.conf's top-level `timeout`/`expire` scalars.
 //
 // rspamd's config language (UCL) is considerably more general than what these
-// two files actually use in practice — includes, arrays, heredocs, implicit
+// two files actually use in practice, includes, arrays, heredocs, implicit
 // object nesting without braces, macros, etc. Pulling in a full UCL parser
 // (none is already an indirect dependency of this module) to read two small,
 // conventionally-formatted files would add a new third-party dependency for
@@ -12,13 +12,13 @@
 // settings. Corrupting an operator's hand-edited rspamd config is a much
 // worse outcome than this feature not existing, so the design goes the other
 // way: a narrow, well-tested, line-oriented parser that recognises exactly
-// two shapes —
+// two shapes:
 //
 //	name { ... }              (one block open/close per line, not nested)
 //	key = value;              (optionally inside one block, "dotted" as
 //	                            "block.key")
 //
-// — and otherwise treats every line as opaque text that is preserved
+// , and otherwise treats every line as opaque text that is preserved
 // byte-for-byte on write. Any config file feature outside that narrow grammar
 // (nested blocks, multi-line values, arrays, includes, macros) is simply
 // invisible to Get/Set: those lines pass through unmodified, and a key that
@@ -46,8 +46,9 @@ var ErrUnsupportedKey = errors.New("rspamdconf: unsupported key path")
 // GreylistSettings.
 var ErrUnknownSetting = errors.New("rspamdconf: unknown greylist setting")
 
-// reBlockOpen matches a single-line block header, e.g. "rates {".
-var reBlockOpen = regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*$`)
+// reBlockOpen matches a single-line block header, e.g. "rates {" or the UCL
+// object form "to = {".
+var reBlockOpen = regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*=?\s*\{\s*$`)
 
 // reBlockClose matches a bare block closer, e.g. "}" (UCL does not require a
 // trailing semicolon on a block, unlike a scalar assignment).
@@ -176,7 +177,7 @@ func (d *Document) Get(keyPath string) (value string, found bool) {
 //  3. keyPath has no dot (top-level): a new "key = value;" line is appended
 //     at the end of the file.
 //
-// keyPath with more than one dot is rejected with ErrUnsupportedKey — this
+// keyPath with more than one dot is rejected with ErrUnsupportedKey, this
 // parser only ever models one level of nesting, matching what ratelimit.conf
 // and greylist.conf actually use.
 func (d *Document) Set(keyPath, newValue string) (oldValue string, err error) {
@@ -231,9 +232,17 @@ func (d *Document) appendLine(raw string) {
 func (d *Document) findBlock(name string) (openIdx, closeIdx int, ok bool) {
 	for i, l := range d.lines {
 		if m := reBlockOpen.FindStringSubmatch(l.raw); m != nil && m[1] == name {
+			// Nested objects (to = { ... }) have their own closers.
+			depth := 0
 			for j := i + 1; j < len(d.lines); j++ {
-				if reBlockClose.MatchString(d.lines[j].raw) {
-					return i, j, true
+				switch {
+				case reBlockOpen.MatchString(d.lines[j].raw):
+					depth++
+				case reBlockClose.MatchString(d.lines[j].raw):
+					if depth == 0 {
+						return i, j, true
+					}
+					depth--
 				}
 			}
 			return i, -1, false
