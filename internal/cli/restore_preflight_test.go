@@ -71,8 +71,28 @@ func TestRestorePreflightNeedsSieveScripts(t *testing.T) {
 // A component that does not touch the config returns no merged config.
 func TestRestorePreflightWithoutConfigComponent(t *testing.T) {
 	bundle := newBundle(t)
-	merged, err := restorePreflight(&config.Config{Path: filepath.Join(bundle, "config.toml")}, bundle, backup.Manifest{}, []string{backup.ComponentDKIM})
+	merged, err := restorePreflight(&config.Config{Path: filepath.Join(bundle, "config.toml")}, bundle, backup.Manifest{}, []string{backup.ComponentSieve})
 	if err != nil || merged != nil {
 		t.Fatalf("merged = %q, err = %v; want nil, nil", merged, err)
+	}
+}
+
+// A DKIM directory that is a symlink must be refused before the database restore
+// runs, not by the DKIM step after it.
+func TestRestorePreflightRefusesSymlinkedDKIMDir(t *testing.T) {
+	bundle := newBundle(t)
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	link := filepath.Join(dir, "dkim")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Mail.DKIMDir = link
+	if _, err := restorePreflight(cfg, bundle, backup.Manifest{}, []string{backup.ComponentDKIM}); err == nil {
+		t.Fatal("preflight must refuse a symlinked DKIM directory")
 	}
 }

@@ -339,6 +339,11 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 // `pg_restore --list`, which is read-only against the dump file and never
 // connects to a database.
 func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundlePath string, man backup.Manifest, components []string, r *output.Renderer) error {
+	// The real restore refuses in this preflight before it changes anything, so a
+	// dry-run that passes here must not hide a refusal.
+	if _, err := restorePreflight(cfg, bundlePath, man, components); err != nil {
+		return err
+	}
 	for _, comp := range components {
 		switch comp {
 		case backup.ComponentDB:
@@ -422,22 +427,30 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 	return chownDKIM(dir)
 }
 
-// chownDKIM gives the restored key directory the owner the installer uses.
-// rspamd runs as _rspamd and cannot read keys that root owns.
-func chownDKIM(dir string) error {
+// dkimOwner returns the uid and gid the restored key directory gets: the mailadmin
+// user and the _rspamd group, as the installer creates them.
+func dkimOwner() (uid, gid int, err error) {
 	owner, err := user.Lookup("mailadmin")
 	if err != nil {
-		return fmt.Errorf("lookup mailadmin: %w", err)
+		return 0, 0, fmt.Errorf("lookup mailadmin: %w", err)
 	}
 	group, err := user.LookupGroup("_rspamd")
 	if err != nil {
-		return fmt.Errorf("lookup _rspamd: %w", err)
+		return 0, 0, fmt.Errorf("lookup _rspamd: %w", err)
 	}
-	uid, err := strconv.Atoi(owner.Uid)
-	if err != nil {
-		return err
+	if uid, err = strconv.Atoi(owner.Uid); err != nil {
+		return 0, 0, err
 	}
-	gid, err := strconv.Atoi(group.Gid)
+	if gid, err = strconv.Atoi(group.Gid); err != nil {
+		return 0, 0, err
+	}
+	return uid, gid, nil
+}
+
+// chownDKIM gives the restored key directory the owner the installer uses.
+// rspamd runs as _rspamd and cannot read keys that root owns.
+func chownDKIM(dir string) error {
+	uid, gid, err := dkimOwner()
 	if err != nil {
 		return err
 	}
@@ -540,6 +553,14 @@ func restorePreflight(cfg *config.Config, bundlePath string, man backup.Manifest
 				if _, err := os.Stat(fp); err != nil {
 					return nil, fmt.Errorf("backup restore: sieve %s: %w", addr, err)
 				}
+			}
+		case backup.ComponentDKIM:
+			// Both checks ran after the database restore before this change.
+			if err := refuseSymlinkDir(filepath.Clean(cfg.Mail.DKIMDir)); err != nil {
+				return nil, fmt.Errorf("backup restore: dkim: %w", err)
+			}
+			if _, _, err := dkimOwner(); err != nil {
+				return nil, fmt.Errorf("backup restore: dkim: %w", err)
 			}
 		case backup.ComponentConfig:
 			merged, err := readConfigRestore(cfg, bundlePath)
