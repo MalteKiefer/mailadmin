@@ -108,6 +108,12 @@ service auth {
     group = postfix
   }
 }
+# Auth workers run the SQL lookups that do not go through the auth process,
+# such as listing users for doveadm -A. They connect with peer authentication as
+# the dovecot role, so they must run as the dovecot user, not root.
+service auth-worker {
+  user = dovecot
+}
 service lmtp {
   unix_listener lmtp-postfix {
     path = ` + DovecotLMTPSocket + `
