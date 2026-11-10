@@ -115,7 +115,8 @@ func newUpdateCmd(app *App) *cobra.Command {
 			// Warnings only: the binary is already replaced at this point.
 			cfg, _, cerr := app.Config()
 			switch {
-			case errors.Is(cerr, config.ErrNoConfig), errors.Is(cerr, fs.ErrNotExist):
+			case errors.Is(cerr, config.ErrNoConfig),
+				errors.Is(cerr, fs.ErrNotExist) && app.flags.configPath == config.DefaultPath:
 				return nil // no config file yet: nothing to compare
 			case cerr != nil:
 				_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", cerr)

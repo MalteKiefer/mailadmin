@@ -286,6 +286,16 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 		return err
 	}
 
+	// The config is merged before any component changes, so a refusal of the
+	// config (live YAML or JSON) cannot leave the database restored and the
+	// config not.
+	var configMerged []byte
+	if contains(components, backup.ComponentConfig) {
+		if configMerged, err = readConfigRestore(cfg, bundlePath); err != nil {
+			return err
+		}
+	}
+
 	rec, err := a.auditor(ctx(cmd))
 	if err != nil {
 		return err
@@ -306,8 +316,11 @@ func (a *App) backupRestore(cmd *cobra.Command, bundlePath, component string) er
 				return err
 			}
 		case backup.ComponentConfig:
-			if err := a.restoreConfig(cmd, cfg, bundlePath); err != nil {
+			if err := a.restoreConfig(cmd, cfg, configMerged); err != nil {
 				return err
+			}
+			if !config.HasSecretsTable(configMerged) {
+				r.Message("warning: the restored config has no [secrets] table (the bundle carries none and this host has none): add the secrets back before starting services")
 			}
 		}
 	}
@@ -350,12 +363,7 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 			r.Message("dry-run: sieve: would overwrite the active script for %d mailbox(es): %s",
 				len(man.SieveScripts), strings.Join(man.SieveScripts, ", "))
 		case backup.ComponentConfig:
-			bundle, err := os.ReadFile(filepath.Join(bundlePath, backup.ConfigFile)) // #nosec G304 -- bundle path from the operator
-			if err != nil {
-				r.Message("dry-run: config: could not read the bundle's config.toml (%v)", err)
-				continue
-			}
-			if _, err := config.MergeRestored(bundle, cfg.Path); err != nil {
+			if _, err := readConfigRestore(cfg, bundlePath); err != nil {
 				r.Message("dry-run: config: restore would be refused: %v", err)
 				continue
 			}
@@ -518,17 +526,22 @@ func (a *App) restoreSieve(cmd *cobra.Command, bundlePath string, man backup.Man
 	return nil
 }
 
-// restoreConfig replaces the live config with the bundle's copy. The live
-// [secrets] table is kept, since bundles from v1.29.2 on carry none.
-func (a *App) restoreConfig(_ *cobra.Command, cfg *config.Config, bundlePath string) error {
+// readConfigRestore returns the config a restore writes: the bundle's config.toml
+// with the live [secrets] table kept when the bundle has none. It writes nothing.
+func readConfigRestore(cfg *config.Config, bundlePath string) ([]byte, error) {
 	bundle, err := os.ReadFile(filepath.Join(bundlePath, backup.ConfigFile)) // #nosec G304 -- bundle path from the operator
 	if err != nil {
-		return fmt.Errorf("backup restore: config: %w", err)
+		return nil, fmt.Errorf("backup restore: config: %w", err)
 	}
 	merged, err := config.MergeRestored(bundle, cfg.Path)
 	if err != nil {
-		return fmt.Errorf("backup restore: config: %w", err)
+		return nil, fmt.Errorf("backup restore: config: %w", err)
 	}
+	return merged, nil
+}
+
+// restoreConfig replaces the live config with the merged bytes from readConfigRestore.
+func (a *App) restoreConfig(_ *cobra.Command, cfg *config.Config, merged []byte) error {
 	if err := config.WriteSecretFile(cfg.Path, merged); err != nil {
 		return fmt.Errorf("backup restore: config: %w", err)
 	}

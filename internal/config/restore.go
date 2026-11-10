@@ -108,20 +108,24 @@ func WriteSecretFile(path string, data []byte) error {
 	return nil
 }
 
-// danglingTarget returns the file a dangling symlink at path names, one level
-// deep. Writing there creates that file, as writing through the link did before,
+// danglingTarget returns the file a dangling symlink at path names, following a
+// chain of links up to a fixed depth. Writing there creates that file, as writing through the link did before,
 // instead of replacing the link. Any other path is returned unchanged.
 func danglingTarget(path string) string {
-	fi, err := os.Lstat(path)
-	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		return path
+	const maxLinks = 16
+	for i := 0; i < maxLinks; i++ {
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			return path
+		}
+		link, err := os.Readlink(path)
+		if err != nil {
+			return path
+		}
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(path), link)
+		}
+		path = link
 	}
-	link, err := os.Readlink(path)
-	if err != nil {
-		return path
-	}
-	if !filepath.IsAbs(link) {
-		link = filepath.Join(filepath.Dir(path), link)
-	}
-	return link
+	return path
 }

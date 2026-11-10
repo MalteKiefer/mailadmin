@@ -151,3 +151,24 @@ func TestSecretsStateFollowsSymlink(t *testing.T) {
 		t.Fatalf("symlinked 0600 config with secrets must pass: %s", detail)
 	}
 }
+
+// A chain of dangling links resolves to the final file it names.
+func TestWriteSecretFileFollowsDanglingChain(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "managed.toml")
+	mid := filepath.Join(dir, "mid.toml")
+	link := filepath.Join(dir, "config.toml")
+	if err := os.Symlink(missing, mid); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(mid, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSecretFile(link, []byte("new\n")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(missing)
+	if err != nil || string(data) != "new\n" {
+		t.Fatalf("final file = %q, %v", data, err)
+	}
+}
