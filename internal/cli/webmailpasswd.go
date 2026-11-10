@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,7 +27,16 @@ func newWebmailPasswdCmd(app *App) *cobra.Command {
 			"against the stored hash before anything changes. Passwords never go on the\n" +
 			"command line.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(c *cobra.Command, args []string) error { return app.webmailPasswd(c, args[0]) },
+		RunE: func(c *cobra.Command, args []string) error {
+			// sudo passes the arguments through, so a caller could append a global
+			// flag such as --config and point the root process at its own config. The
+			// only argument this command takes is the address, so the argument vector
+			// must be exactly: mailadmin webmail-passwd <address>.
+			if len(os.Args) != 3 || os.Args[1] != "webmail-passwd" || strings.HasPrefix(os.Args[2], "-") {
+				return fmt.Errorf("%w: webmail-passwd takes exactly one address and no flags", ErrUsage)
+			}
+			return app.webmailPasswd(c, args[0])
+		},
 	}
 }
 
@@ -47,7 +57,7 @@ func readPasswordPair(r io.Reader) (current, next string, err error) {
 
 func readPasswordLine(br *bufio.Reader) (string, error) {
 	line, err := br.ReadString('\n')
-	if err != nil && !(errors.Is(err, io.EOF) && line != "") {
+	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
 		return "", err
 	}
 	line = strings.TrimSuffix(line, "\n")

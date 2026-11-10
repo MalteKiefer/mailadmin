@@ -25,7 +25,7 @@ const (
 	// AlpsSudoers lets the alps user run the password helper as root, and nothing else.
 	AlpsSudoers = "/etc/sudoers.d/mailadmin-webmail"
 	// PasswordHelper is the mailadmin subcommand alps calls to change a password.
-	PasswordHelper = "/usr/local/sbin/mailadmin"
+	PasswordHelper = "/usr/local/sbin/mailadmin" // #nosec G101 -- binary path, not a credential
 	maxAlpsBinary  = 64 << 20
 	alpsFetchWait  = 2 * time.Minute
 )
