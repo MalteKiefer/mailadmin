@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.30.2] - 2026-11-10
+
+### Fixed
+- The generated alps config has a `[webauthn]` section with the webmail domain as relying party id and origin. Without it alps could not register or check a second factor.
+
 ## [v1.30.1] - 2026-11-10
 
 ### Added

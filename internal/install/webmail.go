@@ -54,6 +54,12 @@ server = %q
 
 # Once any plugin section exists, only the plugins listed as enabled run. Every
 # plugin the webmail ships is listed here.
+# WebAuthn (2FA) needs the relying party id and the exact origin the browser uses.
+[webauthn]
+rpid = %q
+display_name = "Webmail"
+origins = [%q]
+
 [plugin.base]
 enabled = true
 
@@ -77,7 +83,7 @@ enabled = true
 # travels on stdin only, never in argv.
 command = ["/usr/bin/sudo", "-n", %q, "webmail-passwd", "{email}"]
 stdin = "{old_password}\n{new_password}\n"
-`, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", PasswordHelper)
+`, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", w.Domain, "https://"+w.Domain, PasswordHelper)
 }
 
 // AlpsUnitFile renders the systemd unit. alps needs no write access and no root.
