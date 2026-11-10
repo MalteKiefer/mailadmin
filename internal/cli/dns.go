@@ -492,7 +492,8 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 		// The audit row is written whether the clean finished or stopped midway, so a
 		// partial wipe is on record too.
 		// The request context is cancelled by Ctrl+C, and the audit row is needed most then.
-		auditCtx := context.WithoutCancel(ctx(cmd))
+		auditCtx, cancelAudit := context.WithTimeout(context.WithoutCancel(ctx(cmd)), 30*time.Second)
+		defer cancelAudit()
 		if rec, aerr := a.auditor(auditCtx); aerr != nil {
 			r.Message("warning: audit not recorded: %v", aerr)
 		} else if rerr := rec.Record(auditCtx, "dns.migrate.clean", domain, nil, map[string]any{
@@ -517,7 +518,7 @@ func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile
 	}
 	// Records created before a failed rectify are live, so audit and report them first.
 	if rec, aerr := a.auditor(ctx(cmd)); aerr == nil {
-		_ = rec.Record(ctx(cmd), "dns.migrate", domain, nil, map[string]any{
+		_ = rec.Record(context.WithoutCancel(ctx(cmd)), "dns.migrate", domain, nil, map[string]any{
 			"target": to, "created": len(res.Created), "skipped": len(res.Skipped), "failed": len(res.Failed),
 		})
 	}
@@ -1185,7 +1186,7 @@ func (a *App) dnsTakeover(cmd *cobra.Command, rawDomain string, keepWeb, withMTA
 	}
 	// The zone may already be changed when the rectify fails. The audit row and
 	// the backup path are written before the error is returned.
-	if rerr := be.rec.Record(ctx(cmd), "dns.takeover", domain, nil, res); rerr != nil && err == nil {
+	if rerr := be.rec.Record(context.WithoutCancel(ctx(cmd)), "dns.takeover", domain, nil, res); rerr != nil && err == nil {
 		return rerr
 	}
 	if err != nil {
@@ -1218,6 +1219,12 @@ func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error
 		return fmt.Errorf("%w: snapshot is for %q, not %q", ErrUsage, snap.Domain, domain)
 	}
 
+	// The snapshot records the provider it was taken from. Restoring it into another
+	// provider would delete the live records there and write foreign ones in. Checked
+	// before the dry run and the prompt, so neither reports a restore that will be refused.
+	if snap.Provider != "" && snap.Provider != be.provider.Name() {
+		return fmt.Errorf("%w: snapshot was taken at provider %q, but %s uses %q; refusing to restore it there", ErrUsage, snap.Provider, domain, be.provider.Name())
+	}
 	if a.flags.dryRun {
 		r.Message("dry-run: restore would replace the %s zone with %d record(s) from %s",
 			domain, len(snap.Records), backupPath)
@@ -1228,11 +1235,6 @@ func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error
 		return err
 	}
 
-	// The snapshot records the provider it was taken from. Restoring it into another
-	// provider would delete the live records there and write foreign ones in.
-	if snap.Provider != "" && snap.Provider != be.provider.Name() {
-		return fmt.Errorf("snapshot was taken at provider %q, but %s uses %q; refusing to restore it there", snap.Provider, domain, be.provider.Name())
-	}
 	rerr := dnsprovider.Restore(ctx(cmd), be.provider, domain, snap)
 	detail := map[string]any{
 		"backup":  backupPath,
@@ -1241,7 +1243,7 @@ func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error
 	if rerr != nil {
 		detail["error"] = rerr.Error()
 	}
-	if err := be.rec.Record(ctx(cmd), "dns.restore", domain, nil, detail); err != nil && rerr == nil {
+	if err := be.rec.Record(context.WithoutCancel(ctx(cmd)), "dns.restore", domain, nil, detail); err != nil && rerr == nil {
 		return err
 	}
 	if rerr != nil {

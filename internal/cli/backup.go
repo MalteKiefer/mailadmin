@@ -353,14 +353,20 @@ func (a *App) restoreDKIM(_ *cobra.Command, cfg *config.Config, bundlePath strin
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("backup restore: dkim: %w", err)
 	}
-	// Checked before the copy: a link here would send the keys into another directory.
-	if err := refuseSymlinkDir(cfg.Mail.DKIMDir); err != nil {
+	// Cleaned first: a trailing slash makes Lstat follow a link. Checked before the copy:
+	// a link here would send the keys into another directory.
+	dir := filepath.Clean(cfg.Mail.DKIMDir)
+	if err := refuseSymlinkDir(dir); err != nil {
 		return fmt.Errorf("backup restore: dkim: %w", err)
 	}
-	if _, err := backup.CopyTree(src, cfg.Mail.DKIMDir); err != nil {
+	// A missing directory gets the installer's mode, not the 0700 a copy would create.
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("backup restore: dkim: %w", err)
 	}
-	return chownDKIM(cfg.Mail.DKIMDir)
+	if _, err := backup.CopyTree(src, dir); err != nil {
+		return fmt.Errorf("backup restore: dkim: %w", err)
+	}
+	return chownDKIM(dir)
 }
 
 // chownDKIM gives the restored key directory the owner the installer uses.

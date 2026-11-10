@@ -327,7 +327,7 @@ func collectAnswers(app *App, in *installInputs) (install.Answers, error) {
 		Domain:   strings.ToLower(in.domain),
 		IPv4:     in.ipv4,
 		IPv6:     in.ipv6,
-		Selector: in.selector,
+		Selector: strings.ToLower(in.selector),
 	}
 	if a.Selector == "" {
 		a.Selector = fmt.Sprintf("mail%d", time.Now().Year())
@@ -345,6 +345,9 @@ func collectAnswers(app *App, in *installInputs) (install.Answers, error) {
 		v, err := app.readLine(label + ": ")
 		if err != nil {
 			return err
+		}
+		if label == "hostname" || label == "domain" {
+			v = strings.ToLower(strings.TrimSpace(v))
 		}
 		*dst = v
 		return nil
