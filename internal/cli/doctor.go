@@ -34,7 +34,7 @@ const tlsCertPath = "/etc/ssl/mail/fullchain.pem"
 // host: SSH (as configured), SMTP (25), HTTP/HTTPS (80, 443), submissions (465),
 // IMAPS (993) and ManageSieve (4190). Mirrors the old `mailadmin test` probe.
 func expectedPorts() []int {
-	return append([]int{25, 80, 443, 465, 993, 4190}, install.SSHPorts()...)
+	return append([]int{25, 80, 443, 465, 587, 993, 4190}, install.SSHPorts()...)
 }
 
 // checkStatus is the outcome of one health check, kept as a small closed set so

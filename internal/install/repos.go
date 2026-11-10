@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -54,6 +53,18 @@ func CaddyRepo() Repo {
 		KeyURL:     "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
 		URI:        "https://dl.cloudsmith.io/public/caddy/stable/deb/debian",
 		Suites:     "any-version",
+		Components: "main",
+	}
+}
+
+// CrowdSecRepo is the official CrowdSec repository, hosted by packagecloud. It
+// carries the agent and the nftables bouncer.
+func CrowdSecRepo() Repo {
+	return Repo{
+		Name:       "crowdsec",
+		KeyURL:     "https://packagecloud.io/crowdsec/crowdsec/gpgkey",
+		URI:        "https://packagecloud.io/crowdsec/crowdsec/any",
+		Suites:     "any",
 		Components: "main",
 	}
 }
@@ -123,11 +134,17 @@ func InstallRepo(ctx context.Context, x Exec, r Repo, armored []byte, confirmed 
 		return fmt.Errorf("%s key fingerprint is %s, expected %s: refusing to install",
 			r.Name, got, normalizeFingerprint(confirmed))
 	}
-	if _, err := x.Run(ctx, armored, "gpg", "--batch", "--yes", "--dearmor",
-		"--output", r.KeyringPath()); err != nil {
+	// apt verifies as the _apt user, so the keyring must be world-readable. It is
+	// renamed into place with an explicit mode, which also repairs a keyring an
+	// earlier run left unreadable.
+	res, err := x.Run(ctx, armored, "gpg", "--batch", "--dearmor")
+	if err != nil {
+		return fmt.Errorf("dearmor %s key: %w", r.Name, err)
+	}
+	if err := writeAtomic(r.KeyringPath(), res.Stdout, 0o644); err != nil {
 		return fmt.Errorf("write %s keyring: %w", r.Name, err)
 	}
-	if err := os.WriteFile(r.SourcesPath(), []byte(r.Sources()), 0o644); err != nil { // #nosec G306 -- apt sources are world-readable by design
+	if err := writeAtomic(r.SourcesPath(), []byte(r.Sources()), 0o644); err != nil {
 		return fmt.Errorf("write %s sources: %w", r.Name, err)
 	}
 	return nil

@@ -1,0 +1,664 @@
+package install
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"mailadmin/internal/sys"
+)
+
+// The hardening install applies follows the BSI IT-Grundschutz module SYS.1.3
+// (Linux server) and the CIS Debian Linux Benchmark, Level 1 and Level 2, where a
+// control fits a dedicated mail host. docs/HARDENING.md lists every control and the
+// deliberate deviations.
+const (
+	SSHHardeningPath      = "/etc/ssh/sshd_config.d/00-mailadmin-hardening.conf"
+	SysctlHardeningPath   = "/etc/sysctl.d/90-mailadmin-hardening.conf"
+	ModprobeHardeningPath = "/etc/modprobe.d/mailadmin-hardening.conf"
+	LimitsHardeningPath   = "/etc/security/limits.d/90-mailadmin.conf"
+	CoredumpConfPath      = "/etc/systemd/coredump.conf.d/90-mailadmin.conf"
+	JournaldConfPath      = "/etc/systemd/journald.conf.d/90-mailadmin.conf"
+	AuditRulesPath        = "/etc/audit/rules.d/90-mailadmin.rules"
+	CrowdSecAcquisPath    = "/etc/crowdsec/acquis.d/mailadmin.yaml"
+	CrowdSecBouncerConf   = "/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
+	crowdSecBouncerName   = "mailadmin-nftables"
+	UnattendedConfPath    = "/etc/apt/apt.conf.d/52mailadmin-unattended-upgrades"
+	AutoUpgradesPath      = "/etc/apt/apt.conf.d/20auto-upgrades"
+	NeedrestartConfPath   = "/etc/needrestart/conf.d/90-mailadmin.conf"
+	PwqualityConfPath     = "/etc/security/pwquality.conf.d/90-mailadmin.conf" // #nosec G101 -- file path, not a credential
+	LoginDefsPath         = "/etc/login.defs"
+	IssueNetPath          = "/etc/issue.net"
+	IssuePath             = "/etc/issue"
+	AideDBPath            = "/var/lib/aide/aide.db"
+	SysstatDefaultsPath   = "/etc/default/sysstat"
+)
+
+// TLS policy shared by Postfix and Dovecot: TLS 1.2 and 1.3 only, forward secret
+// AEAD ciphers only. Groups start with the hybrid post-quantum key exchange where
+// the installed OpenSSL supports it (see TLSGroups).
+const (
+	TLS12Ciphers = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:" +
+		"ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:" +
+		"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+	TLS13Suites = "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256"
+)
+
+// LoginBanner is shown before SSH authentication and on local consoles (CIS 1.7).
+const LoginBanner = "Authorized access only. Unauthorized access to this system is prohibited and may be\n" +
+	"prosecuted under applicable law. All connections are monitored and logged, and the logs\n" +
+	"may be used as evidence.\n"
+
+// HardeningPackages are installed with the mail stack. They provide auditing,
+// brute force protection, file integrity checks and unattended updates.
+func HardeningPackages() []string {
+	return []string{
+		"auditd", "crowdsec", "crowdsec-firewall-bouncer-nftables", "aide", "aide-common",
+		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils",
+		"libpam-pwquality", "libpam-tmpdir", "debsums", "acct", "sysstat",
+	}
+}
+
+// TLSGroups returns the key exchange groups, preferred first. X25519MLKEM768 needs
+// OpenSSL 3.5; older releases reject an unknown group name and the daemon would
+// not start, so it is only listed when the installed OpenSSL supports it.
+func TLSGroups(opensslVersion string) []string {
+	groups := []string{"X25519", "prime256v1", "secp384r1"}
+	if versionAtLeast(opensslVersion, `OpenSSL (\d+)\.(\d+)`, 3, 5) {
+		return append([]string{"X25519MLKEM768"}, groups...)
+	}
+	return groups
+}
+
+// installedTLSGroups asks the installed openssl for its version.
+func installedTLSGroups(ctx context.Context, x Exec) []string {
+	res, err := x.Run(ctx, nil, "openssl", "version")
+	if err != nil {
+		return TLSGroups("")
+	}
+	return TLSGroups(string(res.Stdout))
+}
+
+// versionAtLeast reports whether the first match of pattern in s (two numeric
+// groups, major and minor) is at least major.minor.
+func versionAtLeast(s, pattern string, major, minor int) bool {
+	m := regexp.MustCompile(pattern).FindStringSubmatch(s)
+	if len(m) != 3 {
+		return false
+	}
+	maj, err1 := strconv.Atoi(m[1])
+	mnr, err2 := strconv.Atoi(m[2])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return maj > major || (maj == major && mnr >= minor)
+}
+
+// SSHCaps is what the installed OpenSSH supports, so the hardened config only
+// names algorithms and options sshd accepts.
+type SSHCaps struct {
+	Version string // ssh -V output, for example "OpenSSH_10.0p2 Debian-7"
+	Kex     map[string]bool
+	Ciphers map[string]bool
+	MACs    map[string]bool
+	KeySigs map[string]bool
+}
+
+func (c SSHCaps) atLeast(major, minor int) bool {
+	return versionAtLeast(c.Version, `OpenSSH_(\d+)\.(\d+)`, major, minor)
+}
+
+// Preferred algorithms, strongest first. Each list is cut to what sshd supports.
+var (
+	sshKex = []string{
+		"mlkem768x25519-sha256", "sntrup761x25519-sha512", "sntrup761x25519-sha512@openssh.com",
+		"curve25519-sha256", "curve25519-sha256@libssh.org",
+	}
+	sshCiphers = []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com"}
+	sshMACs    = []string{"hmac-sha2-512-etm@openssh.com", "hmac-sha2-256-etm@openssh.com", "umac-128-etm@openssh.com"}
+	sshHostSig = []string{"ssh-ed25519", "ssh-ed25519-cert-v01@openssh.com", "rsa-sha2-512", "rsa-sha2-256"}
+	sshUserSig = []string{
+		"ssh-ed25519", "ssh-ed25519-cert-v01@openssh.com",
+		"sk-ssh-ed25519@openssh.com", "sk-ssh-ed25519-cert-v01@openssh.com",
+		"rsa-sha2-512", "rsa-sha2-256",
+	}
+)
+
+func supported(prefer []string, have map[string]bool) []string {
+	var out []string
+	for _, a := range prefer {
+		if have[a] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// SSHHardeningConf renders the sshd drop-in. keyOnly turns off password login; it
+// is set only when an authorized key exists, so the operator cannot be locked out.
+// hostKeys are the host key files to offer (ed25519 and RSA, not ECDSA or DSA).
+func SSHHardeningConf(c SSHCaps, keyOnly bool, hostKeys []string) string {
+	var b strings.Builder
+	b.WriteString("# Managed by mailadmin install. SSH hardening (BSI SYS.1.3, CIS Level 1 and 2).\n")
+	b.WriteString("# Loaded first from sshd_config.d, so these values win over later drop-ins.\n")
+	line := func(k, v string) { fmt.Fprintf(&b, "%s %s\n", k, v) }
+	line("PermitRootLogin", "prohibit-password")
+	line("PubkeyAuthentication", "yes")
+	if keyOnly {
+		line("PasswordAuthentication", "no")
+		line("AuthenticationMethods", "publickey")
+	}
+	line("KbdInteractiveAuthentication", "no")
+	line("PermitEmptyPasswords", "no")
+	line("HostbasedAuthentication", "no")
+	line("IgnoreRhosts", "yes")
+	line("StrictModes", "yes")
+	line("MaxAuthTries", "3")
+	line("MaxSessions", "2")
+	line("MaxStartups", "10:30:60")
+	line("LoginGraceTime", "30")
+	line("ClientAliveInterval", "300")
+	line("ClientAliveCountMax", "2")
+	line("TCPKeepAlive", "no") // ClientAlive runs inside the encrypted channel and cannot be spoofed
+	line("DisableForwarding", "yes")
+	line("X11Forwarding", "no")
+	line("AllowAgentForwarding", "no")
+	line("AllowTcpForwarding", "no")
+	line("AllowStreamLocalForwarding", "no")
+	line("PermitTunnel", "no")
+	line("GatewayPorts", "no")
+	line("PermitUserEnvironment", "no")
+	line("UseDNS", "no")
+	line("Compression", "no")
+	line("LogLevel", "VERBOSE")
+	line("Banner", IssueNetPath)
+	if l := supported(sshKex, c.Kex); len(l) > 0 {
+		line("KexAlgorithms", strings.Join(l, ","))
+	}
+	if l := supported(sshCiphers, c.Ciphers); len(l) > 0 {
+		line("Ciphers", strings.Join(l, ","))
+	}
+	if l := supported(sshMACs, c.MACs); len(l) > 0 {
+		line("MACs", strings.Join(l, ","))
+	}
+	if l := supported(sshHostSig, c.KeySigs); len(l) > 0 {
+		line("HostKeyAlgorithms", strings.Join(l, ","))
+	}
+	if l := supported(sshUserSig, c.KeySigs); len(l) > 0 && c.atLeast(8, 5) {
+		line("PubkeyAcceptedAlgorithms", strings.Join(l, ","))
+	}
+	if c.atLeast(9, 1) {
+		line("RequiredRSASize", "3072")
+	}
+	for _, k := range hostKeys {
+		line("HostKey", k)
+	}
+	return b.String()
+}
+
+// probeSSH reads the algorithms and the version of the installed OpenSSH.
+func probeSSH(ctx context.Context, x Exec) (SSHCaps, error) {
+	c := SSHCaps{}
+	res, err := x.Run(ctx, nil, "ssh", "-V")
+	if err != nil {
+		return c, fmt.Errorf("ssh -V: %w", err)
+	}
+	c.Version = strings.TrimSpace(string(res.Stderr) + string(res.Stdout))
+	query := func(kind string) (map[string]bool, error) {
+		r, err := x.Run(ctx, nil, "ssh", "-Q", kind)
+		if err != nil {
+			return nil, fmt.Errorf("ssh -Q %s: %w", kind, err)
+		}
+		set := map[string]bool{}
+		for _, l := range strings.Fields(string(r.Stdout)) {
+			set[l] = true
+		}
+		return set, nil
+	}
+	if c.Kex, err = query("kex"); err != nil {
+		return c, err
+	}
+	if c.Ciphers, err = query("cipher"); err != nil {
+		return c, err
+	}
+	if c.MACs, err = query("mac"); err != nil {
+		return c, err
+	}
+	if c.KeySigs, err = query("key-sig"); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// authorizedKeyIn reports whether any of the files holds at least one key line.
+func authorizedKeyIn(paths []string) bool {
+	for _, p := range paths {
+		f, err := os.Open(p) // #nosec G304 -- fixed authorized_keys locations
+		if err != nil {
+			continue
+		}
+		found := false
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			l := strings.TrimSpace(sc.Text())
+			if l != "" && !strings.HasPrefix(l, "#") {
+				found = true
+				break
+			}
+		}
+		// A read error counts as no key: password login then stays on.
+		_ = f.Close()
+		if found && sc.Err() == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// authorizedKeyFiles lists root's and every home directory's authorized_keys.
+func authorizedKeyFiles() []string {
+	paths := []string{"/root/.ssh/authorized_keys"}
+	homes, _ := filepath.Glob("/home/*/.ssh/authorized_keys")
+	return append(paths, homes...)
+}
+
+// ApplySSHHardening writes the sshd drop-in, validates it with sshd -t and
+// reloads sshd. A config that sshd rejects is rolled back, so a failed run never
+// leaves sshd unable to start. It reports whether password login was turned off.
+func ApplySSHHardening(ctx context.Context, x Exec) (keyOnly bool, err error) {
+	caps, err := probeSSH(ctx, x)
+	if err != nil {
+		return false, err
+	}
+	keyOnly = authorizedKeyIn(authorizedKeyFiles())
+	var hostKeys []string
+	for _, k := range []string{"/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_rsa_key"} {
+		if _, err := os.Stat(k); err == nil {
+			hostKeys = append(hostKeys, k)
+		}
+	}
+	if err := writeAtomic(IssueNetPath, []byte(LoginBanner), 0o644); err != nil {
+		return false, err
+	}
+	prev, prevErr := os.ReadFile(SSHHardeningPath)
+	if err := writeAtomic(SSHHardeningPath, []byte(SSHHardeningConf(caps, keyOnly, hostKeys)), 0o600); err != nil {
+		return false, err
+	}
+	if _, err := x.Run(ctx, nil, "sshd", "-t"); err != nil {
+		if prevErr == nil {
+			_ = writeAtomic(SSHHardeningPath, prev, 0o600)
+		} else {
+			_ = os.Remove(SSHHardeningPath)
+		}
+		return false, fmt.Errorf("sshd rejected the hardened config, previous state restored: %w", err)
+	}
+	// try-reload-or-restart is a no-op for a socket-activated sshd that is not running.
+	if _, err := x.Run(ctx, nil, "systemctl", "try-reload-or-restart", "ssh"); err != nil {
+		return false, fmt.Errorf("reload sshd: %w", err)
+	}
+	return keyOnly, nil
+}
+
+// SysctlHardening is the kernel and network hardening (CIS 1.5 and 3.3, BSI SYS.1.3.A10).
+// IP forwarding and router advertisements keep their defaults: forwarding is off
+// unless something else turned it on, and cloud hosts may get IPv6 from RAs.
+func SysctlHardening() string {
+	return `# Managed by mailadmin install. Kernel and network hardening.
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 2
+kernel.unprivileged_bpf_disabled = 1
+net.core.bpf_jit_harden = 2
+kernel.kexec_load_disabled = 1
+kernel.sysrq = 0
+kernel.randomize_va_space = 2
+kernel.perf_event_paranoid = 3
+dev.tty.ldisc_autoload = 0
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+fs.protected_fifos = 2
+fs.protected_regular = 2
+fs.suid_dumpable = 0
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_rfc1337 = 1
+`
+}
+
+// ModprobeHardening blocks filesystems and protocols a mail host never needs (CIS 1.1.1, 3.2).
+func ModprobeHardening() string {
+	var b strings.Builder
+	b.WriteString("# Managed by mailadmin install. Modules a mail host does not need.\n")
+	for _, m := range []string{
+		"cramfs", "freevxfs", "hfs", "hfsplus", "jffs2", "udf", "usb-storage",
+		"dccp", "sctp", "rds", "tipc", "firewire-core", "firewire-ohci", "bluetooth",
+	} {
+		fmt.Fprintf(&b, "install %s /bin/false\nblacklist %s\n", m, m)
+	}
+	return b.String()
+}
+
+// AuditRules records changes to identities, privileges, SSH, the mail secrets, the
+// DKIM keys and the TLS keys, kernel module loads, and commands run as root by a
+// logged-in user (CIS 6.2, BSI SYS.1.3.A12).
+func AuditRules() string {
+	return `## Managed by mailadmin install.
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d/ -p wa -k sshd
+-w /etc/mailadmin/ -p wa -k mailadmin
+-w /var/lib/rspamd/dkim/ -p wa -k dkim
+-w /etc/ssl/mail/ -p wa -k tls
+-w /etc/nftables.conf -p wa -k firewall
+-w /etc/nftables.d/ -p wa -k firewall
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/faillock/ -p wa -k logins
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+-a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k rootcmd
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale
+`
+}
+
+// CrowdSecCollections are the hub collections for the services on a mail host.
+var CrowdSecCollections = []string{
+	"crowdsecurity/linux", "crowdsecurity/sshd", "crowdsecurity/postfix", "crowdsecurity/dovecot",
+}
+
+// CrowdSecAcquis tells CrowdSec to read sshd, Postfix and Dovecot from the journal.
+// Debian 13 writes no syslog files by default, so file acquisition would see nothing.
+func CrowdSecAcquis() string {
+	return `# Managed by mailadmin install.
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog
+---
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=postfix@-.service"
+labels:
+  type: syslog
+---
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=dovecot.service"
+labels:
+  type: syslog
+`
+}
+
+// UnattendedUpgrades installs every update from the distribution (release,
+// updates, security) and from the two vendor repositories, and reboots at 04:00
+// when an update needs it.
+func UnattendedUpgrades() string {
+	return `// Managed by mailadmin install.
+Unattended-Upgrade::Origins-Pattern {
+	"origin=${distro_id},codename=${distro_codename}";
+	"origin=${distro_id},codename=${distro_codename}-updates";
+	"origin=${distro_id},codename=${distro_codename}-security";
+	"origin=${distro_id},codename=${distro_codename},label=${distro_id}-Security";
+	"site=apt.postgresql.org";
+	"site=dl.cloudsmith.io";
+};
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+Unattended-Upgrade::SyslogEnable "true";
+`
+}
+
+// AutoUpgrades turns on the daily apt run that unattended-upgrades hooks into.
+func AutoUpgrades() string {
+	return `// Managed by mailadmin install.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+`
+}
+
+// hardeningFiles are the drop-ins written as they are.
+func hardeningFiles() map[string]string {
+	return map[string]string{ // #nosec G101 -- file paths and contents, no credentials
+		SysctlHardeningPath:   SysctlHardening(),
+		ModprobeHardeningPath: ModprobeHardening(),
+		LimitsHardeningPath:   "# Managed by mailadmin install. No core dumps (CIS 1.5.1).\n* hard core 0\n",
+		CoredumpConfPath:      "# Managed by mailadmin install.\n[Coredump]\nStorage=none\nProcessSizeMax=0\n",
+		JournaldConfPath:      "# Managed by mailadmin install.\n[Journal]\nStorage=persistent\nCompress=yes\n",
+		AuditRulesPath:        AuditRules(),
+		CrowdSecAcquisPath:    CrowdSecAcquis(),
+		UnattendedConfPath:    UnattendedUpgrades(),
+		AutoUpgradesPath:      AutoUpgrades(),
+		NeedrestartConfPath:   "# Managed by mailadmin install. Restart services after library updates.\n$nrconf{restart} = 'a';\n",
+		PwqualityConfPath:     "# Managed by mailadmin install.\nminlen = 14\nminclass = 4\nmaxrepeat = 3\nenforce_for_root\n",
+		IssuePath:             LoginBanner,
+		IssueNetPath:          LoginBanner,
+	}
+}
+
+// loginDefs are the password aging and default umask values (CIS 5.4, BSI SYS.1.3.A2).
+var loginDefs = [][2]string{
+	{"UMASK", "027"},
+	{"PASS_MAX_DAYS", "365"},
+	{"PASS_MIN_DAYS", "1"},
+	{"PASS_WARN_AGE", "14"},
+	{"ENCRYPT_METHOD", "YESCRYPT"},
+	{"YESCRYPT_COST_FACTOR", "7"},
+	{"SHA_CRYPT_MIN_ROUNDS", "65536"},
+	{"SHA_CRYPT_MAX_ROUNDS", "65536"},
+}
+
+// SetDefs sets KEY VALUE lines in a login.defs style file, replacing an existing
+// line for the key (commented or not) or appending one.
+func SetDefs(content string, kv [][2]string) string {
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	for _, p := range kv {
+		re := regexp.MustCompile(`^\s*#?\s*` + regexp.QuoteMeta(p[0]) + `\s`)
+		done := false
+		for i, l := range lines {
+			if re.MatchString(l) && !done {
+				lines[i] = p[0] + "\t" + p[1]
+				done = true
+			} else if re.MatchString(l) && !strings.HasPrefix(strings.TrimSpace(l), "#") {
+				lines[i] = "# " + l // a second active line would override the first
+			}
+		}
+		if !done {
+			lines = append(lines, p[0]+"\t"+p[1])
+		}
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// ApplySystemHardening writes the hardening drop-ins and activates them: sysctl,
+// journald, auditd, AppArmor, time sync and the AIDE baseline. It also
+// tightens login.defs and the cron permissions and disables services a mail host
+// does not run.
+func ApplySystemHardening(ctx context.Context, x Exec) error {
+	for path, content := range hardeningFiles() {
+		if err := writeAtomic(path, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	defs, err := os.ReadFile(LoginDefsPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", LoginDefsPath, err)
+	}
+	if err := writeAtomic(LoginDefsPath, []byte(SetDefs(string(defs), loginDefs)), 0o644); err != nil {
+		return err
+	}
+	// sysstat collects only when enabled in its defaults file.
+	if sa, err := os.ReadFile(SysstatDefaultsPath); err == nil {
+		if err := writeAtomic(SysstatDefaultsPath, []byte(SetShellVar(string(sa), "ENABLED", `"true"`)), 0o644); err != nil {
+			return err
+		}
+	}
+	// PostgreSQL's config files are readable by the postgres group only (CIS 6.1).
+	pgConfs, _ := filepath.Glob("/etc/postgresql/*/main/*.conf")
+	for _, f := range pgConfs {
+		if err := os.Chmod(f, 0o640); err != nil { // #nosec G302 -- tighter than the 0644 default, postgres group reads it
+			return fmt.Errorf("chmod %s: %w", f, err)
+		}
+	}
+	// Cron is root only (CIS 5.1).
+	_ = os.Chmod("/etc/crontab", 0o600)
+	for _, d := range []string{"/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly"} {
+		if err := os.Chmod(d, 0o700); err != nil && !errors.Is(err, fs.ErrNotExist) { // #nosec G302 -- directory, root only
+			return fmt.Errorf("chmod %s: %w", d, err)
+		}
+	}
+	steps := [][]string{
+		{"sysctl", "-e", "-p", SysctlHardeningPath},
+		{"systemctl", "restart", "systemd-journald"},
+		{"systemctl", "enable", "--now", "auditd"},
+		{"augenrules", "--load"},
+		{"systemctl", "enable", "--now", "apparmor"},
+		{"timedatectl", "set-ntp", "true"},
+		{"systemctl", "enable", "--now", "apt-daily.timer"},
+		{"systemctl", "enable", "--now", "apt-daily-upgrade.timer"},
+		{"systemctl", "enable", "--now", "acct"},
+		{"systemctl", "enable", "--now", "sysstat"},
+		// Pending updates are installed now in the background, not only at the next timer run.
+		{"systemctl", "start", "--no-block", "apt-daily-upgrade.service"},
+	}
+	for _, s := range steps {
+		if _, err := x.Run(ctx, nil, s...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
+		}
+	}
+	// Services a mail host never needs. A unit that is not installed is fine.
+	for _, u := range []string{"avahi-daemon.service", "avahi-daemon.socket", "cups.service", "cups.socket",
+		"rpcbind.service", "rpcbind.socket", "bluetooth.service"} {
+		_, _ = x.Run(ctx, nil, "systemctl", "disable", "--now", u)
+	}
+	// The first AIDE baseline takes minutes, so it runs in the background once.
+	if _, err := os.Stat(AideDBPath); errors.Is(err, fs.ErrNotExist) {
+		if _, err := x.Run(ctx, nil, "systemd-run", "--unit=mailadmin-aideinit", "--collect", "--no-block",
+			"/usr/sbin/aideinit", "-y", "-f"); err != nil {
+			return fmt.Errorf("start AIDE baseline: %w", err)
+		}
+	}
+	return nil
+}
+
+// ApplyCrowdSec installs the hub collections, enrolls the instance in the CrowdSec
+// console when a key is given, and starts the agent and the nftables bouncer. The
+// bouncer bans in its own nftables table, so the mailadmin table stays untouched.
+func ApplyCrowdSec(ctx context.Context, x Exec, hostname, enrollKey string) error {
+	steps := [][]string{
+		{"cscli", "hub", "update"},
+		append([]string{"cscli", "collections", "install"}, CrowdSecCollections...),
+	}
+	for _, s := range steps {
+		if _, err := x.Run(ctx, nil, s...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
+		}
+	}
+	if enrollKey != "" {
+		// The key is not put into the error: an exit error carries the full argv.
+		if _, err := x.Run(ctx, nil, "cscli", "console", "enroll", "--overwrite", "--name", hostname, enrollKey); err != nil {
+			detail := "no exit status"
+			var ee *sys.ExitError
+			if errors.As(err, &ee) {
+				detail = fmt.Sprintf("exit %d: %s", ee.ExitCode, strings.TrimSpace(string(ee.Stderr)))
+			}
+			return fmt.Errorf("crowdsec console enroll failed (%s); check the key and rerun", detail)
+		}
+	}
+	for _, s := range [][]string{
+		{"systemctl", "enable", "crowdsec", "crowdsec-firewall-bouncer"},
+		{"systemctl", "restart", "crowdsec"},
+	} {
+		if _, err := x.Run(ctx, nil, s...); err != nil {
+			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
+		}
+	}
+	if err := registerBouncer(ctx, x); err != nil {
+		return err
+	}
+	if _, err := x.Run(ctx, nil, "systemctl", "restart", "crowdsec-firewall-bouncer"); err != nil {
+		return fmt.Errorf("systemctl restart crowdsec-firewall-bouncer: %w", err)
+	}
+	return nil
+}
+
+// registerBouncer gives the nftables bouncer a fresh local API key. The package
+// registers itself only when the local API already runs during its postinst,
+// which is not the case when both packages arrive in one apt run; the config then
+// keeps the ${API_KEY} placeholder and the bouncer gets "access forbidden".
+// Re-registering on every run keeps install idempotent; the old key is revoked.
+func registerBouncer(ctx context.Context, x Exec) error {
+	conf, err := os.ReadFile(CrowdSecBouncerConf)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", CrowdSecBouncerConf, err)
+	}
+	_, _ = x.Run(ctx, nil, "cscli", "bouncers", "delete", crowdSecBouncerName)
+	res, err := x.Run(ctx, nil, "cscli", "bouncers", "add", crowdSecBouncerName, "-o", "raw")
+	if err != nil {
+		return fmt.Errorf("register crowdsec bouncer: %w", err)
+	}
+	key := strings.TrimSpace(string(res.Stdout))
+	if key == "" || strings.ContainsAny(key, " \n") {
+		return errors.New("register crowdsec bouncer: cscli returned no key")
+	}
+	out, err := SetBouncerKey(string(conf), key)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(CrowdSecBouncerConf, []byte(out), 0o600)
+}
+
+// SetBouncerKey replaces the api_key line of the bouncer config.
+func SetBouncerKey(conf, key string) (string, error) {
+	re := regexp.MustCompile(`(?m)^api_key:.*$`)
+	if !re.MatchString(conf) {
+		return "", errors.New("bouncer config has no api_key line")
+	}
+	return re.ReplaceAllLiteralString(conf, "api_key: "+key), nil
+}
+
+// SetShellVar sets NAME=value in a shell style defaults file, replacing an existing
+// assignment or appending one.
+func SetShellVar(content, name, value string) string {
+	re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `=.*$`)
+	if re.MatchString(content) {
+		return re.ReplaceAllLiteralString(content, name+"="+value)
+	}
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content + name + "=" + value + "\n"
+}

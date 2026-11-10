@@ -33,6 +33,7 @@ type installInputs struct {
 	hostname, domain, ipv4, ipv6, selector string
 	adopt                                  bool
 	pgdgFingerprint, caddyFingerprint      string
+	crowdsecFingerprint, crowdsecEnrollKey string
 	tls                                    string
 }
 
@@ -65,6 +66,8 @@ asked, or pass it with --pgdg-fingerprint / --caddy-fingerprint.`,
 	f.BoolVar(&in.adopt, "adopt", false, "install on a host that already has mail-stack state; keep existing files")
 	f.StringVar(&in.pgdgFingerprint, "pgdg-fingerprint", "", "expected fingerprint of the PostgreSQL repository key")
 	f.StringVar(&in.caddyFingerprint, "caddy-fingerprint", "", "expected fingerprint of the Caddy repository key")
+	f.StringVar(&in.crowdsecFingerprint, "crowdsec-fingerprint", "", "expected fingerprint of the CrowdSec repository key")
+	f.StringVar(&in.crowdsecEnrollKey, "crowdsec-enroll-key", "", "CrowdSec console enrollment key (asked if omitted; empty skips enrollment)")
 	f.StringVar(&in.tls, "tls", "acme", "certificate for the mail host: acme (public, needs DNS and ports 80/443) or internal (Caddy local CA, testing only)")
 	return cmd
 }
@@ -109,6 +112,15 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 
+	// Optional: an empty answer skips the console enrollment.
+	if in.crowdsecEnrollKey == "" && app.interactive() && !app.flags.dryRun {
+		key, err := app.readLine("CrowdSec console enrollment key (empty to skip): ")
+		if err != nil {
+			return err
+		}
+		in.crowdsecEnrollKey = strings.TrimSpace(key)
+	}
+
 	printInstallPlan(out, distro, ans, conflicts)
 	if app.flags.dryRun {
 		_, err := fmt.Fprintln(out, "dry-run: no changes made")
@@ -129,12 +141,14 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	repos := []struct {
 		repo     install.Repo
 		expected string
+		flag     string
 	}{
-		{install.PostgresRepo(distro.Codename), in.pgdgFingerprint},
-		{install.CaddyRepo(), in.caddyFingerprint},
+		{install.PostgresRepo(distro.Codename), in.pgdgFingerprint, "pgdg-fingerprint"},
+		{install.CaddyRepo(), in.caddyFingerprint, "caddy-fingerprint"},
+		{install.CrowdSecRepo(), in.crowdsecFingerprint, "crowdsec-fingerprint"},
 	}
 	for _, r := range repos {
-		if err := addRepo(app, c, x, r.repo, r.expected); err != nil {
+		if err := addRepo(app, c, x, r.repo, r.expected, r.flag); err != nil {
 			return err
 		}
 	}
@@ -142,7 +156,7 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.AptUpdate(pctx, x); err != nil {
 		return err
 	}
-	pkgs := append(install.DistroPackages(), install.VendorPackages()...)
+	pkgs := append(append(install.DistroPackages(), install.VendorPackages()...), install.HardeningPackages()...)
 	if err := install.CheckDovecotVersion(pctx, x); err != nil {
 		return err
 	}
@@ -181,6 +195,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return err
 	}
 	if err := install.ApplyMigrations(pctx, x, in.adopt); err != nil {
+		return err
+	}
+	if err := install.GrantMailadminRead(pctx, x); err != nil {
 		return err
 	}
 	if err := install.EnablePeerMap(pctx, x); err != nil {
@@ -300,6 +317,21 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 			return err
 		}
 	}
+	if err := install.ApplySystemHardening(pctx, x); err != nil {
+		return fmt.Errorf("system hardening: %w", err)
+	}
+	if err := install.ApplyCrowdSec(pctx, x, ans.Hostname, in.crowdsecEnrollKey); err != nil {
+		return fmt.Errorf("crowdsec: %w", err)
+	}
+	// SSH last: everything else is in place if sshd rejects the new config and it is rolled back.
+	keyOnly, err := install.ApplySSHHardening(pctx, x)
+	if err != nil {
+		return fmt.Errorf("ssh hardening: %w", err)
+	}
+	_, _ = fmt.Fprintln(out, "system hardening applied (sysctl, modules, auditd, CrowdSec, AIDE, unattended-upgrades, sshd)")
+	if !keyOnly {
+		_, _ = fmt.Fprintln(out, "warning: no authorized_keys found, so SSH password login stays on; add a key and rerun install --adopt")
+	}
 
 	_, _ = fmt.Fprintf(out, `
 install: mail stack configured and running.
@@ -369,7 +401,7 @@ func collectAnswers(app *App, in *installInputs) (install.Answers, error) {
 
 // addRepo fetches a vendor key and installs it only after its fingerprint is
 // confirmed. With a flag, the fingerprint must match it; otherwise the operator types it.
-func addRepo(app *App, c *cobra.Command, x install.Exec, r install.Repo, expected string) error {
+func addRepo(app *App, c *cobra.Command, x install.Exec, r install.Repo, expected, flag string) error {
 	out := c.OutOrStdout()
 	pctx := ctx(c)
 	key, err := install.FetchKey(pctx, r.KeyURL)
@@ -382,7 +414,7 @@ func addRepo(app *App, c *cobra.Command, x install.Exec, r install.Repo, expecte
 	}
 	if expected == "" {
 		if !app.interactive() {
-			return fmt.Errorf("%w: --%s-fingerprint is required when there is no terminal", ErrUsage, r.Name)
+			return fmt.Errorf("%w: --%s is required when there is no terminal", ErrUsage, flag)
 		}
 		_, _ = fmt.Fprintf(out, "%s repository key fingerprint: %s\n", r.Name, got)
 		typed, err := app.readLine("type the fingerprint published by the vendor to confirm: ")
@@ -402,12 +434,13 @@ func printInstallPlan(out io.Writer, d install.Distro, a install.Answers, confli
 	_, _ = fmt.Fprintf(out, "install plan for %s\n", d.Pretty)
 	_, _ = fmt.Fprintf(out, "  host:      %s (domain %s, ipv4 %s, ipv6 %s, selector %s)\n",
 		a.Hostname, a.Domain, a.IPv4, orDash(a.IPv6), a.Selector)
-	_, _ = fmt.Fprintf(out, "  repos:     postgresql.org (PGDG), caddy stable (Cloudsmith)\n")
-	_, _ = fmt.Fprintf(out, "  packages:  %s\n", strings.Join(append(install.DistroPackages(), install.VendorPackages()...), " "))
+	_, _ = fmt.Fprintf(out, "  repos:     postgresql.org (PGDG), caddy stable (Cloudsmith), CrowdSec (packagecloud)\n")
+	_, _ = fmt.Fprintf(out, "  packages:  %s\n", strings.Join(append(append(install.DistroPackages(), install.VendorPackages()...), install.HardeningPackages()...), " "))
 	_, _ = fmt.Fprintf(out, "  accounts:  mailadmin, vmail (uid 5000)\n")
 	_, _ = fmt.Fprintf(out, "  database:  %s owned by mailadmin, roles %s\n", install.PgDatabase, strings.Join(install.PgRoles, ", "))
 	_, _ = fmt.Fprintf(out, "  mail:      postfix, dovecot, rspamd, caddy configured for %s\n", a.Domain)
 	_, _ = fmt.Fprintf(out, "  firewall:  nftables, inbound limited to 22 and mail/web ports\n")
+	_, _ = fmt.Fprintf(out, "  hardening: sshd (keys only), sysctl, modules, auditd, CrowdSec, AIDE, AppArmor, unattended-upgrades\n")
 	_, _ = fmt.Fprintf(out, "  writes:    %s/config.toml, %s/secrets.env, %s\n", installConfigDir, installConfigDir, installBinaryPath)
 	if len(conflicts) > 0 {
 		_, _ = fmt.Fprintf(out, "  adopting existing state: %s\n", strings.Join(conflicts, ", "))

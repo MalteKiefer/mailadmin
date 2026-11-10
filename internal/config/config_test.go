@@ -330,8 +330,11 @@ func TestCheckReportsState(t *testing.T) {
 	if byName["rspamd_controller_pw"].OK {
 		t.Error("rspamd_controller_pw should be not-configured")
 	}
-	if byName["ntfy_token"].OK {
-		t.Error("ntfy_token should be not-configured")
+	// Optional settings pass when unset, but still say they are not configured.
+	for _, name := range []string{"ntfy_token", "desec_token", "cloudflare_api_token"} {
+		if r := byName[name]; !r.OK || !strings.Contains(r.Detail, "not configured") {
+			t.Errorf("%s: optional and unset should pass as not configured, got ok=%v %q", name, r.OK, r.Detail)
+		}
 	}
 	// No secret value must appear in any detail string.
 	for _, r := range results {
