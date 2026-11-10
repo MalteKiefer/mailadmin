@@ -95,7 +95,8 @@ func writeConf(path string, data []byte) error {
 	}
 	name := tmp.Name()
 	defer func() { _ = os.Remove(name) }()
-	if _, err := tmp.Write(data); err == nil {
+	_, err = tmp.Write(data)
+	if err == nil {
 		err = tmp.Chmod(0o644)
 	}
 	if err == nil {

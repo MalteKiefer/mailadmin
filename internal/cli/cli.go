@@ -181,33 +181,12 @@ func (a *App) webserver() *webserver.Manager {
 	return webserver.New(a.runner(), "", "", "", "")
 }
 
-// syncAutodiscovery regenerates the managed Caddy autodiscovery include from the
-// current domain list and reloads Caddy.
-func (a *App) syncAutodiscovery(c context.Context) error {
-	domains, err := a.listDomains(c)
-	if err != nil {
-		return err
-	}
-	return a.syncAutodiscoveryFor(c, domains)
-}
-
 func (a *App) syncAutodiscoveryFor(c context.Context, domains []db.Domain) error {
 	names := make([]string, 0, len(domains))
 	for _, dom := range domains {
 		names = append(names, dom.Name)
 	}
 	return a.webserver().Sync(c, names)
-}
-
-// syncMTASTS regenerates the managed Caddy MTA-STS include from the current
-// active domain list and reloads Caddy. Unlike autodiscovery it is gated on
-// active state: a disabled domain must not advertise an enforce policy endpoint.
-func (a *App) syncMTASTS(c context.Context) error {
-	domains, err := a.listDomains(c)
-	if err != nil {
-		return err
-	}
-	return a.syncMTASTSFor(c, domains)
 }
 
 func (a *App) syncMTASTSFor(c context.Context, domains []db.Domain) error {

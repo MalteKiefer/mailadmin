@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"mailadmin/internal/config"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 
+	"mailadmin/internal/config"
 	"mailadmin/internal/valid"
 )
 
