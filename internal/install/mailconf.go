@@ -90,6 +90,8 @@ passdb apppw {
 userdb mailbox {
   driver = sql
   sql_query = SELECT 5000 AS uid, 5000 AS gid, CASE WHEN quota_bytes > 0 THEN quota_bytes::text ELSE 'unlimited' END AS quota_storage_size FROM mailbox WHERE username = '%{user|username}' AND domain = '%{user|domain}' AND active
+  # Lists every mailbox for doveadm -A (quota get, sieve, index).
+  sql_iterate_query = SELECT username || '@' || domain AS user FROM mailbox WHERE active
 }
 
 # Postfix talks to Dovecot over these sockets inside its chroot.

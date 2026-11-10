@@ -187,7 +187,7 @@ func TestHardenedMailTLS(t *testing.T) {
 	for _, want := range []string{"ssl_cipher_list = " + TLS12Ciphers, "ssl_cipher_suites = " + TLS13Suites,
 		"ssl_curve_list = X25519MLKEM768:X25519:prime256v1:secp384r1", "ssl_server_prefer_ciphers = server",
 		"inet_listener imap {\n    port = 0", "protocol lmtp {\n  mail_plugins {\n    quota = yes\n    sieve = yes",
-		"sieve_script personal {", `quota "User quota" {`, "AS quota_storage_size"} {
+		"sieve_script personal {", `quota "User quota" {`, "AS quota_storage_size", "sql_iterate_query = SELECT username || '@' || domain AS user"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("dovecot.conf misses %q", want)
 		}

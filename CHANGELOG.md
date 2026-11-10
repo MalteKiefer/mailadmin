@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.27.1] - 2026-11-10
+
+### Fixed
+- `doveadm ... -A` (for example `doveadm quota get -A`) failed with "User listing returned failure": the Dovecot userdb now has an iterate query. Run `mailadmin install --adopt` after the update.
+
 ## [v1.27.0] - 2026-11-10
 
 ### Upgrade
