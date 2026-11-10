@@ -3,10 +3,15 @@ package install
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/big"
+	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -30,6 +35,7 @@ const (
 	CrowdSecAcquisPath    = "/etc/crowdsec/acquis.d/mailadmin.yaml"
 	CrowdSecBouncerConf   = "/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
 	crowdSecBouncerName   = "mailadmin-nftables"
+	CrowdSecAllowlist     = "mailadmin" // the list security allowlist manages
 	UnattendedConfPath    = "/etc/apt/apt.conf.d/52mailadmin-unattended-upgrades"
 	AutoUpgradesPath      = "/etc/apt/apt.conf.d/20auto-upgrades"
 	NeedrestartConfPath   = "/etc/needrestart/conf.d/90-mailadmin.conf"
@@ -124,9 +130,13 @@ var (
 	sshCiphers = []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com"}
 	sshMACs    = []string{"hmac-sha2-512-etm@openssh.com", "hmac-sha2-256-etm@openssh.com", "umac-128-etm@openssh.com"}
 	sshHostSig = []string{"ssh-ed25519", "ssh-ed25519-cert-v01@openssh.com", "rsa-sha2-512", "rsa-sha2-256"}
+	// User keys: Ed25519 and ECDSA (both also as FIDO keys) and RSA of at least
+	// 3072 bits, the key types BSI TR-02102-4 accepts. usableKey must match this list.
 	sshUserSig = []string{
 		"ssh-ed25519", "ssh-ed25519-cert-v01@openssh.com",
 		"sk-ssh-ed25519@openssh.com", "sk-ssh-ed25519-cert-v01@openssh.com",
+		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+		"sk-ecdsa-sha2-nistp256@openssh.com",
 		"rsa-sha2-512", "rsa-sha2-256",
 	}
 )
@@ -142,14 +152,18 @@ func supported(prefer []string, have map[string]bool) []string {
 }
 
 // SSHHardeningConf renders the sshd drop-in. keyOnly turns off password login; it
-// is set only when an authorized key exists, so the operator cannot be locked out.
+// is set only when the account the operator logged in with has a usable key, so
+// the operator cannot be locked out. rootKeyOnly limits root to key login; it is
+// left out when root logs in with a password and has no usable key.
 // hostKeys are the host key files to offer (ed25519 and RSA, not ECDSA or DSA).
-func SSHHardeningConf(c SSHCaps, keyOnly bool, hostKeys []string) string {
+func SSHHardeningConf(c SSHCaps, keyOnly, rootKeyOnly bool, hostKeys []string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by mailadmin install. SSH hardening (BSI SYS.1.3, CIS Level 1 and 2).\n")
 	b.WriteString("# Loaded first from sshd_config.d, so these values win over later drop-ins.\n")
 	line := func(k, v string) { fmt.Fprintf(&b, "%s %s\n", k, v) }
-	line("PermitRootLogin", "prohibit-password")
+	if rootKeyOnly {
+		line("PermitRootLogin", "prohibit-password")
+	}
 	line("PubkeyAuthentication", "yes")
 	if keyOnly {
 		line("PasswordAuthentication", "no")
@@ -237,7 +251,8 @@ func probeSSH(ctx context.Context, x Exec) (SSHCaps, error) {
 	return c, nil
 }
 
-// authorizedKeyIn reports whether any of the files holds at least one key line.
+// authorizedKeyIn reports whether any of the files holds at least one key the
+// hardened sshd accepts for a login (see usableKey).
 func authorizedKeyIn(paths []string) bool {
 	for _, p := range paths {
 		f, err := os.Open(p) // #nosec G304 -- fixed authorized_keys locations
@@ -248,7 +263,7 @@ func authorizedKeyIn(paths []string) bool {
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
 			l := strings.TrimSpace(sc.Text())
-			if l != "" && !strings.HasPrefix(l, "#") {
+			if l != "" && !strings.HasPrefix(l, "#") && usableKey(l) {
 				found = true
 				break
 			}
@@ -262,22 +277,86 @@ func authorizedKeyIn(paths []string) bool {
 	return false
 }
 
-// authorizedKeyFiles lists root's and every home directory's authorized_keys.
-func authorizedKeyFiles() []string {
-	paths := []string{"/root/.ssh/authorized_keys"}
-	homes, _ := filepath.Glob("/home/*/.ssh/authorized_keys")
-	return append(paths, homes...)
+// loginKeyTypes are the key types usableKey accepts; they match sshUserSig.
+var loginKeyTypes = map[string]bool{
+	"ssh-ed25519": true, "sk-ssh-ed25519@openssh.com": true,
+	"ecdsa-sha2-nistp256": true, "ecdsa-sha2-nistp384": true, "ecdsa-sha2-nistp521": true,
+	"sk-ecdsa-sha2-nistp256@openssh.com": true, "ssh-rsa": true,
+}
+
+// usableKey reports whether an authorized_keys line holds a key the hardened sshd
+// accepts for an interactive login: Ed25519 or ECDSA (also FIDO), or RSA with at
+// least 3072 bits (RequiredRSASize). A key bound to a forced command or to
+// restrict cannot open a shell, so it does not count.
+func usableKey(line string) bool {
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		if !loginKeyTypes[f] {
+			continue
+		}
+		opts := strings.Join(fields[:i], " ")
+		if strings.Contains(opts, "command=") || strings.Contains(opts, "restrict") {
+			return false
+		}
+		if f != "ssh-rsa" {
+			return true
+		}
+		return i+1 < len(fields) && rsaBits(fields[i+1]) >= 3072
+	}
+	return false
+}
+
+// rsaBits returns the modulus size of a base64 ssh-rsa public key, or 0.
+func rsaBits(b64 string) int {
+	blob, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return 0
+	}
+	var parts [][]byte
+	for len(blob) >= 4 && len(parts) < 3 {
+		n := binary.BigEndian.Uint32(blob)
+		if uint64(n) > uint64(len(blob)-4) {
+			return 0
+		}
+		parts = append(parts, blob[4:4+n])
+		blob = blob[4+n:]
+	}
+	if len(parts) != 3 || string(parts[0]) != "ssh-rsa" {
+		return 0
+	}
+	return new(big.Int).SetBytes(parts[2]).BitLen()
+}
+
+// loginAccount is the account the operator logged in with (the audit login uid,
+// which survives sudo and su), and its home directory. Without a login uid, for
+// example on a console or under cron, it is root.
+func loginAccount() (name, home string) {
+	data, err := os.ReadFile("/proc/self/loginuid")
+	uid := strings.TrimSpace(string(data))
+	if err != nil || uid == "" || uid == "0" || uid == "4294967295" {
+		return "root", "/root"
+	}
+	u, err := user.LookupId(uid)
+	if err != nil {
+		return "root", "/root"
+	}
+	return u.Username, u.HomeDir
 }
 
 // ApplySSHHardening writes the sshd drop-in, validates it with sshd -t and
 // reloads sshd. A config that sshd rejects is rolled back, so a failed run never
-// leaves sshd unable to start. It reports whether password login was turned off.
-func ApplySSHHardening(ctx context.Context, x Exec) (keyOnly bool, err error) {
+// leaves sshd unable to start. It reports whether password login was turned off
+// and the login account that decided it.
+func ApplySSHHardening(ctx context.Context, x Exec) (keyOnly bool, account string, err error) {
 	caps, err := probeSSH(ctx, x)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	keyOnly = authorizedKeyIn(authorizedKeyFiles())
+	account, home := loginAccount()
+	keyOnly = authorizedKeyIn([]string{filepath.Join(home, ".ssh", "authorized_keys")})
+	// Root may keep a password login only when the operator logs in as root and
+	// has no usable key; an operator who logs in as another account keeps that one.
+	rootKeyOnly := account != "root" || keyOnly
 	var hostKeys []string
 	for _, k := range []string{"/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_rsa_key"} {
 		if _, err := os.Stat(k); err == nil {
@@ -285,11 +364,11 @@ func ApplySSHHardening(ctx context.Context, x Exec) (keyOnly bool, err error) {
 		}
 	}
 	if err := writeAtomic(IssueNetPath, []byte(LoginBanner), 0o644); err != nil {
-		return false, err
+		return false, account, err
 	}
 	prev, prevErr := os.ReadFile(SSHHardeningPath)
-	if err := writeAtomic(SSHHardeningPath, []byte(SSHHardeningConf(caps, keyOnly, hostKeys)), 0o600); err != nil {
-		return false, err
+	if err := writeAtomic(SSHHardeningPath, []byte(SSHHardeningConf(caps, keyOnly, rootKeyOnly, hostKeys)), 0o600); err != nil {
+		return false, account, err
 	}
 	if _, err := x.Run(ctx, nil, "sshd", "-t"); err != nil {
 		if prevErr == nil {
@@ -297,13 +376,13 @@ func ApplySSHHardening(ctx context.Context, x Exec) (keyOnly bool, err error) {
 		} else {
 			_ = os.Remove(SSHHardeningPath)
 		}
-		return false, fmt.Errorf("sshd rejected the hardened config, previous state restored: %w", err)
+		return false, account, fmt.Errorf("sshd rejected the hardened config, previous state restored: %w", err)
 	}
 	// try-reload-or-restart is a no-op for a socket-activated sshd that is not running.
 	if _, err := x.Run(ctx, nil, "systemctl", "try-reload-or-restart", "ssh"); err != nil {
-		return false, fmt.Errorf("reload sshd: %w", err)
+		return false, account, fmt.Errorf("reload sshd: %w", err)
 	}
-	return keyOnly, nil
+	return keyOnly, account, nil
 }
 
 // SysctlHardening is the kernel and network hardening (CIS 1.5 and 3.3, BSI SYS.1.3.A10).
@@ -394,18 +473,17 @@ var CrowdSecCollections = []string{
 	"crowdsecurity/linux", "crowdsecurity/sshd", "crowdsecurity/postfix", "crowdsecurity/dovecot",
 }
 
-// CrowdSecAcquis tells CrowdSec to read sshd, Postfix and Dovecot from the journal.
-// Debian 13 writes no syslog files by default, so file acquisition would see nothing.
+// CrowdSecAcquis tells CrowdSec to read Postfix and Dovecot from the journal.
+// Debian 13 writes no syslog files by default, so the file sources that cscli
+// setup writes for them see nothing. sshd is left out: cscli setup already adds
+// a journal source for ssh.service, and a second one would count every failed
+// login twice. Postfix logs as postfix.service since Debian's postfix 3.9.1-7
+// and as postfix@-.service before; two filters on one field match either.
 func CrowdSecAcquis() string {
 	return `# Managed by mailadmin install.
 source: journalctl
 journalctl_filter:
-  - "_SYSTEMD_UNIT=ssh.service"
-labels:
-  type: syslog
----
-source: journalctl
-journalctl_filter:
+  - "_SYSTEMD_UNIT=postfix.service"
   - "_SYSTEMD_UNIT=postfix@-.service"
 labels:
   type: syslog
@@ -418,19 +496,28 @@ labels:
 `
 }
 
+// vendorRepos are the third-party repositories install adds.
+func vendorRepos() []Repo {
+	return []Repo{PostgresRepo(""), CaddyRepo(), CrowdSecRepo()}
+}
+
 // UnattendedUpgrades installs every update from the distribution (release,
-// updates, security) and from the two vendor repositories, and reboots at 04:00
-// when an update needs it.
+// updates, security) and from every vendor repository install adds, and reboots
+// at 04:00 when an update needs it.
 func UnattendedUpgrades() string {
+	var sites strings.Builder
+	for _, r := range vendorRepos() {
+		if u, err := url.Parse(r.URI); err == nil && u.Host != "" {
+			fmt.Fprintf(&sites, "\t\"site=%s\";\n", u.Host)
+		}
+	}
 	return `// Managed by mailadmin install.
 Unattended-Upgrade::Origins-Pattern {
 	"origin=${distro_id},codename=${distro_codename}";
 	"origin=${distro_id},codename=${distro_codename}-updates";
 	"origin=${distro_id},codename=${distro_codename}-security";
 	"origin=${distro_id},codename=${distro_codename},label=${distro_id}-Security";
-	"site=apt.postgresql.org";
-	"site=dl.cloudsmith.io";
-};
+` + sites.String() + `};
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
@@ -604,6 +691,14 @@ func ApplyCrowdSec(ctx context.Context, x Exec, hostname, enrollKey string) erro
 	} {
 		if _, err := x.Run(ctx, nil, s...); err != nil {
 			return fmt.Errorf("%s: %w", strings.Join(s, " "), err)
+		}
+	}
+	// The security allowlist commands and overview work on this list; cscli
+	// allowlists add does not create it.
+	if _, err := x.Run(ctx, nil, "cscli", "allowlists", "inspect", CrowdSecAllowlist); err != nil {
+		if _, err := x.Run(ctx, nil, "cscli", "allowlists", "create", CrowdSecAllowlist,
+			"--description", "managed by mailadmin"); err != nil {
+			return fmt.Errorf("create crowdsec allowlist: %w", err)
 		}
 	}
 	if err := registerBouncer(ctx, x); err != nil {

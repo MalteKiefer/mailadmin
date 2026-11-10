@@ -187,7 +187,7 @@ dns_backup_dir = "/var/lib/mailadmin/dns-backups"
 dir            = "/var/lib/mailadmin/backups"
 
 [logs]
-units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "postgresql"]
+units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
 
 # Optional: ntfy.sh (or a self-hosted instance) target for
 # "doctor --notify" / "dns drift-check --notify". Leave unset to skip

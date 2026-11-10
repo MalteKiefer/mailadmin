@@ -352,6 +352,9 @@ func runDomainAdd(app *App, c *cobra.Command, rawDomain, rawSelector, rawDNS str
 	// regenerate the managed Caddy include so autoconfig.<domain> /
 	// autodiscover.<domain> are served. A reload failure is a soft warning — the
 	// domain is already created.
+	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
+		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+	}
 	if err := app.syncAutodiscovery(ctx(c)); err != nil {
 		r.Message("warning: could not update Caddy autodiscovery: %v", err)
 	}
@@ -434,6 +437,9 @@ func runDomainRemove(app *App, c *cobra.Command, rawDomain string) error {
 		return err
 	}
 	r.Message("removed domain %s", name)
+	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
+		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+	}
 	if err := app.syncAutodiscovery(ctx(c)); err != nil {
 		r.Message("warning: could not update Caddy autodiscovery: %v", err)
 	}
@@ -494,6 +500,9 @@ func runDomainSetActive(app *App, c *cobra.Command, rawDomain string, active boo
 	r.Message("%s domain %s", verb, name)
 	// MTA-STS is active-gated: enabling must publish the policy endpoint, disabling
 	// must withdraw it. Regenerate the include from the new active set.
+	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
+		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+	}
 	if err := app.syncMTASTS(ctx(c)); err != nil {
 		r.Message("warning: could not update Caddy MTA-STS: %v", err)
 	}
@@ -551,6 +560,9 @@ func runDomainSetDKIM(app *App, c *cobra.Command, rawDomain, rawSelector string)
 		return err
 	}
 	r.Message("set DKIM selector for %s to %s", name, selector)
+	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
+		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+	}
 	return r.Value(domainView{
 		Name:        name,
 		Active:      before.Active,
@@ -904,6 +916,9 @@ func runDomainDKIMRotateFinish(app *App, c *cobra.Command, rawDomain, rawNewSele
 		return err
 	}
 	r.Message("switched %s DKIM signing to selector %s", domain, newSelector)
+	if err := app.syncRspamdSelectors(ctx(c)); err != nil {
+		r.Message("warning: could not update the rspamd DKIM selector map: %v", err)
+	}
 
 	switch {
 	case before.DKIMSelector == "":

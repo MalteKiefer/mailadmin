@@ -1269,18 +1269,19 @@ func (a *App) dnsMutableBackends(cmd *cobra.Command, rawDomain string, requirePr
 	if err != nil {
 		return nil, "", err
 	}
+	// database is the App's shared pool (openDB): it is never closed here, or a
+	// caller that goes on without a provider would query a closed pool.
 	dom, err := getDomain(ctx(cmd), database, domain)
 	if err != nil {
-		database.Close()
 		return nil, "", err
 	}
 
 	provider, err := newProvider(dom.DNSProvider, secrets)
 	if err != nil {
-		database.Close()
 		if requireProvider {
 			return nil, "", err
 		}
+		provider = nil // manual domain or missing token: callers handle the nil provider
 	}
 
 	be := &dnsBackends{

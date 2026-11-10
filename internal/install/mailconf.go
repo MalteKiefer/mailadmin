@@ -85,9 +85,10 @@ passdb apppw {
   driver = sql
   sql_query = SELECT a.username, a.domain, a.password FROM app_password a JOIN mailbox m ON m.username = a.username AND m.domain = a.domain WHERE a.username || '@' || a.domain || '+' || a.label = '%{user}' AND a.active AND m.active
 }
+# quota_bytes 0 means no limit.
 userdb mailbox {
   driver = sql
-  sql_query = SELECT 5000 AS uid, 5000 AS gid FROM mailbox WHERE username = '%{user|username}' AND domain = '%{user|domain}' AND active
+  sql_query = SELECT 5000 AS uid, 5000 AS gid, CASE WHEN quota_bytes > 0 THEN quota_bytes::text ELSE 'unlimited' END AS quota_storage_size FROM mailbox WHERE username = '%{user|username}' AND domain = '%{user|domain}' AND active
 }
 
 # Postfix talks to Dovecot over these sockets inside its chroot.
@@ -129,6 +130,22 @@ service managesieve-login {
 
 mail_plugins {
   quota = yes
+}
+# One quota root; the limit per mailbox comes from the userdb (quota_storage_size).
+quota "User quota" {
+}
+
+# Sieve scripts (mailadmin sieve, ManageSieve) run on delivery through LMTP.
+protocol lmtp {
+  mail_plugins {
+    quota = yes
+    sieve = yes
+  }
+}
+sieve_script personal {
+  driver = file
+  path = ~/sieve
+  active_path = ~/.dovecot.sieve
 }
 
 mail_driver = maildir

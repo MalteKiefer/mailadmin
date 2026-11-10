@@ -14,16 +14,28 @@ type nftRuleset struct {
 	Nftables []nftItem `json:"nftables"`
 }
 
-// nftItem is one member of the nftables array. Only the rule variant carries
-// the port matches we surface.
+// nftItem is one member of the nftables array. Rules carry the port matches;
+// named sets carry the ports a rule references as @name.
 type nftItem struct {
 	Rule *nftRule `json:"rule"`
+	Set  *nftSet  `json:"set"`
 }
 
 // nftRule holds a rule's expression list. accept-bearing rules that match a
 // tcp/udp destination port are the "open ports".
 type nftRule struct {
-	Expr []nftExpr `json:"expr"`
+	Family string    `json:"family"`
+	Table  string    `json:"table"`
+	Expr   []nftExpr `json:"expr"`
+}
+
+// nftSet is a named set. install keeps the mail and web ports in the sets
+// allowed_tcp and allowed_udp, and the fw-port helper adds and removes elements.
+type nftSet struct {
+	Family string            `json:"family"`
+	Table  string            `json:"table"`
+	Name   string            `json:"name"`
+	Elem   []json.RawMessage `json:"elem"`
 }
 
 // nftExpr is one expression in a rule. A rule that opens a port pairs a match
@@ -58,9 +70,9 @@ type nftPayload struct {
 
 // parseNftPorts extracts distinct managed open ports from `nft -j list ruleset`.
 // It reports (proto, port) for every accept rule that matches a single tcp/udp
-// destination port. Port ranges and set references are intentionally skipped:
-// mailadmin only ever opens discrete ports via the fw-port helper, so a range
-// is not something this tool manages. Duplicates are collapsed.
+// destination port, and for every discrete port in a named set such a rule
+// references (@allowed_tcp). Port ranges are skipped: mailadmin only ever opens
+// discrete ports via the fw-port helper. Duplicates are collapsed.
 func parseNftPorts(data []byte) ([]FirewallPort, error) {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 {
@@ -71,8 +83,24 @@ func parseNftPorts(data []byte) ([]FirewallPort, error) {
 	if err := dec.Decode(&rs); err != nil {
 		return nil, fmt.Errorf("%w: decode nft ruleset: %w", ErrInvalidResponse, err)
 	}
+	sets := make(map[string][]int)
+	for _, item := range rs.Nftables {
+		if s := item.Set; s != nil {
+			for _, e := range s.Elem {
+				if port, ok := scalarPort(e); ok {
+					sets[setKey(s.Family, s.Table, s.Name)] = append(sets[setKey(s.Family, s.Table, s.Name)], port)
+				}
+			}
+		}
+	}
 	seen := make(map[FirewallPort]struct{})
 	var out []FirewallPort
+	add := func(fp FirewallPort) {
+		if _, dup := seen[fp]; !dup {
+			seen[fp] = struct{}{}
+			out = append(out, fp)
+		}
+	}
 	for _, item := range rs.Nftables {
 		if item.Rule == nil {
 			continue
@@ -81,19 +109,37 @@ func parseNftPorts(data []byte) ([]FirewallPort, error) {
 			continue
 		}
 		for _, e := range item.Rule.Expr {
-			proto, port, ok := dportMatch(e.Match)
-			if !ok {
+			if proto, port, ok := dportMatch(e.Match); ok {
+				add(FirewallPort{Proto: proto, Port: port})
 				continue
 			}
-			fp := FirewallPort{Proto: proto, Port: port}
-			if _, dup := seen[fp]; dup {
-				continue
+			if proto, name, ok := dportSetMatch(e.Match); ok {
+				for _, port := range sets[setKey(item.Rule.Family, item.Rule.Table, name)] {
+					add(FirewallPort{Proto: proto, Port: port})
+				}
 			}
-			seen[fp] = struct{}{}
-			out = append(out, fp)
 		}
 	}
 	return out, nil
+}
+
+func setKey(family, table, name string) string { return family + "/" + table + "/" + name }
+
+// dportSetMatch returns (proto, set name, true) when the match compares a
+// tcp/udp destination port against a named set reference such as "@allowed_tcp".
+func dportSetMatch(m *nftMatch) (string, string, bool) {
+	if m == nil || m.Left.Payload == nil || m.Left.Payload.Field != "dport" {
+		return "", "", false
+	}
+	p := m.Left.Payload.Protocol
+	if p != "tcp" && p != "udp" {
+		return "", "", false
+	}
+	var ref string
+	if err := json.Unmarshal(m.RawRight, &ref); err != nil || len(ref) < 2 || ref[0] != '@' {
+		return "", "", false
+	}
+	return p, ref[1:], true
 }
 
 // ruleAccepts reports whether any expression in the rule is an accept verdict.

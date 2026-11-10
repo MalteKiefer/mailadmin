@@ -85,6 +85,9 @@ func TestTrimActiveSuffix(t *testing.T) {
 		wantOK   bool
 	}{
 		{"mailadmin (active)", "mailadmin", true},
+		{"mailadmin ACTIVE", "mailadmin", true},
+		{"mailadmin\tACTIVE", "mailadmin", true},
+		{"INACTIVE", "INACTIVE", false},
 		{"mailadmin (ACTIVE)", "mailadmin", true},
 		{"mailadmin   (active)", "mailadmin", true},
 		{"plain", "plain", false},

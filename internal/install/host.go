@@ -74,7 +74,7 @@ dns_backup_dir = "/var/lib/mailadmin/dns-backups"
 dir            = "/var/lib/mailadmin/backups"
 
 [logs]
-units = ["postfix", "dovecot", "rspamd", "caddy", "postgresql"]
+units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
 `, PgService, PgServiceFile, a.Hostname, a.Selector, TLSFullchain, a.IPv4, a.IPv6))
 }
 

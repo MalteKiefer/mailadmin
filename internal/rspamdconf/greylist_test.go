@@ -79,7 +79,7 @@ func TestSetGreylistUpdatesExistingPreservingRest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	want := "# ops-tuned greylist config\ntimeout = 10m; # 5 minutes\nexpire = 1d;\nwhitelist = \"/etc/rspamd/greylist_whitelist.map\";\n"
+	want := "# ops-tuned greylist config\ntimeout = 10min; # 5 minutes\nexpire = 1d;\nwhitelist = \"/etc/rspamd/greylist_whitelist.map\";\n"
 	if string(got) != want {
 		t.Fatalf("file content =\n%q\nwant\n%q", got, want)
 	}
@@ -104,5 +104,13 @@ func TestSetGreylistCreatesMissingSetting(t *testing.T) {
 	}
 	if got["expire"] != "2d" {
 		t.Fatalf("expire = %q, want 2d", got["expire"])
+	}
+}
+
+func TestUCLDurationMinutes(t *testing.T) {
+	for in, want := range map[string]string{"5m": "5min", "300s": "300s", "2h": "2h", "1d": "1d"} {
+		if got := uclDuration(in); got != want {
+			t.Errorf("uclDuration(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

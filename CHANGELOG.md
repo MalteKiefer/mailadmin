@@ -24,6 +24,25 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [v1.26.0] - 2026-11-10
+
+### Fixed
+- SSH hardening could lock the operator out. Password login is now turned off only when the account the operator logged in with has a key the hardened sshd accepts (Ed25519, ECDSA, RSA with 3072 bits or more, no forced command). Root keeps password login when the operator logs in as root without such a key. ECDSA user keys (also FIDO) are accepted.
+- CrowdSec read sshd twice and Postfix not at all: every failed SSH login counted double, so an operator was banned after about three typos, and Postfix attacks were never seen. Postfix is read from `postfix.service` (and `postfix@-.service` on older releases).
+- `security ban list` was always empty with current cscli, `security firewall show` left out every port in the `allowed_tcp` and `allowed_udp` sets, and `security allowlist` and `security overview` failed because the allowlist did not exist. Install now creates it.
+- unattended-upgrades did not update CrowdSec. The vendor sites now come from the repository list.
+- A repository key download holding more than one key is refused; before, only the first key was checked and all were trusted.
+- Dovecot never ran Sieve scripts on delivery and enforced no quota. LMTP now loads the sieve and quota plugins, the personal script storage is configured, and the userdb returns each mailbox's quota.
+- A new domain, an enabled or disabled one, or a changed DKIM selector (set-dkim, rotation) now updates rspamd's selector map at once instead of after the next install.
+- `domain dkim-rotate-start` and `dkim-rotate-finish` failed on domains without a DNS provider token ("closed pool").
+- `backup restore` failed on hosts set up by install: pg_restore now runs as postgres in a single transaction and is no longer killed after 30 seconds.
+- `mailadmin update` replaced a newer source build (`git describe` versions such as 1.25.1-3-gabc1234) with the older release.
+- The Postfix socket bind mount is ordered after `systemd-tmpfiles-setup` and before Postfix, so it survives a reboot.
+- `security greylist set --timeout 5m` wrote a value rspamd reads as 5,000,000 seconds; minutes are now written as `5min`.
+- A `Port` line with a trailing comment in sshd_config was ignored, so the firewall opened only port 22.
+- `sieve show`, `sieve edit` and backups did not find the active script with Pigeonhole 2.4.
+- The units config written by install includes `crowdsec` and `crowdsec-firewall-bouncer`. On existing hosts, add them to `logs.units` in config.toml by hand; `install --adopt` keeps that file.
+
 ## [v1.25.1] - 2026-11-10
 
 ### Fixed

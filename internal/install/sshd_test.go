@@ -19,6 +19,9 @@ func TestParseSSHPorts(t *testing.T) {
 		{"listen address ipv6 with port", "ListenAddress [::]:2201\n", []int{2201}},
 		{"bare ipv6 listen address keeps default", "ListenAddress ::\n", []int{22}},
 		{"duplicates collapse", "Port 2222\nListenAddress 0.0.0.0:2222\n", []int{2222}},
+		{"trailing comment", "Port 2222 # moved\n", []int{2222}},
+		{"commented port ignored", "#Port 2200\nPort 2222\n", []int{2222}},
+		{"listen address with rdomain", "ListenAddress 0.0.0.0:2200 rdomain mgmt\n", []int{2200}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

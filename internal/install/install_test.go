@@ -92,9 +92,17 @@ func TestParseFingerprintTakesPrimaryKey(t *testing.T) {
 	}
 }
 
+func TestParseFingerprintRefusesExtraKeys(t *testing.T) {
+	colons := "pub:-:4096:1:A:1:::\nfpr:::::::::AAAA000000000000000000000000000000000000:\n" +
+		"pub:-:4096:1:B:1:::\nfpr:::::::::BBBB000000000000000000000000000000000000:\n"
+	if _, err := parseFingerprint([]byte(colons)); err == nil || !strings.Contains(err.Error(), "2 primary keys") {
+		t.Fatalf("a download with a second key must be refused, got %v", err)
+	}
+}
+
 func TestInstallRepoRefusesUnconfirmedKey(t *testing.T) {
 	x := &fakeExec{answers: map[string]string{
-		"show-only": "fpr:::::::::AAAA000000000000000000000000000000000000:\n",
+		"show-only": "pub:-:4096:1:X:1:::\nfpr:::::::::AAAA000000000000000000000000000000000000:\n",
 	}}
 	err := InstallRepo(context.Background(), x, PostgresRepo("noble"), []byte("key"),
 		"BBBB000000000000000000000000000000000000")

@@ -148,3 +148,24 @@ func TestScalarPort(t *testing.T) {
 		})
 	}
 }
+
+func TestParseNftPortsNamedSet(t *testing.T) {
+	data := []byte(`{"nftables":[
+		{"set":{"family":"inet","table":"mailadmin","name":"allowed_tcp","elem":[25,587,{"range":[8000,8010]}]}},
+		{"set":{"family":"inet","table":"other","name":"allowed_tcp","elem":[9999]}},
+		{"rule":{"family":"inet","table":"mailadmin","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":22}},{"accept":null}]}},
+		{"rule":{"family":"inet","table":"mailadmin","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":"@allowed_tcp"}},{"accept":null}]}}]}`)
+	got, err := parseNftPorts(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []FirewallPort{{"tcp", 22}, {"tcp", 25}, {"tcp", 587}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

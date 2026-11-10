@@ -209,6 +209,18 @@ func ApplyRspamd(ctx context.Context, x Exec, controllerPW string, selectors [][
 	return nil
 }
 
+// SyncRspamdSelectors rewrites the DKIM selector map rspamd signs from and
+// reloads rspamd, so a new domain or a changed selector is signed at once.
+func SyncRspamdSelectors(ctx context.Context, x Exec, selectors [][2]string) error {
+	if err := writeAtomicOwned(RspamdSelectorMap, []byte(RspamdSelectorMapContent(selectors)), 0o640, "root", "_rspamd"); err != nil {
+		return err
+	}
+	if _, err := x.Run(ctx, nil, "systemctl", "try-reload-or-restart", "rspamd"); err != nil {
+		return fmt.Errorf("reload rspamd: %w", err)
+	}
+	return nil
+}
+
 // ApplyCaddy writes the main Caddyfile and validates it. tlsInternal selects
 // Caddy's local CA for the mail host instead of public ACME.
 func ApplyCaddy(ctx context.Context, x Exec, hostname string, tlsInternal bool) error {
@@ -350,7 +362,9 @@ const PostfixPgSocket = "/var/spool/postfix/var/run/postgresql"
 // ensurePostfixPgSocket bind-mounts the PostgreSQL socket directory into the
 // postfix chroot. The lookup tables use unix:/var/run/postgresql, which is only
 // reachable from inside the chroot through this mount. The mount is recorded in
-// fstab with nofail, so a missing source never blocks boot.
+// fstab with nofail, so a missing source never blocks boot. /run/postgresql is
+// created by systemd-tmpfiles at boot, after local file systems are mounted, so
+// the mount waits for it and must be in place before Postfix starts.
 func ensurePostfixPgSocket(ctx context.Context, x Exec) error {
 	if err := os.MkdirAll(PostfixPgSocket, 0o755); err != nil { // #nosec G301 -- chroot mount point
 		return fmt.Errorf("mkdir %s: %w", PostfixPgSocket, err)
@@ -360,7 +374,38 @@ func ensurePostfixPgSocket(ctx context.Context, x Exec) error {
 			return fmt.Errorf("bind mount postgres socket into postfix chroot: %w", err)
 		}
 	}
-	return ensureLine("/etc/fstab", "/var/run/postgresql "+PostfixPgSocket+" none bind,nofail 0 0", false)
+	return setFstabEntry("/etc/fstab", PostfixPgSocket, PostfixPgFstabLine)
+}
+
+// PostfixPgFstabLine is the fstab entry for the socket bind mount.
+const PostfixPgFstabLine = "/var/run/postgresql " + PostfixPgSocket + " none " +
+	"bind,nofail,x-systemd.requires=systemd-tmpfiles-setup.service," +
+	"x-systemd.before=postfix.service,x-systemd.before=postfix@-.service 0 0"
+
+// setFstabEntry makes line the only fstab entry for mountpoint. An entry an
+// earlier release wrote with other options is replaced, not duplicated.
+func setFstabEntry(path, mountpoint, line string) error {
+	data, err := os.ReadFile(path) // #nosec G304 -- /etc/fstab
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	var out []string
+	for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if f := strings.Fields(l); len(f) >= 2 && !strings.HasPrefix(f[0], "#") && f[1] == mountpoint {
+			continue
+		}
+		out = append(out, l)
+	}
+	out = append(out, line)
+	next := strings.Join(out, "\n") + "\n"
+	if next == string(data) {
+		return nil
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	return writeAtomic(path, []byte(next), fi.Mode().Perm())
 }
 
 // ApplyAutoconfig writes the client-configuration documents into the web roots
