@@ -94,7 +94,7 @@ url = ""
 enabled = false
 domain = "webmail.example.com"
 url = "https://github.com/MalteKiefer/mailadmin/releases/download/v1.30.1/alps-linux-amd64"
-sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+sha256 = "3a457a88e2ac1397a419a6d7234f510a91acc22d5f9a7fbe12850b2d2d5902d6"
 # Local address alps listens on. Caddy proxies the domain to it.
 listen = "127.0.0.1:8081"
 
