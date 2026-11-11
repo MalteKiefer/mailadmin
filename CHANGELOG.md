@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.34.1] - 2026-11-11
 
 ### Changed
 - Table colours use a Nord-based palette (256-colour codes). Status colours: green ok, yellow drift, red missing or failed, cyan info. The header is bright and bold.
