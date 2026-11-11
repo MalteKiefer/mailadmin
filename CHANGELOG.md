@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.32.1] - 2026-11-11
 
 ### Changed
 - `mailadmin update` adds the keys a new release introduced to config.toml. It saves the old file as `config.toml.before-<tag>` first. Existing values, comments and `[secrets]` stay as they are. Keys added are shown in a table. YAML and JSON configs still get the review hint only.
