@@ -70,7 +70,7 @@ func parseStatement(line string) (Statement, bool) {
 	if !reStatement.MatchString(t) {
 		return Statement{}, false
 	}
-	fn := t[:strings.Index(t, "(")]
+	fn, _, _ := strings.Cut(t, "(")
 	var q []string
 	for _, m := range reQuoted.FindAllStringSubmatch(t, -1) {
 		q = append(q, m[1])

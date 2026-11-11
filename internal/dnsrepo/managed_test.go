@@ -46,7 +46,7 @@ func TestMailScopeClassification(t *testing.T) {
 
 func TestSetManagedReplacesMailKeepsWeb(t *testing.T) {
 	lines := []string{`MX("@", 10, "mail.kiefer-networks.de.")`, `TXT("@", "v=spf1 mx -all")`}
-	out, removed, err := SetManaged(zone, "pinlo.me", lines, func(s Statement) bool { return MailScope(s) })
+	out, removed, err := SetManaged(zone, "pinlo.me", lines, MailScope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSetManagedReplacesMailKeepsWeb(t *testing.T) {
 		t.Fatalf("block missing:\n%s", out)
 	}
 	// a second run with the same lines changes nothing
-	again, _, err := SetManaged(out, "pinlo.me", lines, func(s Statement) bool { return MailScope(s) })
+	again, _, err := SetManaged(out, "pinlo.me", lines, MailScope)
 	if err != nil || again != out {
 		t.Fatalf("second run changed the file: %v\n%s", err, again)
 	}
