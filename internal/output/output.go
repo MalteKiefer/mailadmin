@@ -12,7 +12,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/jedib0t/go-pretty/v6/list"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -189,17 +188,21 @@ func (r *Renderer) TypeTable(t Table, typeCol int) error {
 func (r *Renderer) writeTable(t Table, paint func(cells []string) text.Colors) error {
 	tw := table.NewWriter()
 	tw.SetOutputMirror(r.out)
+	// One layout for every table: no outer border, bold header, a rule under the
+	// header, two spaces between columns.
 	st := table.Style{
 		Name: "mailadmin",
 		Box: table.BoxStyle{
-			PaddingLeft:   "",
-			PaddingRight:  "  ",
-			PageSeparator: "\n",
+			PaddingLeft:      "",
+			PaddingRight:     "",
+			MiddleHorizontal: "─",
+			MiddleSeparator:  "  ",
+			MiddleVertical:   "  ",
 		},
 		Options: table.Options{
 			DrawBorder:      false,
-			SeparateColumns: false,
-			SeparateHeader:  false,
+			SeparateColumns: true,
+			SeparateHeader:  len(t.Columns) > 0,
 			SeparateRows:    false,
 			SeparateFooter:  false,
 		},
@@ -304,13 +307,11 @@ func (r *Renderer) renderPlainTable(t Table) error {
 // renderKV renders a struct/map as aligned "key  value" lines.
 func (r *Renderer) renderKV(v any) error {
 	fields := kvFields(v)
-	tw := tabwriter.NewWriter(r.out, 0, 2, 2, ' ', 0)
+	t := Table{Columns: []string{"FIELD", "VALUE"}}
 	for _, f := range fields {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\n", f.key, sanitizeCell(f.val)); err != nil {
-			return err
-		}
+		t.Rows = append(t.Rows, []string{f.key, f.val})
 	}
-	return tw.Flush()
+	return r.writeTable(t, nil)
 }
 
 type kvField struct {
