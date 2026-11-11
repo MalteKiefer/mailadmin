@@ -30,3 +30,12 @@ func TestAutoColorNonTerminal(t *testing.T) {
 type nopWriter struct{}
 
 func (*nopWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestStatusIcon(t *testing.T) {
+	cases := map[string]string{"ok": "✔", "drift": "⚠", "missing": "✖", "info": "ℹ", "weird": ""}
+	for in, want := range cases {
+		if got := statusIcon(in); got != want {
+			t.Errorf("statusIcon(%q)=%q want %q", in, got, want)
+		}
+	}
+}
