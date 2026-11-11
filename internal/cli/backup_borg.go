@@ -50,11 +50,11 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 			if err := app.backupCreate(c, ""); err != nil {
 				return err
 			}
-			source := cfg.Backup.Dir
-			if b.Cfg.Source != "" {
-				source = b.Cfg.Source
+			sources := []string(b.Cfg.Source)
+			if len(sources) == 0 {
+				sources = []string{cfg.Backup.Dir}
 			}
-			name, err := b.Run(ctx(c), source, borgCheckStamp, time.Now())
+			name, err := b.Run(ctx(c), sources, borgCheckStamp, time.Now())
 			r, rerr := app.Renderer()
 			if rerr != nil {
 				return rerr

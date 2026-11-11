@@ -73,8 +73,8 @@ known_hosts = "/root/.ssh/known_hosts_borg"
 encryption = "repokey-blake2"
 # borg --compression value.
 compression = "zstd,6"
-# Directory whose contents are archived. Empty: backup.dir.
-source = ""
+# Paths archived by one run. Empty: backup.dir. Example: ["/var/lib/mailadmin/backups", "/var/vmail"].
+source = []
 # systemd OnCalendar expression of the timer.
 schedule = "*-*-* 03:30:00"
 # Remove archives outside the retention below after each run.
@@ -143,6 +143,8 @@ SERVERCOW_USERNAME = ""
 SERVERCOW_PASSWORD = ""
 SERVFAIL_API_KEY = ""
 SERVFAIL_SERVER = ""
+# Passphrase of the borg repository (backup borg). Needed for every borg run. Keep a copy.
+BORG_PASSPHRASE = ""
 # rspamd controller password. install generates it; set your own to change it.
 RSPAMD_CONTROLLER_PW = ""
 # Bearer token for [notify] url.

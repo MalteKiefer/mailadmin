@@ -87,14 +87,18 @@ func ArchiveName(t time.Time) string {
 	return BorgArchivePrefix + t.UTC().Format("20060102T150405Z")
 }
 
-// Create archives source as one archive named for now and returns its name.
-func (b Borg) Create(ctx context.Context, source string, now time.Time) (string, error) {
+// Create archives sources as one archive named for now and returns its name.
+func (b Borg) Create(ctx context.Context, sources []string, now time.Time) (string, error) {
+	if len(sources) == 0 {
+		return "", errors.New("backup: no borg source paths")
+	}
 	r, err := b.runner()
 	if err != nil {
 		return "", err
 	}
 	name := ArchiveName(now)
-	argv := []string{BorgBin, "create", "--stats", "--compression", b.Cfg.Compression, b.Cfg.Repo + "::" + name, source}
+	argv := []string{BorgBin, "create", "--stats", "--compression", b.Cfg.Compression, b.Cfg.Repo + "::" + name}
+	argv = append(argv, sources...)
 	if _, err := r.Run(ctx, nil, argv...); err != nil {
 		return "", err
 	}
@@ -181,11 +185,11 @@ func MarkChecked(stamp string, now time.Time) error {
 // Run archives source, then prunes, compacts and checks as the config says. It returns
 // the archive name. A failed step stops the run; prune, compact and check run only
 // after a successful create.
-func (b Borg) Run(ctx context.Context, source, stamp string, now time.Time) (string, error) {
-	if source == "" {
-		source = b.Cfg.Source
+func (b Borg) Run(ctx context.Context, sources []string, stamp string, now time.Time) (string, error) {
+	if len(sources) == 0 {
+		sources = []string(b.Cfg.Source)
 	}
-	name, err := b.Create(ctx, source, now)
+	name, err := b.Create(ctx, sources, now)
 	if err != nil {
 		return "", fmt.Errorf("borg create: %w", err)
 	}
