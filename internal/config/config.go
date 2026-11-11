@@ -110,6 +110,11 @@ type Server struct {
 // DNS holds resolver config for verification.
 type DNS struct {
 	Resolver string `toml:"resolver"`
+	// ConfigRepo is a local checkout of a DNSControl repository (dnsconfig.js).
+	// When set, mailadmin does not write DNS records itself: publish, takeover,
+	// restore, migrate and zone create are refused, and the repository is the source
+	// of truth. Empty: mailadmin manages the records directly.
+	ConfigRepo string `toml:"config_repo"`
 }
 
 // Backup holds paths for DNS snapshots and full disaster-recovery bundles.
@@ -395,6 +400,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: mail.default_selector: %w", ErrInvalidConfig, err)
 	}
 
+	if c.DNS.ConfigRepo != "" && !filepath.IsAbs(c.DNS.ConfigRepo) {
+		return fmt.Errorf("%w: dns.config_repo must be an absolute path", ErrInvalidConfig)
+	}
 	if c.Mail.PrimaryDomain != "" {
 		if _, err := valid.Domain(c.Mail.PrimaryDomain); err != nil {
 			return fmt.Errorf("%w: mail.primary_domain: %w", ErrInvalidConfig, err)

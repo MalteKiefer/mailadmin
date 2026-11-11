@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- `[dns] config_repo`: absolute path to a local DNSControl repository (`dnsconfig.js`). When set, mailadmin refuses the commands that write DNS records (`dns publish`, `dns publish --dane`, `dns takeover`, `dns restore`, `dns migrate`, `dns zone create`). The repository is the source of truth.
+
 ## [v1.34.1] - 2026-11-11
 
 ### Changed
