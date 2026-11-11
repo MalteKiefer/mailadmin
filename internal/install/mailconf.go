@@ -533,6 +533,17 @@ crt=$(find ` + CaddyCertStore + ` -type f -name "$host.crt" -printf '%T@ %p\n' 2
 key=$(dirname "$crt")/$host.key
 [ -f "$key" ] || { echo "no key for $host next to its certificate" >&2; exit 3; }
 
+live=` + TLSFullchain + `
+domainfile=/var/lib/mailadmin/.cert-domain
+prev=$(cat "$domainfile" 2>/dev/null || true)
+# A renewal is installed only when the live certificate expires within seven days, or
+# when the host's domain was added or changed. Otherwise the live pair stays as it is.
+reason=none
+if [ ! -e "$live" ]; then reason=first
+elif [ "$prev" != "$domain" ]; then reason=domain
+elif ! openssl x509 -checkend 604800 -noout -in "$live" >/dev/null 2>&1; then reason=expiring
+fi
+
 if [ -e "$pending/since" ]; then
 	# Phase two: install the pair that the TLSA record already pins, once the TTL has passed.
 	since=$(cat "$pending/since")
@@ -543,8 +554,30 @@ case "$since" in ''|*[!0-9]*) since=$(date +%s); date +%s > "$pending/since" ;; 
 	else
 		install_pair "$pending/fullchain.pem" "$pending/privkey.pem"
 		rm -rf "$pending"
+		echo "$domain" > "$domainfile"
 	fi
-elif [ -e ` + TLSFullchain + ` ] && ! cmp -s "$crt" ` + TLSFullchain + ` 2>/dev/null; then
+elif [ "$reason" = first ]; then
+	rm -rf "$pending"
+	install_pair "$crt" "$key"
+	echo "$domain" > "$domainfile"
+elif [ "$reason" = domain ]; then
+	# The domain changed: publish the TLSA record for it from the live pair.
+	if out=$(MAILADMIN_MAIL_TLS_CERT="$live" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
+		echo "$domain" > "$domainfile"
+	else
+		case "$out" in
+		*"manage its zone manually"*)
+			echo "warning: $domain has no automated DNS provider, TLSA record must be published by hand" >&2
+			echo "$domain" > "$domainfile"
+			;;
+		*)
+			printf '%s\n' "$out" >&2
+			echo "TLSA publish failed for $domain, keeping the current certificate" >&2
+			exit 1
+			;;
+		esac
+	fi
+elif [ "$reason" = expiring ] && ! cmp -s "$crt" "$live" 2>/dev/null; then
 	# Phase one: stage the new pair and pin its TLSA record. The old pair stays in use.
 	rm -rf "$pending"
 	install -d -m 0750 -o root -g root "$pending"
@@ -562,6 +595,7 @@ elif [ -e ` + TLSFullchain + ` ] && ! cmp -s "$crt" ` + TLSFullchain + ` 2>/dev/
 		echo "warning: $domain has no automated DNS provider, installing the renewed certificate without a TLSA update" >&2
 		rm -rf "$pending"
 		install_pair "$crt" "$key"
+		echo "$domain" > "$domainfile"
 		;;
 	*)
 		printf '%s\n' "$out" >&2
@@ -570,10 +604,6 @@ elif [ -e ` + TLSFullchain + ` ] && ! cmp -s "$crt" ` + TLSFullchain + ` 2>/dev/
 		exit 1
 		;;
 	esac
-else
-	# First install, or the certificate is unchanged.
-	rm -rf "$pending"
-	install_pair "$crt" "$key"
 fi
 
 if [ "$changed" = 1 ] || [ -e "$marker" ]; then
