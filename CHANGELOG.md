@@ -24,6 +24,13 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Changed
+- Interactive questions and confirmations are yellow.
+- Tables colour per column, not per row: in `dns show` and record listings the type cell takes the record type colour and the name cell is cyan. In status tables only the status cell is coloured.
+- Error output highlights DNSControl statements by part: function name, quoted strings and numbers.
+
 ## [v1.37.0] - 2026-11-11
 
 ### Changed

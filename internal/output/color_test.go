@@ -1,6 +1,9 @@
 package output
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStatusColor(t *testing.T) {
 	cases := map[string]string{
@@ -37,5 +40,28 @@ func TestStatusIcon(t *testing.T) {
 		if got := statusIcon(in); got != want {
 			t.Errorf("statusIcon(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func TestHighlightCodeKeepsText(t *testing.T) {
+	line := `    MX("@", 10, "mxext1.mailbox.org."),`
+	plain := ansiRE.ReplaceAllString(highlightCode(line), "")
+	if plain != line {
+		t.Fatalf("highlight changed the text:\n got %q\nwant %q", plain, line)
+	}
+	if !strings.Contains(highlightCode(line), "\x1b[") {
+		t.Fatal("expected colour codes on a DNSControl statement")
+	}
+	if highlightCode("plain text") != "plain text" {
+		t.Fatal("non-statement lines must stay unchanged")
+	}
+}
+
+func TestPromptTextYellow(t *testing.T) {
+	if PromptText("Proceed? [y/N]: ", false) != "Proceed? [y/N]: " {
+		t.Fatal("no colour when color is off")
+	}
+	if !strings.Contains(PromptText("Proceed?", true), "\x1b[") {
+		t.Fatal("prompt must be coloured when color is on")
 	}
 }
