@@ -39,7 +39,7 @@ func TestMergeNewKeysAddsMissingAndKeepsOperatorValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	want := []string{"backup.borg.enabled", "backup.borg.retention.daily", "mail.dns_ttl", "timeouts.command"}
+	want := []string{"backup.borg.enabled", "backup.borg.retention.daily", "mail.dns_ttl", "secrets.DESEC_TOKEN", "timeouts.command"}
 	if strings.Join(res.Added, ",") != strings.Join(want, ",") {
 		t.Fatalf("added = %v, want %v", res.Added, want)
 	}
@@ -50,8 +50,8 @@ func TestMergeNewKeysAddsMissingAndKeepsOperatorValues(t *testing.T) {
 			t.Fatalf("operator content %q lost:\n%s", must, s)
 		}
 	}
-	if strings.Contains(s, "DESEC_TOKEN") {
-		t.Fatalf("[secrets] defaults must not be added:\n%s", s)
+	if !strings.Contains(s, `DESEC_TOKEN = ""`) || !strings.Contains(s, `RSPAMD_CONTROLLER_PW = "pw"`) {
+		t.Fatalf("secret placeholder missing or existing secret changed:\n%s", s)
 	}
 	var check map[string]any
 	if _, err := toml.Decode(s, &check); err != nil {
@@ -134,5 +134,23 @@ func TestMergeNewKeysFormatsEveryRun(t *testing.T) {
 	final, _ := os.ReadFile(path)
 	if string(again) != string(final) {
 		t.Fatalf("second run changed the file:\n%s", final)
+	}
+}
+
+// The sync adds a missing secret placeholder (empty) and never overwrites a value.
+func TestMergeAddsMissingSecretPlaceholder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	host := "[mail]\nhostname = \"mx.example.com\"\n\n[secrets]\nRSPAMD_CONTROLLER_PW = \"keep-me\"\n"
+	defs := mergeDefaults + "BORG_PASSPHRASE = \"\"\n"
+	if err := os.WriteFile(path, []byte(host), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MergeNewKeys(path, []byte(defs), "v1.40.0"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	s := string(got)
+	if !strings.Contains(s, "BORG_PASSPHRASE = \"\"") || !strings.Contains(s, "RSPAMD_CONTROLLER_PW = \"keep-me\"") {
+		t.Fatalf("secrets not merged as intended:\n%s", s)
 	}
 }

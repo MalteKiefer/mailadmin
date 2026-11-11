@@ -39,8 +39,9 @@ type BorgBackup struct {
 	Encryption string `toml:"encryption"`
 	// Compression is a borg --compression value, e.g. zstd,6 or lz4.
 	Compression string `toml:"compression"`
-	// Source is the directory whose contents are archived. Empty: backup.dir.
-	Source string `toml:"source"`
+	// Source lists the paths archived by one run, e.g. the bundle directory and the
+	// mail store. Empty: backup.dir. A single string is accepted too.
+	Source BorgSources `toml:"source"`
 	// Schedule is the systemd OnCalendar expression of the timer.
 	Schedule string `toml:"schedule"`
 	// Prune removes archives outside Retention after each run.
@@ -114,12 +115,14 @@ func (b BorgBackup) validate(backupDir string) error {
 	if b.Compression == "" {
 		return fmt.Errorf("%w: backup.borg.compression is required (e.g. zstd,6)", ErrInvalidConfig)
 	}
-	src := b.Source
-	if src == "" {
-		src = backupDir
+	srcs := []string(b.Source)
+	if len(srcs) == 0 {
+		srcs = []string{backupDir}
 	}
-	if !filepath.IsAbs(src) {
-		return fmt.Errorf("%w: backup.borg.source must be an absolute path (or set backup.dir)", ErrInvalidConfig)
+	for _, src := range srcs {
+		if !filepath.IsAbs(src) {
+			return fmt.Errorf("%w: backup.borg.source %q must be an absolute path", ErrInvalidConfig, src)
+		}
 	}
 	if b.Schedule == "" {
 		return fmt.Errorf("%w: backup.borg.schedule is required", ErrInvalidConfig)
@@ -135,4 +138,33 @@ func (b BorgBackup) validate(backupDir string) error {
 		return fmt.Errorf("%w: backup.borg.retention must keep at least one archive", ErrInvalidConfig)
 	}
 	return nil
+}
+
+// BorgSources is the list of paths a borg run archives. It decodes from a TOML array
+// or from a single string, so older configs with source = "" keep working.
+type BorgSources []string
+
+// UnmarshalTOML accepts a string (empty means none) or an array of strings.
+func (s *BorgSources) UnmarshalTOML(data any) error {
+	switch v := data.(type) {
+	case string:
+		if v == "" {
+			*s = nil
+			return nil
+		}
+		*s = BorgSources{v}
+		return nil
+	case []any:
+		out := make(BorgSources, 0, len(v))
+		for _, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("%w: backup.borg.source entries must be strings", ErrInvalidConfig)
+			}
+			out = append(out, str)
+		}
+		*s = out
+		return nil
+	}
+	return fmt.Errorf("%w: backup.borg.source must be a string or a list of strings", ErrInvalidConfig)
 }
