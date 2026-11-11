@@ -5,6 +5,7 @@ go 1.26.11
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/miekg/dns v1.1.72
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
@@ -18,6 +19,8 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
