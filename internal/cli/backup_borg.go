@@ -23,7 +23,7 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 		Short: "Create the borg repository with the configured encryption",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			b, _, err := app.borgFor(c)
+			b, _, err := app.borgFor()
 			if err != nil {
 				return err
 			}
@@ -42,7 +42,7 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 		Short: "Write a fresh backup bundle, archive it, then prune, compact and check",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			b, cfg, err := app.borgFor(c)
+			b, cfg, err := app.borgFor()
 			if err != nil {
 				return err
 			}
@@ -69,7 +69,7 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 		Short: "List the mailadmin archives in the repository",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			b, _, err := app.borgFor(c)
+			b, _, err := app.borgFor()
 			if err != nil {
 				return err
 			}
@@ -89,7 +89,7 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 		Short: "Verify the repository now",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			b, _, err := app.borgFor(c)
+			b, _, err := app.borgFor()
 			if err != nil {
 				return err
 			}
@@ -103,7 +103,7 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 }
 
 // borgFor builds the borg runner from the config. It refuses when [backup.borg] is off.
-func (a *App) borgFor(cmd *cobra.Command) (backup.Borg, *config.Config, error) {
+func (a *App) borgFor() (backup.Borg, *config.Config, error) {
 	cfg, secrets, err := a.Config()
 	if err != nil {
 		return backup.Borg{}, nil, err
