@@ -57,18 +57,6 @@ func TestStatusTableAlignment(t *testing.T) {
 	}
 }
 
-// firstColStart returns the offset where the second whitespace-separated column
-// begins (i.e. end of first field + following spaces).
-func firstColStart(s string) int {
-	i := strings.IndexByte(s, ' ')
-	if i < 0 {
-		return 0
-	}
-	for i < len(s) && s[i] == ' ' {
-		i++
-	}
-	return i
-}
 
 // typeColStart returns the offset of the TYPE column value in a rendered line.
 func typeColStart(s string) int {
