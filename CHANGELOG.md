@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- `borgbackup` and `rclone` are installed with the mail stack packages. borg writes to a local or ssh repository; rclone copies that repository to B2 or another remote.
+
 ## [v1.38.1] - 2026-11-11
 
 ### Changed

@@ -75,13 +75,13 @@ func TestDenyServiceStartsOwnsOnlyMarkedFiles(t *testing.T) {
 	}
 }
 
-// dns sync needs gh and git on the host.
+// dns sync needs gh and git; backup.borg needs borgbackup; rclone copies borg repos to B2.
 func TestDistroPackagesIncludeGitAndGH(t *testing.T) {
 	have := map[string]bool{}
 	for _, p := range DistroPackages() {
 		have[p] = true
 	}
-	for _, want := range []string{"git", "gh"} {
+	for _, want := range []string{"git", "gh", "borgbackup", "rclone"} {
 		if !have[want] {
 			t.Fatalf("%s missing from DistroPackages", want)
 		}
