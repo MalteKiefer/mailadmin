@@ -27,6 +27,7 @@ providers need.
 ## [Unreleased]
 
 ### Changed
+- Table colours use a Nord-based palette (256-colour codes). Status colours: green ok, yellow drift, red missing or failed, cyan info. The header is bright and bold.
 - All tables use one layout: bold header, a rule under the header, no outer border, two spaces between columns. Key-value output uses the same layout.
 
 ## [v1.34.0] - 2026-11-11
