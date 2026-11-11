@@ -60,7 +60,7 @@ func RenderConfig(a Answers, rspamdPW string) []byte {
 	return config.RenderTemplate(config.Template{
 		Header: "Managed by mailadmin install.", Service: PgService, ServiceFile: PgServiceFile,
 		Hostname: a.Hostname, Selector: a.Selector, TLSCert: TLSFullchain,
-		IPv4: a.IPv4, IPv6: a.IPv6, RspamdPW: rspamdPW,
+		IPv4: a.IPv4, IPv6: a.IPv6, RspamdPW: rspamdPW, Domain: a.Domain,
 	})
 }
 
@@ -290,4 +290,37 @@ func EnableService(ctx context.Context, x Exec, unit string) error {
 		return fmt.Errorf("enable %s: %w", unit, err)
 	}
 	return nil
+}
+
+// SetMailKey adds key = value to the [mail] table of the TOML config at path when
+// the key is absent. Every other line of the file stays as it is.
+func SetMailKey(path, key, value string) error {
+	data, err := os.ReadFile(path) // #nosec G304 -- config in the fixed config dir
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	at := -1
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if t == "[mail]" {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return fmt.Errorf("%s has no [mail] table", path)
+	}
+	for _, l := range lines[at+1:] {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "[") {
+			break
+		}
+		if strings.HasPrefix(t, key+" ") || strings.HasPrefix(t, key+"=") {
+			return nil
+		}
+	}
+	insert := fmt.Sprintf("%s = %q", key, value)
+	lines = append(lines[:at+1], append([]string{insert}, lines[at+1:]...)...)
+	return config.WriteSecretFile(path, []byte(strings.Join(lines, "\n")))
 }

@@ -24,6 +24,16 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- `mailadmin upgrade`: backup, self-update, `install --adopt` from config, config check and doctor, in that order. A summary table shows each step. A failed step stops the steps after it.
+- `[mail] primary_domain`: the main mail domain. Written by install, stored by adopt when it was asked for.
+
+### Changed
+- `install --adopt` reads hostname, IPv4/IPv6, the primary domain and the repository fingerprints from config.toml. It asks only for values the config lacks. Without a terminal, a missing value is a usage error.
+- An adopt run no longer asks for the CrowdSec enrollment key.
+
 ## [v1.31.0] - 2026-11-11
 
 ### Added

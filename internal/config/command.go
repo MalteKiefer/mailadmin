@@ -184,6 +184,7 @@ type Template struct {
 	TLSCert     string // optional; empty leaves the key out
 	IPv4, IPv6  string
 	RspamdPW    string // generated rspamd controller password, stored under [secrets]
+	Domain      string // primary mail domain, written as mail.primary_domain
 }
 
 // DefaultLogUnits are the units doctor, service and log may touch.
@@ -196,6 +197,9 @@ func RenderTemplate(t Template) []byte {
 	fmt.Fprintf(&b, "# %s\n# Single source of truth for mailadmin. See the default file for every key.\n", t.Header)
 	fmt.Fprintf(&b, "[postgres]\nservice      = %q\nservice_file = %q\n\n", t.Service, t.ServiceFile)
 	fmt.Fprintf(&b, "[mail]\nhostname         = %q\ndkim_dir         = \"/var/lib/rspamd/dkim\"\ndefault_selector = %q\ntls_mode         = \"acme\"\n", t.Hostname, t.Selector)
+	if t.Domain != "" {
+		fmt.Fprintf(&b, "primary_domain   = %q\n", t.Domain)
+	}
 	if t.TLSCert != "" {
 		fmt.Fprintf(&b, "tls_cert         = %q\n", t.TLSCert)
 	}

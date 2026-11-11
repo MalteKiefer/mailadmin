@@ -103,6 +103,10 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return fmt.Errorf("host already has mail-stack state (%s): rerun with --adopt to keep it, or install on a fresh host",
 			strings.Join(conflicts, ", "))
 	}
+	if in.adopt {
+		// Values the existing config holds need no flag and no question.
+		applyAdoptDefaults(in, loadAdoptDefaults(installConfigDir))
+	}
 
 	ans, err := collectAnswers(app, in)
 	if err != nil {
@@ -112,8 +116,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 
-	// Optional: an empty answer skips the console enrollment.
-	if in.crowdsecEnrollKey == "" && app.interactive() && !app.flags.dryRun {
+	// Optional: an empty answer skips the console enrollment. Enrollment is a
+	// one-time step of a fresh install, so an adopt run never asks for it.
+	if in.crowdsecEnrollKey == "" && !in.adopt && app.interactive() && !app.flags.dryRun {
 		key, err := app.readLine("CrowdSec console enrollment key (empty to skip): ")
 		if err != nil {
 			return err
@@ -249,6 +254,12 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 
 	if err := installMailStack(app, c, in, ans, x, sr, out); err != nil {
 		return err
+	}
+	if in.adopt {
+		// Keep the domain for the next run, so it is not asked again.
+		if err := install.SetMailKey(filepath.Join(installConfigDir, "config.toml"), "primary_domain", ans.Domain); err != nil {
+			_, _ = fmt.Fprintf(out, "warning: primary_domain not stored in config: %v\n", err)
+		}
 	}
 	return nil
 }
