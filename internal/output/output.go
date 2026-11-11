@@ -14,6 +14,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/jedib0t/go-pretty/v6/list"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"golang.org/x/term"
 )
 
@@ -155,105 +158,100 @@ func (r *Renderer) Table(t Table) error {
 // (green=ok/match, yellow=drift, red=missing/stale, …). For json/plain it falls
 // back to the plain Table rendering so scripting output is unaffected.
 func (r *Renderer) StatusTable(t Table, statusCol int) error {
-	if r.format != FormatTable || !r.color || statusCol < 0 {
+	if r.format != FormatTable || statusCol < 0 {
 		return r.Table(t)
 	}
-	// Column widths are measured over the plain (uncoloured) text; colour is
-	// applied only after padding, so ANSI codes never affect alignment. This
-	// avoids tabwriter's brittle escape handling entirely for the coloured path.
-	widths := columnWidths(t)
-	if len(t.Columns) > 0 {
-		if _, err := fmt.Fprintln(r.out, colorize(padCells(sanitizeRow(t.Columns), widths), ansiBold)); err != nil {
-			return err
+	return r.writeTable(t, func(cells []string) text.Colors {
+		if statusCol >= len(cells) {
+			return nil
 		}
-	}
-	for _, row := range t.Rows {
-		cells := sanitizeRow(row)
-		code := ""
-		if statusCol < len(cells) {
-			code = statusColor(cells[statusCol])
-		}
-		if _, err := fmt.Fprintln(r.out, colorize(padCells(cells, widths), code)); err != nil {
-			return err
-		}
-	}
-	return nil
+		return ansiToText(statusColor(cells[statusCol]))
+	})
 }
 
 // TypeTable renders a DNS record table whose typeCol cell (the record type)
 // drives per-row colour, so the listing reads as colour-grouped bands. For
 // json/plain it falls back to the plain Table rendering.
 func (r *Renderer) TypeTable(t Table, typeCol int) error {
-	if r.format != FormatTable || !r.color || typeCol < 0 {
+	if r.format != FormatTable || typeCol < 0 {
 		return r.Table(t)
 	}
-	widths := columnWidths(t)
-	if len(t.Columns) > 0 {
-		if _, err := fmt.Fprintln(r.out, colorize(padCells(sanitizeRow(t.Columns), widths), ansiBold)); err != nil {
-			return err
+	return r.writeTable(t, func(cells []string) text.Colors {
+		if typeCol >= len(cells) {
+			return nil
 		}
+		return ansiToText(recordTypeColor(cells[typeCol]))
+	})
+}
+
+// writeTable renders t with go-pretty: aligned columns, bold header and per-row
+// colour from paint when colour is on. Without colour no escape codes are written.
+func (r *Renderer) writeTable(t Table, paint func(cells []string) text.Colors) error {
+	tw := table.NewWriter()
+	tw.SetOutputMirror(r.out)
+	st := table.Style{
+		Name: "mailadmin",
+		Box: table.BoxStyle{
+			PaddingLeft:   "",
+			PaddingRight:  "  ",
+			PageSeparator: "\n",
+		},
+		Options: table.Options{
+			DrawBorder:      false,
+			SeparateColumns: false,
+			SeparateHeader:  false,
+			SeparateRows:    false,
+			SeparateFooter:  false,
+		},
+	}
+	if r.color {
+		st.Color = table.ColorOptions{Header: text.Colors{text.Bold}}
+	}
+	tw.SetStyle(st)
+	if len(t.Columns) > 0 {
+		tw.AppendHeader(toRow(sanitizeRow(t.Columns)))
 	}
 	for _, row := range t.Rows {
-		cells := sanitizeRow(row)
-		code := ""
-		if typeCol < len(cells) {
-			code = recordTypeColor(cells[typeCol])
-		}
-		if _, err := fmt.Fprintln(r.out, colorize(padCells(cells, widths), code)); err != nil {
-			return err
-		}
+		tw.AppendRow(toRow(sanitizeRow(row)))
 	}
+	if r.color && paint != nil {
+		tw.SetRowPainter(func(row table.Row) text.Colors {
+			cells := make([]string, len(row))
+			for i, v := range row {
+				cells[i] = fmt.Sprint(v)
+			}
+			return paint(cells)
+		})
+	}
+	tw.Render()
 	return nil
 }
 
-// columnWidths returns the max plain-text width of each column across the header
-// and all rows.
-func columnWidths(t Table) []int {
-	n := len(t.Columns)
-	for _, row := range t.Rows {
-		if len(row) > n {
-			n = len(row)
-		}
-	}
-	w := make([]int, n)
-	measure := func(cells []string) {
-		for i, c := range cells {
-			if l := len([]rune(sanitizeCell(c))); l > w[i] {
-				w[i] = l
-			}
-		}
-	}
-	measure(t.Columns)
-	for _, row := range t.Rows {
-		measure(row)
-	}
-	return w
-}
-
-// padCells right-pads each cell to its column width and joins with two spaces.
-// The trailing column is not padded.
-func padCells(cells []string, widths []int) string {
-	var b strings.Builder
+func toRow(cells []string) table.Row {
+	row := make(table.Row, len(cells))
 	for i, c := range cells {
-		if i > 0 {
-			b.WriteString("  ")
-		}
-		b.WriteString(c)
-		if i < len(cells)-1 && i < len(widths) {
-			if pad := widths[i] - len([]rune(c)); pad > 0 {
-				b.WriteString(strings.Repeat(" ", pad))
-			}
-		}
+		row[i] = c
 	}
-	return b.String()
+	return row
 }
 
-// colorize wraps a fully-laid-out line in an SGR code (no-op when empty).
-func colorize(line, code string) string {
-	if code == "" {
-		return line
+// ansiToText maps the SGR codes used by statusColor and recordTypeColor to go-pretty colours.
+func ansiToText(code string) text.Colors {
+	switch code {
+	case ansiGreen:
+		return text.Colors{text.FgGreen}
+	case ansiYellow:
+		return text.Colors{text.FgYellow}
+	case ansiRed:
+		return text.Colors{text.FgRed}
+	case ansiCyan:
+		return text.Colors{text.FgCyan}
+	case ansiMagenta:
+		return text.Colors{text.FgMagenta}
+	case ansiBlue:
+		return text.Colors{text.FgBlue}
 	}
-	return code + line + ansiReset
+	return nil
 }
 
 // JSON renders an arbitrary value as JSON. Used for single-object results and
@@ -290,33 +288,7 @@ func (r *Renderer) Message(format string, args ...any) {
 
 // renderAlignedTable prints a header plus tab-aligned rows.
 func (r *Renderer) renderAlignedTable(t Table) error {
-	// The bold header would upset tabwriter's width counting, so when colour is
-	// on render the whole table through the manual layout (no per-row colour,
-	// just a bold header). Otherwise use tabwriter for plain aligned output.
-	if r.color && len(t.Columns) > 0 {
-		widths := columnWidths(t)
-		if _, err := fmt.Fprintln(r.out, colorize(padCells(sanitizeRow(t.Columns), widths), ansiBold)); err != nil {
-			return err
-		}
-		for _, row := range t.Rows {
-			if _, err := fmt.Fprintln(r.out, padCells(sanitizeRow(row), widths)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	tw := tabwriter.NewWriter(r.out, 0, 2, 2, ' ', 0)
-	if len(t.Columns) > 0 {
-		if _, err := fmt.Fprintln(tw, strings.Join(t.Columns, "\t")); err != nil {
-			return err
-		}
-	}
-	for _, row := range t.Rows {
-		if _, err := fmt.Fprintln(tw, strings.Join(sanitizeRow(row), "\t")); err != nil {
-			return err
-		}
-	}
-	return tw.Flush()
+	return r.writeTable(t, nil)
 }
 
 // renderPlainTable prints tab-separated rows with no header, for scripting.
@@ -446,4 +418,25 @@ func (r *Renderer) Heading(s string) {
 		s = ansiBold + s + ansiReset
 	}
 	_, _ = fmt.Fprintln(r.out, s)
+}
+
+// List renders items as a bulleted list (go-pretty). json and plain print one item
+// per line, so scripts get the same values.
+func (r *Renderer) List(items []string) error {
+	if r.format != FormatTable {
+		for _, it := range items {
+			if _, err := fmt.Fprintln(r.out, sanitizeCell(it)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	lw := list.NewWriter()
+	lw.SetOutputMirror(r.out)
+	lw.SetStyle(list.StyleBulletCircle)
+	for _, it := range items {
+		lw.AppendItem(sanitizeCell(it))
+	}
+	lw.Render()
+	return nil
 }
