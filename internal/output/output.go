@@ -8,15 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jedib0t/go-pretty/v6/list"
-	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/jedib0t/go-pretty/v6/text"
 	"io"
 	"os"
 	"reflect"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/jedib0t/go-pretty/v6/list"
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"golang.org/x/term"
 )
 
