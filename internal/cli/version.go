@@ -97,7 +97,11 @@ func newUpdateCmd(app *App) *cobra.Command {
 			}
 			if !selfupdate.IsNewer(Version, rel.Tag) {
 				_, err = fmt.Fprintf(out, "already up to date (%s)\n", Version)
-				return err
+				if err != nil {
+					return err
+				}
+				// The config still gets every key the running release knows.
+				return syncConfig(c, app, out, "v"+Version)
 			}
 			if _, err := fmt.Fprintf(out, "updating %s -> %s\n", Version, rel.Tag); err != nil {
 				return err
@@ -116,19 +120,7 @@ func newUpdateCmd(app *App) *cobra.Command {
 				return err
 			}
 			// Warnings only: the binary is already replaced at this point.
-			cfg, _, cerr := app.Config()
-			switch {
-			case errors.Is(cerr, config.ErrNoConfig),
-				errors.Is(cerr, fs.ErrNotExist) && app.flags.configPath == config.DefaultPath:
-				return nil // no config file yet: nothing to compare
-			case cerr != nil:
-				_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", cerr)
-				return nil
-			}
-			if err := configAutoMerge(ctx(c), app, out, cfg.Path, rel.Tag); err != nil {
-				_, _ = fmt.Fprintf(out, "warning: config merge skipped: %v\n", err)
-			}
-			return nil
+			return syncConfig(c, app, out, rel.Tag)
 		},
 	}
 }
@@ -184,6 +176,24 @@ func configUpdateHint(c context.Context, out io.Writer, host, tag string) error 
 	return err
 }
 
+// syncConfig brings the live config in line with the release tag: missing keys
+// are added, keys the release dropped are marked. Problems are warnings only.
+func syncConfig(c *cobra.Command, app *App, out io.Writer, tag string) error {
+	cfg, _, cerr := app.Config()
+	switch {
+	case errors.Is(cerr, config.ErrNoConfig),
+		errors.Is(cerr, fs.ErrNotExist) && app.flags.configPath == config.DefaultPath:
+		return nil // no config file yet: nothing to compare
+	case cerr != nil:
+		_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", cerr)
+		return nil
+	}
+	if err := configAutoMerge(ctx(c), app, out, cfg.Path, tag); err != nil {
+		_, _ = fmt.Fprintf(out, "warning: config merge skipped: %v\n", err)
+	}
+	return nil
+}
+
 // configAutoMerge adds the keys the new release introduced to the live config.
 // The config is copied to config.toml.before-<tag> first. Existing values, comments
 // and [secrets] stay as they are. YAML and JSON configs get the review hint only.
@@ -210,7 +220,7 @@ func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag strin
 	if err := os.WriteFile(before, cur, 0o600); err != nil { // #nosec G703 -- tag matches reReleaseTag
 		return fmt.Errorf("save %s: %w", before, err)
 	}
-	added, err := config.MergeNewKeys(host, def)
+	res, err := config.MergeNewKeys(host, def, tag)
 	if err != nil {
 		return err
 	}
@@ -218,16 +228,28 @@ func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag strin
 	if err != nil {
 		return err
 	}
-	if len(added) == 0 {
-		r.Message("config: no new keys in %s (backup: %s)", tag, before)
+	if len(res.Added) == 0 && len(res.Obsolete) == 0 {
+		r.Message("config: up to date with %s (backup: %s)", tag, before)
 		return nil
 	}
-	rows := make([][]string, 0, len(added))
-	for _, k := range added {
-		rows = append(rows, []string{k, "added"})
+	r.Message("config: %s, backup: %s", tag, before)
+	if len(res.Added) > 0 {
+		rows := make([][]string, 0, len(res.Added))
+		for _, k := range res.Added {
+			rows = append(rows, []string{k, "added"})
+		}
+		if err := r.StatusTable(output.Table{Columns: []string{"KEY", "STATUS"}, Rows: rows}, 1); err != nil {
+			return err
+		}
 	}
-	r.Message("config: %d new key(s) in %s, backup: %s", len(added), tag, before)
-	return r.StatusTable(output.Table{Columns: []string{"KEY", "STATUS"}, Rows: rows}, 1)
+	if len(res.Obsolete) > 0 {
+		rows := make([][]string, 0, len(res.Obsolete))
+		for _, k := range res.Obsolete {
+			rows = append(rows, []string{k, "obsolete"})
+		}
+		return r.StatusTable(output.Table{Columns: []string{"KEY", "STATUS"}, Rows: rows}, 1)
+	}
+	return nil
 }
 
 // reReleaseTag matches the release tags mailadmin publishes, e.g. v1.32.0.
