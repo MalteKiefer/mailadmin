@@ -8,12 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/pterm/pterm"
-	"golang.org/x/term"
 	"io"
 	"os"
 	"reflect"
 	"strings"
+
+	"github.com/pterm/pterm"
+	"golang.org/x/term"
 )
 
 // ANSI SGR codes used for status colouring. Applied only on a colour-capable
