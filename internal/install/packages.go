@@ -18,7 +18,7 @@ func DistroPackages() []string {
 		"dovecot-core", "dovecot-imapd", "dovecot-lmtpd", "dovecot-pgsql",
 		"dovecot-sieve", "dovecot-managesieved",
 		"rspamd",
-		"nftables", "iproute2", "openssl", "git", "gh",
+		"nftables", "iproute2", "openssl", "git", "gh", "borgbackup", "rclone",
 	}
 }
 
