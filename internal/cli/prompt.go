@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"golang.org/x/term"
+
+	"mailadmin/internal/output"
 )
 
 // ErrPasswordMismatch is returned when the two password entries differ.
@@ -74,7 +76,7 @@ func (a *App) interactive() bool {
 // Backspace edits. Off a terminal (scripts/tests) it falls back to a plain
 // buffered line read.
 func (a *App) readLine(prompt string) (string, error) {
-	_, _ = fmt.Fprint(a.stderr(), prompt)
+	_, _ = fmt.Fprint(a.stderr(), output.PromptText(prompt, output.AutoColor(a.stderr())))
 	f, ok := a.stdin().(*os.File)
 	if !ok || !term.IsTerminal(int(f.Fd())) {
 		sc := bufio.NewScanner(a.stdin())

@@ -161,11 +161,11 @@ func (r *Renderer) StatusTable(t Table, statusCol int) error {
 		return r.Table(t)
 	}
 	t = withStatusIcons(t, statusCol)
-	return r.writeTable(t, func(cells []string) string {
-		if statusCol >= len(cells) {
+	return r.writeCells(t, func(cells []string, col int) string {
+		if col != statusCol || col >= len(cells) {
 			return ""
 		}
-		return statusColor(cells[statusCol])
+		return statusColor(cells[col])
 	})
 }
 
@@ -209,11 +209,18 @@ func (r *Renderer) TypeTable(t Table, typeCol int) error {
 	if r.format != FormatTable || typeCol < 0 {
 		return r.Table(t)
 	}
-	return r.writeTable(t, func(cells []string) string {
-		if typeCol >= len(cells) {
-			return ""
+	// Per column: the type cell takes the record type colour, the name cell cyan,
+	// the content cell stays plain.
+	return r.writeCells(t, func(cells []string, col int) string {
+		switch col {
+		case typeCol:
+			if col < len(cells) {
+				return recordTypeColor(cells[col])
+			}
+		case typeCol + 1:
+			return ansiCyan
 		}
-		return recordTypeColor(cells[typeCol])
+		return ""
 	})
 }
 
@@ -222,7 +229,15 @@ func (r *Renderer) TypeTable(t Table, typeCol int) error {
 // the row; the escape codes wrap the cell text, so go-pretty still measures the
 // widths of the visible text only.
 func (r *Renderer) writeTable(t Table, paint func(cells []string) string) error {
-	return r.ptermTable(t, paint)
+	if paint == nil {
+		return r.ptermTable(t, nil)
+	}
+	return r.ptermTable(t, func(cells []string, _ int) string { return paint(cells) })
+}
+
+// writeCells renders t with the colour of each cell chosen by cell(row, column).
+func (r *Renderer) writeCells(t Table, cell func(cells []string, col int) string) error {
+	return r.ptermTable(t, cell)
 }
 
 // paintCells wraps every cell in code when colour is on and code is set.

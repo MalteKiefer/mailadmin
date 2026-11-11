@@ -3,6 +3,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -96,12 +97,18 @@ func (r *Renderer) Fail(format string, args ...any) {
 // timestamp, message. It is used by the process entry point.
 func PrintError(w io.Writer, color bool, err error) {
 	r := &Renderer{format: FormatTable, out: w, color: color}
-	r.Fail("error: %s", err.Error())
+	lines := strings.Split(err.Error(), "\n")
+	if color {
+		for i := 1; i < len(lines); i++ {
+			lines[i] = highlightCode(lines[i])
+		}
+	}
+	r.Fail("error: %s", strings.Join(lines, "\n"))
 }
 
 // ptermTable renders the table with pterm: bold header, rule under the header,
 // no outer border, two spaces between columns.
-func (r *Renderer) ptermTable(t Table, paint func(cells []string) string) error {
+func (r *Renderer) ptermTable(t Table, paint func(cells []string, col int) string) error {
 	var data pterm.TableData
 	if len(t.Columns) > 0 {
 		head := make([]string, len(t.Columns))
@@ -115,13 +122,13 @@ func (r *Renderer) ptermTable(t Table, paint func(cells []string) string) error 
 	}
 	for _, row := range t.Rows {
 		cells := sanitizeRow(row)
-		code := ""
-		if paint != nil {
-			code = paint(cells)
-		}
 		out := make([]string, len(cells))
 		for i, c := range cells {
 			out[i] = c
+			code := ""
+			if paint != nil {
+				code = paint(cells, i)
+			}
 			if col := ptermColor(code); r.color && col != nil {
 				out[i] = col.Sprint(c)
 			}
@@ -157,4 +164,30 @@ func (r *Renderer) ptermTable(t Table, paint func(cells []string) string) error 
 // NO_COLOR not set.
 func AutoColor(w io.Writer) bool {
 	return autoColor(FormatTable, w)
+}
+
+// PromptText colours an interactive question yellow when color is on.
+func PromptText(s string, color bool) string {
+	if !color {
+		return s
+	}
+	return ptYellow.Sprint(s)
+}
+
+var (
+	reCodeLine = regexp.MustCompile(`^(\s*)([A-Z]+)\((.*)\)(,?)$`)
+	reCodeStr  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	reCodeNum  = regexp.MustCompile(`\b\d+\b`)
+)
+
+// highlightCode colours a DNSControl-style statement by part: the function name,
+// the quoted strings and the numbers. Other lines are returned unchanged.
+func highlightCode(line string) string {
+	m := reCodeLine.FindStringSubmatch(line)
+	if m == nil {
+		return line
+	}
+	args := reCodeStr.ReplaceAllStringFunc(m[3], func(q string) string { return ptGreen.Sprint(q) })
+	args = reCodeNum.ReplaceAllStringFunc(args, func(n string) string { return ptYellow.Sprint(n) })
+	return m[1] + ptBlue.Sprint(m[2]) + "(" + args + ")" + m[4]
 }
