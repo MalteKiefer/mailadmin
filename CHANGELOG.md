@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.32.0] - 2026-11-11
 
 ### Added
 - `mailadmin upgrade`: backup, self-update, `install --adopt` from config, config check and doctor, in that order. A summary table shows each step. A failed step stops the steps after it.
