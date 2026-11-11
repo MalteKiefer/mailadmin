@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.31.0] - 2026-11-11
 
 ### Added
 - `[mail] dns_ttl` (default 3600): TTL of the published DNS records. Range 60 to 86400 seconds.
