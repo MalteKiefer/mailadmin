@@ -42,11 +42,14 @@ func MergeNewKeys(hostPath string, defaultText []byte, tag string) (MergeResult,
 	m := &merger{inserts: map[string][]string{}, marks: map[string][]string{}, tag: tag}
 	m.walk(nil, dm, hm)
 	m.findObsolete(nil, dm, hm)
-	out, err := m.apply(string(host))
+	merged, err := m.apply(string(host))
 	if err != nil {
 		return res, err
 	}
-	if len(m.added) == 0 && len(m.marked) == 0 {
+	// The layout is normalised on every run, so the file reads the same
+	// whether keys were added or not.
+	out := FormatTOML(merged)
+	if out == string(host) {
 		return res, nil
 	}
 	if _, err := toml.Decode(out, &map[string]any{}); err != nil {
