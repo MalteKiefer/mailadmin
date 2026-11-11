@@ -371,6 +371,9 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		}
 	}
 	// The hardening switches of config.toml [hardening] (all on by default).
+	if err := ApplyBorgTimerConfig(pctx, x, cfg); err != nil {
+		return fmt.Errorf("borg timer: %w", err)
+	}
 	if config.On(cfg.Hardening.System) {
 		if err := install.ApplySystemHardening(pctx, x); err != nil {
 			return fmt.Errorf("system hardening: %w", err)
