@@ -8,11 +8,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 
 	"mailadmin/internal/config"
+	"mailadmin/internal/output"
 	"mailadmin/internal/selfupdate"
 )
 
@@ -122,8 +124,8 @@ func newUpdateCmd(app *App) *cobra.Command {
 				_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", cerr)
 				return nil
 			}
-			if err := configUpdateHint(ctx(c), out, cfg.Path, rel.Tag); err != nil {
-				_, _ = fmt.Fprintf(out, "warning: config check skipped: %v\n", err)
+			if err := configAutoMerge(ctx(c), app, out, cfg.Path, rel.Tag); err != nil {
+				_, _ = fmt.Fprintf(out, "warning: config merge skipped: %v\n", err)
 			}
 			return nil
 		},
@@ -179,4 +181,47 @@ func configUpdateHint(c context.Context, out io.Writer, host, tag string) error 
 	_, err = fmt.Fprintf(out, "config: %d new key(s) in %s: %s\n  review: diff %s %s\n  add them to %s (secrets stay in [secrets])\n",
 		len(keys), tag, config.FormatKeys(keys), host, ref, host)
 	return err
+}
+
+// configAutoMerge adds the keys the new release introduced to the live config.
+// The config is copied to config.toml.before-<tag> first. Existing values, comments
+// and [secrets] stay as they are. YAML and JSON configs get the review hint only.
+func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag string) error {
+	if strings.ToLower(filepath.Ext(host)) != ".toml" {
+		return configUpdateHint(c, out, host, tag)
+	}
+	def, err := config.FetchDefaultFor(c, tag)
+	if err != nil {
+		return err
+	}
+	ref := filepath.Join(filepath.Dir(host), "config.default.toml")
+	if err := os.WriteFile(ref, def, 0o644); err != nil { // #nosec G306 -- reference copy, holds no secrets
+		return fmt.Errorf("write %s: %w", ref, err)
+	}
+	cur, err := os.ReadFile(host) // #nosec G304 -- operator config path
+	if err != nil {
+		return err
+	}
+	before := host + ".before-" + tag
+	if err := os.WriteFile(before, cur, 0o600); err != nil {
+		return fmt.Errorf("save %s: %w", before, err)
+	}
+	added, err := config.MergeNewKeys(host, def)
+	if err != nil {
+		return err
+	}
+	r, err := app.Renderer()
+	if err != nil {
+		return err
+	}
+	if len(added) == 0 {
+		r.Message("config: no new keys in %s (backup: %s)", tag, before)
+		return nil
+	}
+	rows := make([][]string, 0, len(added))
+	for _, k := range added {
+		rows = append(rows, []string{k, "added"})
+	}
+	r.Message("config: %d new key(s) in %s, backup: %s", len(added), tag, before)
+	return r.StatusTable(output.Table{Columns: []string{"KEY", "STATUS"}, Rows: rows}, 1)
 }

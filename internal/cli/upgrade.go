@@ -35,7 +35,6 @@ func newUpgradeCmd(app *App) *cobra.Command {
 }
 
 func runUpgrade(app *App, c *cobra.Command) error {
-	out := c.OutOrStdout()
 	r, err := app.Renderer()
 	if err != nil {
 		return err
@@ -54,8 +53,12 @@ func runUpgrade(app *App, c *cobra.Command) error {
 	if !selfupdate.IsNewer(Version, target) {
 		target = Version + " (no newer release)"
 	}
+	if err := printUpgradePlan(r, Version, target); err != nil {
+		return err
+	}
 	if app.flags.dryRun {
-		return printUpgradePlan(r, Version, target)
+		r.Message("dry-run: no changes made")
+		return nil
 	}
 	if err := app.confirm(fmt.Sprintf("back up, update %s -> %s and reconcile this host?", Version, rel.Tag)); err != nil {
 		return err
@@ -88,7 +91,7 @@ func runUpgrade(app *App, c *cobra.Command) error {
 			rows = append(rows, upgradeStep{name: s.name, status: "skipped", detail: "an earlier step failed"})
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "\n== %s\n", s.name)
+		r.Heading("\n== " + s.name)
 		start := time.Now()
 		err := s.run()
 		st := upgradeStep{name: s.name, status: "ok", took: time.Since(start)}
@@ -126,7 +129,6 @@ func printUpgradePlan(r *output.Renderer, current, target string) error {
 	if err := r.StatusTable(output.Table{Columns: []string{"STEP", "STATUS", "DETAIL"}, Rows: rows}, 1); err != nil {
 		return err
 	}
-	r.Message("dry-run: no changes made")
 	return nil
 }
 

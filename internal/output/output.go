@@ -61,11 +61,11 @@ func statusColor(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "match", "active", "enabled", "unchanged", "yes", "present", "pass":
 		return ansiGreen
-	case "drift", "edit", "warn", "mismatch", "deferred", "hold":
+	case "drift", "edit", "warn", "mismatch", "deferred", "hold", "skipped":
 		return ansiYellow
 	case "missing", "add", "error", "fail", "failed", "stale", "delete", "remove", "removed", "dkim-old", "no":
 		return ansiRed
-	case "info", "added", "created":
+	case "info", "added", "created", "planned":
 		return ansiCyan
 	default:
 		return ""
@@ -435,4 +435,15 @@ func sanitizeCell(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// Heading prints a bold section line when colour is on, plain text otherwise.
+func (r *Renderer) Heading(s string) {
+	if r.quiet || r.format == FormatJSON {
+		return
+	}
+	if r.color {
+		s = ansiBold + s + ansiReset
+	}
+	_, _ = fmt.Fprintln(r.out, s)
 }
