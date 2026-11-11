@@ -211,6 +211,7 @@ func newDNSCmd(app *App) *cobra.Command {
 	zoneCreate.ValidArgsFunction = app.completeDomain
 
 	cmd.AddCommand(show, check, publish, takeover, restore, migrate, audit, zone, driftCheck)
+	cmd.AddCommand(newDNSTLSAPRCmd(app), newDNSTLSAStatusCmd(app))
 	return cmd
 }
 

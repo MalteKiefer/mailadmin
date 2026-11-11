@@ -30,12 +30,16 @@ const (
 	ExitUsage    = 2
 	ExitNotFound = 3
 	ExitDeclined = 4
+	// ExitPending means a DNS change was proposed and is not live yet (dns tlsa-status).
+	ExitPending = 5
 )
 
 // Sentinel errors mapped to exit codes by main.
 var (
 	// ErrNotFound maps to ExitNotFound.
 	ErrNotFound = errors.New("not found")
+	// ErrPending maps to ExitPending: the change is proposed but not live yet.
+	ErrPending = errors.New("pending")
 	// ErrDeclined maps to ExitDeclined (confirmation refused).
 	ErrDeclined = errors.New("confirmation declined")
 	// ErrUsage maps to ExitUsage (bad flags/arguments).
@@ -363,6 +367,8 @@ func ExitCode(err error) int {
 		return ExitNotFound
 	case errors.Is(err, ErrDeclined):
 		return ExitDeclined
+	case errors.Is(err, ErrPending):
+		return ExitPending
 	case errors.Is(err, ErrUsage):
 		return ExitUsage
 	default:
