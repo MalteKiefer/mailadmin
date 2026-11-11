@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.39.0] - 2026-11-11
 
 ### Added
 - `mailadmin backup borg init|run|list|check`: borg runner for `[backup.borg]`. `run` writes a fresh backup bundle, archives `backup.borg.source` (default `backup.dir`), then prunes with the retention, compacts and checks at `check_every`. The passphrase reaches borg through its environment, never argv. ssh repositories use the configured key and pinned host keys.
