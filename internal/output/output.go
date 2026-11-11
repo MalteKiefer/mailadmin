@@ -61,7 +61,7 @@ func statusColor(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "ok", "match", "active", "enabled", "unchanged", "yes", "present", "pass":
 		return ansiGreen
-	case "drift", "edit", "warn", "mismatch", "deferred", "hold", "skipped":
+	case "drift", "edit", "warn", "mismatch", "deferred", "hold", "skipped", "obsolete":
 		return ansiYellow
 	case "missing", "add", "error", "fail", "failed", "stale", "delete", "remove", "removed", "dkim-old", "no":
 		return ansiRed

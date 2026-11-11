@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Changed
+- `mailadmin update` also runs the config sync when the binary is already current. Keys the release added are written into config.toml. Keys the release dropped stay in place with a comment `# obsolete since <tag>` above them, and their values are kept.
+
 ## [v1.32.1] - 2026-11-11
 
 ### Changed
