@@ -28,8 +28,9 @@ func TestStatusTableAlignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("want 4 lines, got %d", len(lines))
+	// header, rule under the header, three rows
+	if len(lines) != 5 {
+		t.Fatalf("want 5 lines, got %d", len(lines))
 	}
 	// Verify ANSI is actually present (colour on) but stripped for measuring.
 	if !strings.Contains(buf.String(), "\x1b[") {
@@ -38,6 +39,9 @@ func TestStatusTableAlignment(t *testing.T) {
 	col2 := -1
 	for _, ln := range lines {
 		plain := ansiRE.ReplaceAllString(ln, "")
+		if strings.HasPrefix(plain, "─") {
+			continue // the rule under the header has no columns
+		}
 		if strings.ContainsRune(plain, '\xff') {
 			t.Fatalf("tabwriter escape byte leaked into output: %q", plain)
 		}
