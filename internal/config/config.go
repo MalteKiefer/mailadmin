@@ -78,6 +78,9 @@ type Mail struct {
 	QuotaDefault int64 `toml:"quota_default"`
 	// DNSTTL is the TTL in seconds of the records mailadmin publishes. 0 means DefaultDNSTTL.
 	DNSTTL int `toml:"dns_ttl"`
+	// PrimaryDomain is the main mail domain. install --adopt and upgrade use it
+	// when no --domain is given. Optional.
+	PrimaryDomain string `toml:"primary_domain"`
 }
 
 // Hardening switches the parts of install's host hardening on or off. Unset
@@ -392,6 +395,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: mail.default_selector: %w", ErrInvalidConfig, err)
 	}
 
+	if c.Mail.PrimaryDomain != "" {
+		if _, err := valid.Domain(c.Mail.PrimaryDomain); err != nil {
+			return fmt.Errorf("%w: mail.primary_domain: %w", ErrInvalidConfig, err)
+		}
+	}
 	if c.Mail.DNSTTL != 0 && (c.Mail.DNSTTL < 60 || c.Mail.DNSTTL > 86400) {
 		return fmt.Errorf("%w: mail.dns_ttl must be 0 (default %d) or 60 to 86400 seconds", ErrInvalidConfig, DefaultDNSTTL)
 	}
