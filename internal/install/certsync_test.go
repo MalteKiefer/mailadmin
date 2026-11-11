@@ -24,3 +24,13 @@ func TestCertSyncHelperParsesAndRenewsOnlyWhenDue(t *testing.T) {
 		}
 	}
 }
+
+// Repository mode: the helper must ask mailadmin for the proposal and the status, and
+// must keep the staged pair until the record is live.
+func TestCertSyncHelperRepoMode(t *testing.T) {
+	for _, must := range []string{"dns tlsa-pr", "dns tlsa-status", "repo_mode=1", "case \"$rc\" in"} {
+		if !strings.Contains(CertSyncHelper, must) {
+			t.Fatalf("helper lacks %q", must)
+		}
+	}
+}

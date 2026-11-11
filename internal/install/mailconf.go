@@ -2,6 +2,7 @@ package install
 
 import (
 	"fmt"
+	"mailadmin/internal/config"
 	"strings"
 
 	"mailadmin/internal/webserver"
@@ -544,7 +545,29 @@ elif [ "$prev" != "$domain" ]; then reason=domain
 elif ! openssl x509 -checkend 604800 -noout -in "$live" >/dev/null 2>&1; then reason=expiring
 fi
 
-if [ -e "$pending/since" ]; then
+# Repository mode: dns.config_repo is set, so the TLSA record merges through a pull
+# request. mailadmin tlsa-status tells whether the merged record is live.
+repo_mode=0
+if grep -Eq '^[[:space:]]*config_repo[[:space:]]*=[[:space:]]*"/' ` + config.DefaultPath + ` 2>/dev/null; then repo_mode=1; fi
+
+# repo_check installs the staged pair once the TLSA record is live (tlsa-status exit 0).
+repo_check() {
+	rc=0
+	/usr/local/sbin/mailadmin dns tlsa-status "$domain" >&2 || rc=$?
+	case "$rc" in
+	0)
+		install_pair "$pending/fullchain.pem" "$pending/privkey.pem"
+		rm -rf "$pending"
+		echo "$domain" > "$domainfile"
+		;;
+	5) echo "pending certificate for $host waits for the TLSA pull request" >&2 ;;
+	*) echo "tlsa-status for $domain failed ($rc), keeping the current certificate" >&2; exit 1 ;;
+	esac
+}
+
+if [ "$repo_mode" = 1 ] && [ -e "$pending/fullchain.pem" ]; then
+	repo_check
+elif [ -e "$pending/since" ]; then
 	# Phase two: install the pair that the TLSA record already pins, once the TTL has passed.
 	since=$(cat "$pending/since")
 	# A corrupt marker restarts the wait. It never skips it.
@@ -562,7 +585,14 @@ elif [ "$reason" = first ]; then
 	echo "$domain" > "$domainfile"
 elif [ "$reason" = domain ]; then
 	# The domain changed: publish the TLSA record for it from the live pair.
-	if out=$(MAILADMIN_MAIL_TLS_CERT="$live" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
+	if [ "$repo_mode" = 1 ]; then
+		if out=$(MAILADMIN_MAIL_TLS_CERT="$live" /usr/local/sbin/mailadmin --yes dns tlsa-pr "$domain" 2>&1); then
+			echo "$domain" > "$domainfile"
+		else
+			printf '%s\n' "$out" >&2
+			exit 1
+		fi
+	elif out=$(MAILADMIN_MAIL_TLS_CERT="$live" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
 		echo "$domain" > "$domainfile"
 	else
 		case "$out" in
@@ -583,27 +613,43 @@ elif [ "$reason" = expiring ] && ! cmp -s "$crt" "$live" 2>/dev/null; then
 	install -d -m 0750 -o root -g root "$pending"
 	install -o root -g root -m 0600 "$crt" "$pending/fullchain.pem"
 	install -o root -g root -m 0600 "$key" "$pending/privkey.pem"
-	if out=$(MAILADMIN_MAIL_TLS_CERT="$pending/fullchain.pem" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
+	if [ "$repo_mode" = 1 ]; then
+		if out=$(MAILADMIN_MAIL_TLS_CERT="$pending/fullchain.pem" /usr/local/sbin/mailadmin --yes dns tlsa-pr "$domain" 2>&1); then
+			case "$out" in
+			*"already current"*) ;;
+			*) date +%s > "$pending/since"; exit 0 ;;
+			esac
+			install_pair "$pending/fullchain.pem" "$pending/privkey.pem"
+			rm -rf "$pending"
+			echo "$domain" > "$domainfile"
+		else
+			printf '%s\n' "$out" >&2
+			rm -rf "$pending"
+			echo "TLSA proposal failed for $domain, keeping the current certificate" >&2
+			exit 1
+		fi
+	elif out=$(MAILADMIN_MAIL_TLS_CERT="$pending/fullchain.pem" /usr/local/sbin/mailadmin --yes dns publish "$domain" --dane 2>&1); then
 		date +%s > "$pending/since"
 		exit 0
+	else
+		case "$out" in
+		*"manage its zone manually"*)
+			# No automated DNS provider, so the TLSA record cannot be published from here.
+			# The renewal goes ahead. DANE validation fails for this domain until the operator
+			# publishes the new TLSA record by hand.
+			echo "warning: $domain has no automated DNS provider, installing the renewed certificate without a TLSA update" >&2
+			rm -rf "$pending"
+			install_pair "$crt" "$key"
+			echo "$domain" > "$domainfile"
+			;;
+		*)
+			printf '%s\n' "$out" >&2
+			rm -rf "$pending"
+			echo "TLSA publish failed for $domain, keeping the current certificate" >&2
+			exit 1
+			;;
+		esac
 	fi
-	case "$out" in
-	*"manage its zone manually"*)
-		# No automated DNS provider, so the TLSA record cannot be published from here.
-		# The renewal goes ahead. DANE validation fails for this domain until the operator
-		# publishes the new TLSA record by hand.
-		echo "warning: $domain has no automated DNS provider, installing the renewed certificate without a TLSA update" >&2
-		rm -rf "$pending"
-		install_pair "$crt" "$key"
-		echo "$domain" > "$domainfile"
-		;;
-	*)
-		printf '%s\n' "$out" >&2
-		rm -rf "$pending"
-		echo "TLSA publish failed for $domain, keeping the current certificate" >&2
-		exit 1
-		;;
-	esac
 fi
 
 if [ "$changed" = 1 ] || [ -e "$marker" ]; then
