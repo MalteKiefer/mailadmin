@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.40.0] - 2026-11-11
 
 ### Changed
 - `[backup.borg] source` is a list of paths, for example `["/var/lib/mailadmin/backups", "/var/vmail"]`. A single string still works. Empty means `backup.dir`.
