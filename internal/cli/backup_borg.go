@@ -19,7 +19,7 @@ const borgCheckStamp = "/var/lib/mailadmin/.borg-checked"
 
 func newBackupBorgCmd(app *App) *cobra.Command {
 	borg := &cobra.Command{Use: "borg", Short: "Archive backups to the borg repository in [backup.borg]"}
-	borg.AddCommand(&cobra.Command{
+	borg.AddCommand(newBackupBorgTimerCmd(app), &cobra.Command{
 		Use:   "init",
 		Short: "Create the borg repository with the configured encryption",
 		Args:  cobra.NoArgs,
@@ -146,4 +146,39 @@ func archivesDir(sources []string, dir string) bool {
 		}
 	}
 	return false
+}
+
+func newBackupBorgTimerCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "timer",
+		Short: "Apply [backup.borg] enabled and schedule to the systemd timer",
+		Long: "Writes the mailadmin-borg service and timer from [backup.borg], validates\n" +
+			"schedule with systemd-analyze, and enables or disables the timer to match\n" +
+			"enabled. Run it after changing schedule or enabled.",
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			cfg, _, err := app.Config()
+			if err != nil {
+				return err
+			}
+			r, err := app.Renderer()
+			if err != nil {
+				return err
+			}
+			if app.flags.dryRun {
+				r.Message("dry-run: would set %s to schedule %q, enabled=%v", install.BorgTimer, cfg.Backup.Borg.Schedule, cfg.Backup.Borg.Enabled)
+				return nil
+			}
+			x := install.Resolve(sys.New(2*time.Minute, nil))
+			if err := install.ApplyBorgTimer(ctx(c), x, cfg.Backup.Borg.Enabled, cfg.Backup.Borg.Schedule); err != nil {
+				return err
+			}
+			if cfg.Backup.Borg.Enabled {
+				r.OK("%s active, schedule %q", install.BorgTimer, cfg.Backup.Borg.Schedule)
+			} else {
+				r.Info("%s removed (backup.borg disabled)", install.BorgTimer)
+			}
+			return nil
+		},
+	}
 }
