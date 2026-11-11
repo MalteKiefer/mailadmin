@@ -15,7 +15,6 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/list"
 	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/jedib0t/go-pretty/v6/text"
 	"golang.org/x/term"
 )
 
@@ -23,15 +22,17 @@ import (
 // terminal (see Renderer.colorEnabled); never written into cell data (which is
 // sanitized), so piped/JSON/plain output stays escape-free.
 const (
-	ansiReset   = "\x1b[0m"
-	ansiBold    = "\x1b[1m"
-	ansiRed     = "\x1b[31m"
-	ansiGreen   = "\x1b[32m"
-	ansiYellow  = "\x1b[33m"
-	ansiBlue    = "\x1b[34m"
-	ansiMagenta = "\x1b[35m"
-	ansiCyan    = "\x1b[36m"
-	ansiDim     = "\x1b[2m"
+	ansiReset  = "\x1b[0m"
+	ansiBold   = "\x1b[1m"
+	ansiDim    = "\x1b[2m"
+	ansiHeader = "\x1b[1;38;5;255m" // table header: bold, bright snow white
+	// Palette: Nord (256-colour approximations of its aurora and frost colours).
+	ansiRed     = "\x1b[38;5;131m" // aurora red
+	ansiGreen   = "\x1b[38;5;108m" // aurora green
+	ansiYellow  = "\x1b[38;5;222m" // aurora yellow
+	ansiBlue    = "\x1b[38;5;67m"  // frost blue
+	ansiMagenta = "\x1b[38;5;139m" // aurora purple
+	ansiCyan    = "\x1b[38;5;110m" // frost cyan
 )
 
 // recordTypeColor maps a DNS record type to a stable colour so a listing reads
@@ -160,11 +161,11 @@ func (r *Renderer) StatusTable(t Table, statusCol int) error {
 	if r.format != FormatTable || statusCol < 0 {
 		return r.Table(t)
 	}
-	return r.writeTable(t, func(cells []string) text.Colors {
+	return r.writeTable(t, func(cells []string) string {
 		if statusCol >= len(cells) {
-			return nil
+			return ""
 		}
-		return ansiToText(statusColor(cells[statusCol]))
+		return statusColor(cells[statusCol])
 	})
 }
 
@@ -175,22 +176,24 @@ func (r *Renderer) TypeTable(t Table, typeCol int) error {
 	if r.format != FormatTable || typeCol < 0 {
 		return r.Table(t)
 	}
-	return r.writeTable(t, func(cells []string) text.Colors {
+	return r.writeTable(t, func(cells []string) string {
 		if typeCol >= len(cells) {
-			return nil
+			return ""
 		}
-		return ansiToText(recordTypeColor(cells[typeCol]))
+		return recordTypeColor(cells[typeCol])
 	})
 }
 
-// writeTable renders t with go-pretty: aligned columns, bold header and per-row
-// colour from paint when colour is on. Without colour no escape codes are written.
-func (r *Renderer) writeTable(t Table, paint func(cells []string) text.Colors) error {
+// writeTable renders t with go-pretty: aligned columns and a rule under the header.
+// With colour on, the header and each row take the colour that paint returns for
+// the row; the escape codes wrap the cell text, so go-pretty still measures the
+// widths of the visible text only.
+func (r *Renderer) writeTable(t Table, paint func(cells []string) string) error {
 	tw := table.NewWriter()
 	tw.SetOutputMirror(r.out)
-	// One layout for every table: no outer border, bold header, a rule under the
-	// header, two spaces between columns.
-	st := table.Style{
+	// One layout for every table: no outer border, a rule under the header, two
+	// spaces between columns.
+	tw.SetStyle(table.Style{
 		Name: "mailadmin",
 		Box: table.BoxStyle{
 			PaddingLeft:      "",
@@ -203,31 +206,33 @@ func (r *Renderer) writeTable(t Table, paint func(cells []string) text.Colors) e
 			DrawBorder:      false,
 			SeparateColumns: true,
 			SeparateHeader:  len(t.Columns) > 0,
-			SeparateRows:    false,
-			SeparateFooter:  false,
 		},
-	}
-	if r.color {
-		st.Color = table.ColorOptions{Header: text.Colors{text.Bold}}
-	}
-	tw.SetStyle(st)
+	})
 	if len(t.Columns) > 0 {
-		tw.AppendHeader(toRow(sanitizeRow(t.Columns)))
+		tw.AppendHeader(toRow(paintCells(sanitizeRow(t.Columns), r.color, ansiHeader)))
 	}
 	for _, row := range t.Rows {
-		tw.AppendRow(toRow(sanitizeRow(row)))
-	}
-	if r.color && paint != nil {
-		tw.SetRowPainter(func(row table.Row) text.Colors {
-			cells := make([]string, len(row))
-			for i, v := range row {
-				cells[i] = fmt.Sprint(v)
-			}
-			return paint(cells)
-		})
+		cells := sanitizeRow(row)
+		code := ""
+		if r.color && paint != nil {
+			code = paint(cells)
+		}
+		tw.AppendRow(toRow(paintCells(cells, r.color, code)))
 	}
 	tw.Render()
 	return nil
+}
+
+// paintCells wraps every cell in code when colour is on and code is set.
+func paintCells(cells []string, color bool, code string) []string {
+	if !color || code == "" {
+		return cells
+	}
+	out := make([]string, len(cells))
+	for i, c := range cells {
+		out[i] = code + c + ansiReset
+	}
+	return out
 }
 
 func toRow(cells []string) table.Row {
@@ -236,25 +241,6 @@ func toRow(cells []string) table.Row {
 		row[i] = c
 	}
 	return row
-}
-
-// ansiToText maps the SGR codes used by statusColor and recordTypeColor to go-pretty colours.
-func ansiToText(code string) text.Colors {
-	switch code {
-	case ansiGreen:
-		return text.Colors{text.FgGreen}
-	case ansiYellow:
-		return text.Colors{text.FgYellow}
-	case ansiRed:
-		return text.Colors{text.FgRed}
-	case ansiCyan:
-		return text.Colors{text.FgCyan}
-	case ansiMagenta:
-		return text.Colors{text.FgMagenta}
-	case ansiBlue:
-		return text.Colors{text.FgBlue}
-	}
-	return nil
 }
 
 // JSON renders an arbitrary value as JSON. Used for single-object results and
