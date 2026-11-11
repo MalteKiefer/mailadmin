@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,5 +96,21 @@ func TestBorgServiceRunsBackupBorg(t *testing.T) {
 	}
 	if s := BorgTimerFile("*-*-* 03:30:00"); !strings.Contains(s, "OnCalendar=*-*-* 03:30:00") {
 		t.Fatalf("timer schedule missing:\n%s", s)
+	}
+}
+
+type failCalendar struct{}
+
+func (failCalendar) Run(_ context.Context, _ []byte, argv ...string) (sys.Result, error) {
+	if len(argv) > 0 && argv[0] == "systemd-analyze" {
+		return sys.Result{}, errors.New("bad calendar")
+	}
+	return sys.Result{}, nil
+}
+
+// An invalid schedule is refused before any unit is written.
+func TestApplyBorgTimerRefusesBadSchedule(t *testing.T) {
+	if err := ApplyBorgTimer(context.Background(), failCalendar{}, true, "not a time"); err == nil {
+		t.Fatal("bad schedule must be refused")
 	}
 }

@@ -24,6 +24,14 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- `mailadmin backup borg timer` writes the mailadmin-borg service and timer from `[backup.borg]`, validates `schedule` with `systemd-analyze calendar`, and enables or disables the timer to match `enabled`. Run it after changing `schedule`. Install uses the same logic.
+### Added
+- `[backup.borg] local_keep` (default 3): after a borg run that archived `backup.dir`, the local bundles are pruned to the newest N. Only directories named like a bundle are removed, and only after a successful archive.
+- `[backup.borg.retention] hourly` (default 0): keeps that many hourly archives in borg prune.
+
 ## [v1.40.0] - 2026-11-11
 
 ### Changed
