@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.38.0] - 2026-11-11
 
 ### Changed
 - Interactive questions and confirmations are yellow.
