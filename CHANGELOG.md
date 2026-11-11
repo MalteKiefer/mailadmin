@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.34.0] - 2026-11-11
 
 ### Changed
 - The mail certificate copy is renewed only when the live certificate expires within seven days, or when the host's domain was added or changed. Caddy's earlier renewals are not installed before that.
