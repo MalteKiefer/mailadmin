@@ -161,12 +161,46 @@ func (r *Renderer) StatusTable(t Table, statusCol int) error {
 	if r.format != FormatTable || statusCol < 0 {
 		return r.Table(t)
 	}
+	t = withStatusIcons(t, statusCol)
 	return r.writeTable(t, func(cells []string) string {
 		if statusCol >= len(cells) {
 			return ""
 		}
 		return statusColor(cells[statusCol])
 	})
+}
+
+// statusIcon returns the symbol shown before a status word, chosen by its colour
+// group: ✔ good, ⚠ attention, ✖ failure, ℹ information. Unknown words get none.
+func statusIcon(status string) string {
+	switch statusColor(status) {
+	case ansiGreen:
+		return "✔"
+	case ansiYellow:
+		return "⚠"
+	case ansiRed:
+		return "✖"
+	case ansiCyan:
+		return "ℹ"
+	}
+	return ""
+}
+
+// withStatusIcons prefixes the status cell of every row with its icon. The
+// status word itself stays, so scripts reading the table text still see it.
+func withStatusIcons(t Table, statusCol int) Table {
+	rows := make([][]string, len(t.Rows))
+	for i, row := range t.Rows {
+		cells := append([]string(nil), row...)
+		if statusCol < len(cells) {
+			if icon := statusIcon(cells[statusCol]); icon != "" {
+				cells[statusCol] = icon + " " + cells[statusCol]
+			}
+		}
+		rows[i] = cells
+	}
+	t.Rows = rows
+	return t
 }
 
 // TypeTable renders a DNS record table whose typeCol cell (the record type)
