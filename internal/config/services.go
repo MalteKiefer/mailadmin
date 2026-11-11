@@ -52,10 +52,14 @@ type BorgBackup struct {
 	CheckEvery string `toml:"check_every"`
 	// Retention is how many archives to keep per period.
 	Retention BorgRetention `toml:"retention"`
+	// LocalKeep is how many newest local bundles (backup.dir) to keep after a run
+	// that archived them. 0 keeps every local bundle.
+	LocalKeep int `toml:"local_keep"`
 }
 
 // BorgRetention is the number of archives kept per period.
 type BorgRetention struct {
+	Hourly  int `toml:"hourly"`
 	Daily   int `toml:"daily"`
 	Weekly  int `toml:"weekly"`
 	Monthly int `toml:"monthly"`
@@ -131,10 +135,13 @@ func (b BorgBackup) validate(backupDir string) error {
 		return fmt.Errorf("%w: backup.borg.check_every must look like 1w or 30d", ErrInvalidConfig)
 	}
 	r := b.Retention
-	if r.Daily < 0 || r.Weekly < 0 || r.Monthly < 0 {
+	if r.Hourly < 0 || r.Daily < 0 || r.Weekly < 0 || r.Monthly < 0 {
 		return fmt.Errorf("%w: backup.borg.retention values must not be negative", ErrInvalidConfig)
 	}
-	if r.Daily+r.Weekly+r.Monthly == 0 {
+	if b.LocalKeep < 0 {
+		return fmt.Errorf("%w: backup.borg.local_keep must not be negative", ErrInvalidConfig)
+	}
+	if r.Hourly+r.Daily+r.Weekly+r.Monthly == 0 {
 		return fmt.Errorf("%w: backup.borg.retention must keep at least one archive", ErrInvalidConfig)
 	}
 	return nil

@@ -83,9 +83,12 @@ prune = true
 compact = true
 # Run borg check at this interval, e.g. "1w" or "30d". Empty: never.
 check_every = "1w"
+# Newest local bundles kept in backup.dir after a run that archived them.
+local_keep = 3
 
 [backup.borg.retention]
 # Archives kept per period. At least one value must be above zero.
+hourly = 0
 daily = 7
 weekly = 4
 monthly = 6

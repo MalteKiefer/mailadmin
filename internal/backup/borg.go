@@ -111,11 +111,15 @@ func (b Borg) Prune(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	argv := []string{BorgBin, "prune", "--glob-archives", BorgArchivePrefix + "*",
+	argv := []string{BorgBin, "prune", "--glob-archives", BorgArchivePrefix + "*"}
+	if b.Cfg.Retention.Hourly > 0 {
+		argv = append(argv, "--keep-hourly", strconv.Itoa(b.Cfg.Retention.Hourly))
+	}
+	argv = append(argv,
 		"--keep-daily", strconv.Itoa(b.Cfg.Retention.Daily),
 		"--keep-weekly", strconv.Itoa(b.Cfg.Retention.Weekly),
 		"--keep-monthly", strconv.Itoa(b.Cfg.Retention.Monthly),
-		b.Cfg.Repo}
+		b.Cfg.Repo)
 	_, err = r.Run(ctx, nil, argv...)
 	return err
 }

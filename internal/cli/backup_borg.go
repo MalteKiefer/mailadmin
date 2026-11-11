@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -62,7 +63,19 @@ func newBackupBorgCmd(app *App) *cobra.Command {
 			if name != "" {
 				r.OK("archived %s", name)
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			// Local bundles go only after the run archived them, and only when the
+			// bundle directory is part of the archive.
+			if cfg.Backup.Borg.LocalKeep > 0 && archivesDir(sources, cfg.Backup.Dir) {
+				removed, perr := backup.PruneLocalBundles(cfg.Backup.Dir, cfg.Backup.Borg.LocalKeep)
+				for _, n := range removed {
+					r.Info("removed local bundle %s", n)
+				}
+				return perr
+			}
+			return nil
 		},
 	}, &cobra.Command{
 		Use:   "list",
@@ -122,4 +135,15 @@ func (a *App) borgFor() (backup.Borg, *config.Config, error) {
 // ApplyBorgTimerConfig installs the borg timer for the config. Used by install.
 func ApplyBorgTimerConfig(ctx context.Context, x install.Exec, cfg *config.Config) error {
 	return install.ApplyBorgTimer(ctx, x, cfg.Backup.Borg.Enabled, cfg.Backup.Borg.Schedule)
+}
+
+// archivesDir reports whether dir is one of the archived sources.
+func archivesDir(sources []string, dir string) bool {
+	want := filepath.Clean(dir)
+	for _, s := range sources {
+		if filepath.Clean(s) == want {
+			return true
+		}
+	}
+	return false
 }
