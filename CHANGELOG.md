@@ -24,17 +24,14 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
-
-### Added
-- `[dns] config_repo`: absolute path to a local DNSControl repository (`dnsconfig.js`). When set, mailadmin refuses the commands that write DNS records (`dns publish`, `dns publish --dane`, `dns takeover`, `dns restore`, `dns migrate`, `dns zone create`). The repository is the source of truth.
-
-## [Unreleased]
+## [v1.35.0] - 2026-11-11
 
 ### Added
 - `mailadmin dns tlsa-pr <domain>` (with `dns.config_repo`): writes the mail host's TLSA record into the mailadmin block of `dnsconfig.js` on a new branch, commits, pushes and opens a pull request. Nothing is merged by mailadmin.
 - `mailadmin dns tlsa-status <domain>`: exit 0 when the merged record is live, 5 while pending, 3 without a pending change, 1 when the pull request was closed.
 - The cert sync helper uses the pull request flow in repository mode: it installs the renewed certificate once `tlsa-status` reports the record live.
+
+- `[dns] config_repo`: absolute path to a local DNSControl repository (`dnsconfig.js`). When set, mailadmin refuses the commands that write DNS records (`dns publish`, `dns publish --dane`, `dns takeover`, `dns restore`, `dns migrate`, `dns zone create`). The repository is the source of truth.
 
 ## [v1.34.1] - 2026-11-11
 
