@@ -1,6 +1,11 @@
 package output
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/pterm/pterm"
+)
 
 func TestStatusColor(t *testing.T) {
 	cases := map[string]string{
@@ -30,3 +35,41 @@ func TestAutoColorNonTerminal(t *testing.T) {
 type nopWriter struct{}
 
 func (*nopWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestStatusIcon(t *testing.T) {
+	cases := map[string]string{"ok": "✔", "drift": "⚠", "missing": "✖", "info": "ℹ", "weird": ""}
+	for in, want := range cases {
+		if got := statusIcon(in); got != want {
+			t.Errorf("statusIcon(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestHighlightCodeKeepsText(t *testing.T) {
+	// pterm turns colour off without a terminal; the test forces it on.
+	pterm.EnableColor()
+	defer pterm.DisableColor()
+	line := `    MX("@", 10, "mxext1.mailbox.org."),`
+	pterm.DisableColor()
+	if got := highlightCode(line); got != line {
+		t.Fatalf("without colour the text must not change:\n got %q\nwant %q", got, line)
+	}
+	pterm.EnableColor()
+	if !strings.Contains(highlightCode(line), "\x1b[") {
+		t.Fatal("expected colour codes on a DNSControl statement")
+	}
+	if highlightCode("plain text") != "plain text" {
+		t.Fatal("non-statement lines must stay unchanged")
+	}
+}
+
+func TestPromptTextYellow(t *testing.T) {
+	pterm.EnableColor()
+	defer pterm.DisableColor()
+	if PromptText("Proceed? [y/N]: ", false) != "Proceed? [y/N]: " {
+		t.Fatal("no colour when color is off")
+	}
+	if !strings.Contains(PromptText("Proceed?", true), "\x1b[") {
+		t.Fatal("prompt must be coloured when color is on")
+	}
+}

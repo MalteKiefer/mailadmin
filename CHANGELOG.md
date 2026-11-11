@@ -30,6 +30,29 @@ providers need.
 - `git` is installed with the other packages. It is needed for the `dns.config_repo` flow.
 - `gh` (GitHub CLI) is installed. Install asks to log in with `gh auth login` when it is not logged in. `dns sync` opens pull requests with it.
 
+## [v1.38.0] - 2026-11-11
+
+### Changed
+- Interactive questions and confirmations are yellow.
+- Tables colour per column, not per row: in `dns show` and record listings the type cell takes the record type colour and the name cell is cyan. In status tables only the status cell is coloured.
+- Error output highlights DNSControl statements by part: function name, quoted strings and numbers.
+
+## [v1.37.0] - 2026-11-11
+
+### Changed
+- Human output uses pterm (`github.com/pterm/pterm`, MIT). Every status line has a timestamp and an icon: ℹ info, ✔ ok, ⚠ warning, ✖ failure, ▸ step. Tables, lists and headings use the same Nord colours. Errors are printed as `✖ error: …` with a timestamp. json and plain output are unchanged.
+- go-pretty is no longer a dependency.
+
+## [v1.36.0] - 2026-11-11
+
+### Added
+- `mailadmin dns sync <domain>` (with `dns.config_repo`): writes the desired mail records into the mailadmin block of the domain's `D(...)` call in `dnsconfig.js` and opens a pull request. The TLSA record goes into the zone of the mail host. Without `--delete` the sync stops when mail records outside the block exist. `--delete` removes them in the same pull request. `--dry-run` shows the count without changes.
+
+## [v1.35.1] - 2026-11-11
+
+### Changed
+- Status tables show an icon before the status word: ✔ ok, ⚠ drift or warning, ✖ missing or failed, ℹ info. The word stays, so scripts reading the text still work.
+
 ## [v1.35.0] - 2026-11-11
 
 ### Added

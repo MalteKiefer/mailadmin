@@ -342,7 +342,7 @@ func (a *App) mailboxRemove(cmd *cobra.Command, address string, purge bool) erro
 		} else if purge {
 			msg += " and its maildir"
 		}
-		r.Message(msg)
+		r.Message("%s", msg)
 		return nil
 	}
 

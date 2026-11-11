@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
@@ -45,7 +46,9 @@ func TestStatusTableAlignment(t *testing.T) {
 		if strings.ContainsRune(plain, '\xff') {
 			t.Fatalf("tabwriter escape byte leaked into output: %q", plain)
 		}
-		idx := firstColStart(plain) // offset of the 2nd column, measured uniformly
+		// Offset of the TYPE column: the status cell may carry an icon, so the
+		// first space is not a reliable anchor.
+		idx := typeColStart(plain)
 		if col2 == -1 {
 			col2 = idx
 		} else if idx != col2 {
@@ -54,15 +57,12 @@ func TestStatusTableAlignment(t *testing.T) {
 	}
 }
 
-// firstColStart returns the offset where the second whitespace-separated column
-// begins (i.e. end of first field + following spaces).
-func firstColStart(s string) int {
-	i := strings.IndexByte(s, ' ')
-	if i < 0 {
-		return 0
+// typeColStart returns the offset of the TYPE column value in a rendered line.
+func typeColStart(s string) int {
+	for _, w := range []string{"TYPE", "MX", "TXT"} {
+		if i := strings.Index(s, w); i >= 0 {
+			return utf8.RuneCountInString(s[:i]) // columns are measured in runes
+		}
 	}
-	for i < len(s) && s[i] == ' ' {
-		i++
-	}
-	return i
+	return -1
 }

@@ -13,8 +13,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/jedib0t/go-pretty/v6/list"
-	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/pterm/pterm"
 	"golang.org/x/term"
 )
 
@@ -161,12 +160,46 @@ func (r *Renderer) StatusTable(t Table, statusCol int) error {
 	if r.format != FormatTable || statusCol < 0 {
 		return r.Table(t)
 	}
-	return r.writeTable(t, func(cells []string) string {
-		if statusCol >= len(cells) {
+	t = withStatusIcons(t, statusCol)
+	return r.writeCells(t, func(cells []string, col int) string {
+		if col != statusCol || col >= len(cells) {
 			return ""
 		}
-		return statusColor(cells[statusCol])
+		return statusColor(cells[col])
 	})
+}
+
+// statusIcon returns the symbol shown before a status word, chosen by its colour
+// group: ✔ good, ⚠ attention, ✖ failure, ℹ information. Unknown words get none.
+func statusIcon(status string) string {
+	switch statusColor(status) {
+	case ansiGreen:
+		return "✔"
+	case ansiYellow:
+		return "⚠"
+	case ansiRed:
+		return "✖"
+	case ansiCyan:
+		return "ℹ"
+	}
+	return ""
+}
+
+// withStatusIcons prefixes the status cell of every row with its icon. The
+// status word itself stays, so scripts reading the table text still see it.
+func withStatusIcons(t Table, statusCol int) Table {
+	rows := make([][]string, len(t.Rows))
+	for i, row := range t.Rows {
+		cells := append([]string(nil), row...)
+		if statusCol < len(cells) {
+			if icon := statusIcon(cells[statusCol]); icon != "" {
+				cells[statusCol] = icon + " " + cells[statusCol]
+			}
+		}
+		rows[i] = cells
+	}
+	t.Rows = rows
+	return t
 }
 
 // TypeTable renders a DNS record table whose typeCol cell (the record type)
@@ -176,11 +209,18 @@ func (r *Renderer) TypeTable(t Table, typeCol int) error {
 	if r.format != FormatTable || typeCol < 0 {
 		return r.Table(t)
 	}
-	return r.writeTable(t, func(cells []string) string {
-		if typeCol >= len(cells) {
-			return ""
+	// Per column: the type cell takes the record type colour, the name cell cyan,
+	// the content cell stays plain.
+	return r.writeCells(t, func(cells []string, col int) string {
+		switch col {
+		case typeCol:
+			if col < len(cells) {
+				return recordTypeColor(cells[col])
+			}
+		case typeCol + 1:
+			return ansiCyan
 		}
-		return recordTypeColor(cells[typeCol])
+		return ""
 	})
 }
 
@@ -189,59 +229,18 @@ func (r *Renderer) TypeTable(t Table, typeCol int) error {
 // the row; the escape codes wrap the cell text, so go-pretty still measures the
 // widths of the visible text only.
 func (r *Renderer) writeTable(t Table, paint func(cells []string) string) error {
-	tw := table.NewWriter()
-	tw.SetOutputMirror(r.out)
-	// One layout for every table: no outer border, a rule under the header, two
-	// spaces between columns.
-	tw.SetStyle(table.Style{
-		Name: "mailadmin",
-		Box: table.BoxStyle{
-			PaddingLeft:      "",
-			PaddingRight:     "",
-			MiddleHorizontal: "─",
-			MiddleSeparator:  "  ",
-			MiddleVertical:   "  ",
-		},
-		Options: table.Options{
-			DrawBorder:      false,
-			SeparateColumns: true,
-			SeparateHeader:  len(t.Columns) > 0,
-		},
-	})
-	if len(t.Columns) > 0 {
-		tw.AppendHeader(toRow(paintCells(sanitizeRow(t.Columns), r.color, ansiHeader)))
+	if paint == nil {
+		return r.ptermTable(t, nil)
 	}
-	for _, row := range t.Rows {
-		cells := sanitizeRow(row)
-		code := ""
-		if r.color && paint != nil {
-			code = paint(cells)
-		}
-		tw.AppendRow(toRow(paintCells(cells, r.color, code)))
-	}
-	tw.Render()
-	return nil
+	return r.ptermTable(t, func(cells []string, _ int) string { return paint(cells) })
+}
+
+// writeCells renders t with the colour of each cell chosen by cell(row, column).
+func (r *Renderer) writeCells(t Table, cell func(cells []string, col int) string) error {
+	return r.ptermTable(t, cell)
 }
 
 // paintCells wraps every cell in code when colour is on and code is set.
-func paintCells(cells []string, color bool, code string) []string {
-	if !color || code == "" {
-		return cells
-	}
-	out := make([]string, len(cells))
-	for i, c := range cells {
-		out[i] = code + c + ansiReset
-	}
-	return out
-}
-
-func toRow(cells []string) table.Row {
-	row := make(table.Row, len(cells))
-	for i, c := range cells {
-		row[i] = c
-	}
-	return row
-}
 
 // JSON renders an arbitrary value as JSON. Used for single-object results and
 // as the JSON path for Table/Value.
@@ -272,7 +271,12 @@ func (r *Renderer) Message(format string, args ...any) {
 	if r.quiet || r.format == FormatJSON {
 		return
 	}
-	_, _ = fmt.Fprintf(r.out, format+"\n", args...)
+	text := fmt.Sprintf(format, args...)
+	if r.format != FormatTable {
+		_, _ = fmt.Fprintln(r.out, text)
+		return
+	}
+	r.notice("", nil, text)
 }
 
 // renderAlignedTable prints a header plus tab-aligned rows.
@@ -397,14 +401,18 @@ func sanitizeCell(s string) string {
 }
 
 // Heading prints a bold section line when colour is on, plain text otherwise.
-func (r *Renderer) Heading(s string) {
+func (r *Renderer) Heading(text string) {
 	if r.quiet || r.format == FormatJSON {
 		return
 	}
-	if r.color {
-		s = ansiBold + s + ansiReset
+	if r.format != FormatTable {
+		_, _ = fmt.Fprintln(r.out, text)
+		return
 	}
-	_, _ = fmt.Fprintln(r.out, s)
+	if r.color {
+		text = pterm.Bold.Sprint(text)
+	}
+	r.notice("▸", &ptBlue, text)
 }
 
 // List renders items as a bulleted list (go-pretty). json and plain print one item
@@ -418,12 +426,14 @@ func (r *Renderer) List(items []string) error {
 		}
 		return nil
 	}
-	lw := list.NewWriter()
-	lw.SetOutputMirror(r.out)
-	lw.SetStyle(list.StyleBulletCircle)
+	list := make([]pterm.BulletListItem, 0, len(items))
 	for _, it := range items {
-		lw.AppendItem(sanitizeCell(it))
+		list = append(list, pterm.BulletListItem{Level: 0, Text: sanitizeCell(it), Bullet: "•"})
 	}
-	lw.Render()
-	return nil
+	out, err := pterm.DefaultBulletList.WithItems(list).Srender()
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(r.out, out)
+	return err
 }
