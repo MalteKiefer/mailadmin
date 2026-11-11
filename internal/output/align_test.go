@@ -57,7 +57,6 @@ func TestStatusTableAlignment(t *testing.T) {
 	}
 }
 
-
 // typeColStart returns the offset of the TYPE column value in a rendered line.
 func typeColStart(s string) int {
 	for _, w := range []string{"TYPE", "MX", "TXT"} {
