@@ -1,6 +1,7 @@
 package output
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -50,7 +51,8 @@ func TestHighlightCodeKeepsText(t *testing.T) {
 	pterm.EnableColor()
 	defer pterm.DisableColor()
 	line := `    MX("@", 10, "mxext1.mailbox.org."),`
-	plain := ansiRE.ReplaceAllString(highlightCode(line), "")
+	anySGR := regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+	plain := anySGR.ReplaceAllString(highlightCode(line), "")
 	if plain != line {
 		t.Fatalf("highlight changed the text:\n got %q\nwant %q", plain, line)
 	}
