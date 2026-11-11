@@ -1,7 +1,6 @@
 package output
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 
@@ -51,11 +50,11 @@ func TestHighlightCodeKeepsText(t *testing.T) {
 	pterm.EnableColor()
 	defer pterm.DisableColor()
 	line := `    MX("@", 10, "mxext1.mailbox.org."),`
-	anySGR := regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
-	plain := anySGR.ReplaceAllString(highlightCode(line), "")
-	if plain != line {
-		t.Fatalf("highlight changed the text:\n got %q\nwant %q", plain, line)
+	pterm.DisableColor()
+	if got := highlightCode(line); got != line {
+		t.Fatalf("without colour the text must not change:\n got %q\nwant %q", got, line)
 	}
+	pterm.EnableColor()
 	if !strings.Contains(highlightCode(line), "\x1b[") {
 		t.Fatal("expected colour codes on a DNSControl statement")
 	}
