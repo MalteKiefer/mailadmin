@@ -28,6 +28,7 @@ providers need.
 
 ### Changed
 - `git` is installed with the other packages. It is needed for the `dns.config_repo` flow.
+- `gh` (GitHub CLI) is installed. Install asks to log in with `gh auth login` when it is not logged in. `dns sync` opens pull requests with it.
 
 ## [v1.35.0] - 2026-11-11
 

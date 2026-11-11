@@ -74,3 +74,16 @@ func TestDenyServiceStartsOwnsOnlyMarkedFiles(t *testing.T) {
 		t.Fatalf("foreign policy was modified:\n%s", after)
 	}
 }
+
+// dns sync needs gh and git on the host.
+func TestDistroPackagesIncludeGitAndGH(t *testing.T) {
+	have := map[string]bool{}
+	for _, p := range DistroPackages() {
+		have[p] = true
+	}
+	for _, want := range []string{"git", "gh"} {
+		if !have[want] {
+			t.Fatalf("%s missing from DistroPackages", want)
+		}
+	}
+}
