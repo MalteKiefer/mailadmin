@@ -40,9 +40,17 @@ type State struct {
 	Created time.Time `json:"created"`
 }
 
-// Propose writes the TLSA record for domain into dnsconfig.js on a new branch from
-// origin/main, commits it and opens a pull request. Nothing is merged here.
+// Propose writes the TLSA record for domain into dnsconfig.js and opens a pull request.
 func (r Repo) Propose(ctx context.Context, domain, name string, usage, selector, matching int, cert, title, body string) (Proposal, error) {
+	return r.ProposeEdit(ctx, "mailadmin/tlsa-"+domain, title, body, func(src string) (string, error) {
+		return SetTLSA(src, domain, name, usage, selector, matching, cert)
+	})
+}
+
+// ProposeEdit applies edit to dnsconfig.js on a new branch from origin/main, commits
+// the result and opens a pull request. branchPrefix names the branch; a timestamp is
+// appended. Nothing is merged here. ErrUnchanged is returned when edit changes nothing.
+func (r Repo) ProposeEdit(ctx context.Context, branchPrefix, title, body string, edit func(src string) (string, error)) (Proposal, error) {
 	dirty, err := r.git(ctx, "status", "--porcelain")
 	if err != nil {
 		return Proposal{}, err
@@ -57,7 +65,7 @@ func (r Repo) Propose(ctx context.Context, domain, name string, usage, selector,
 	if _, err := r.git(ctx, "fetch", "--quiet", "origin", "main"); err != nil {
 		return Proposal{}, err
 	}
-	branch := "mailadmin/tlsa-" + domain + "-" + time.Now().UTC().Format("20060102-1504")
+	branch := branchPrefix + "-" + time.Now().UTC().Format("20060102-1504")
 	if _, err := r.git(ctx, "checkout", "-q", "-B", branch, "origin/main"); err != nil {
 		return Proposal{}, err
 	}
@@ -74,7 +82,7 @@ func (r Repo) Propose(ctx context.Context, domain, name string, usage, selector,
 		back()
 		return Proposal{}, err
 	}
-	out, err := SetTLSA(string(src), domain, name, usage, selector, matching, cert)
+	out, err := edit(string(src))
 	if err != nil {
 		back()
 		return Proposal{}, err

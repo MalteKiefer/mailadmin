@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- `mailadmin dns sync <domain>` (with `dns.config_repo`): writes the desired mail records into the mailadmin block of the domain's `D(...)` call in `dnsconfig.js` and opens a pull request. The TLSA record goes into the zone of the mail host. Without `--delete` the sync stops when mail records outside the block exist. `--delete` removes them in the same pull request. `--dry-run` shows the count without changes.
+
 ## [v1.35.1] - 2026-11-11
 
 ### Changed
