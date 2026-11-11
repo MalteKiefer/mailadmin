@@ -83,7 +83,7 @@ func (r Repo) Propose(ctx context.Context, domain, name string, usage, selector,
 		back()
 		return Proposal{}, ErrUnchanged
 	}
-	if err := os.WriteFile(path, []byte(out), info.Mode().Perm()); err != nil {
+	if err := os.WriteFile(path, []byte(out), info.Mode().Perm()); err != nil { // #nosec G703 -- fixed file name in the configured repository
 		back()
 		return Proposal{}, err
 	}

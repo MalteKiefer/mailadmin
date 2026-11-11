@@ -56,7 +56,7 @@ func (a *App) dnsTLSAPR(cmd *cobra.Command, rawDomain string) error {
 	}
 	domain, err := valid.Domain(rawDomain)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	r, err := a.Renderer()
 	if err != nil {
@@ -112,7 +112,7 @@ func (a *App) dnsTLSAStatus(cmd *cobra.Command, rawDomain string) error {
 	}
 	domain, err := valid.Domain(rawDomain)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, err)
 	}
 	r, err := a.Renderer()
 	if err != nil {
