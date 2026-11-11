@@ -49,6 +49,10 @@ ipv6 = "2001:db8::10"
 [dns]
 # Resolver used for verification queries (host:port).
 resolver = "1.1.1.1:53"
+# Local checkout of a DNSControl repository (dnsconfig.js). Set: mailadmin does not
+# write DNS records itself, the repository is the source of truth. Empty: mailadmin
+# manages the records directly.
+config_repo = ""
 
 [backup]
 # Required. Directory for DNS zone snapshots.

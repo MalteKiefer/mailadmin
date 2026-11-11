@@ -328,6 +328,9 @@ func (a *App) zoneManagerFor(cmd *cobra.Command, domain, provider string) (dnspr
 // dnsZoneCreate creates the zone at the provider and prints the delegation info
 // the operator must set at their registrar.
 func (a *App) dnsZoneCreate(cmd *cobra.Command, rawDomain, provider string) error {
+	if err := a.refuseRepoManagedDNS(cmd); err != nil {
+		return err
+	}
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -375,6 +378,9 @@ func zoneInfoView(domain string, info dnsprovider.ZoneInfo) map[string]any {
 // one of three sources (AXFR / zonefile / provider API), to support moving a
 // domain's DNS. It never deletes at the target and skips records already there.
 func (a *App) dnsMigrate(cmd *cobra.Command, rawDomain, to, from, axfr, zonefile string, create, probe, clean bool) error {
+	if err := a.refuseRepoManagedDNS(cmd); err != nil {
+		return err
+	}
 	r, err := a.Renderer()
 	if err != nil {
 		return err
@@ -1061,6 +1067,9 @@ func (a *App) offerStaleDelete(cmd *cobra.Command, be *dnsBackends, domain strin
 // before mutating, honours --dry-run, guards MTA-STS behind readiness, and
 // writes an audit record on success.
 func (a *App) dnsPublish(cmd *cobra.Command, rawDomain string, withMTASTS bool) error {
+	if err := a.refuseRepoManagedDNS(cmd); err != nil {
+		return err
+	}
 	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
 	if err != nil {
 		return err
@@ -1141,6 +1150,9 @@ func (a *App) daneRecord(ctx context.Context, cfg *config.Config, domain string)
 // adds the record (existing values are kept, supporting a cert-rollover overlap)
 // and never removes; honours --dry-run and confirms.
 func (a *App) dnsPublishDANE(cmd *cobra.Command, rawDomain string) error {
+	if err := a.refuseRepoManagedDNS(cmd); err != nil {
+		return err
+	}
 	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
 	if err != nil {
 		return err
@@ -1192,6 +1204,9 @@ func (a *App) dnsPublishDANE(cmd *cobra.Command, rawDomain string) error {
 // record-set. Destructive: it confirms, honours --dry-run, and backs up first
 // (ReplaceAll writes the snapshot before removing anything).
 func (a *App) dnsTakeover(cmd *cobra.Command, rawDomain string, keepWeb, withMTASTS bool) error {
+	if err := a.refuseRepoManagedDNS(cmd); err != nil {
+		return err
+	}
 	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
 	if err != nil {
 		return err
@@ -1251,6 +1266,9 @@ func (a *App) dnsTakeover(cmd *cobra.Command, rawDomain string, keepWeb, withMTA
 
 // dnsRestore wipes the current zone and re-adds every record from a snapshot.
 func (a *App) dnsRestore(cmd *cobra.Command, rawDomain, backupPath string) error {
+	if err := a.refuseRepoManagedDNS(cmd); err != nil {
+		return err
+	}
 	be, domain, err := a.dnsMutableBackends(cmd, rawDomain, true)
 	if err != nil {
 		return err
@@ -1683,3 +1701,23 @@ func staleTable(stale []dnsprovider.Record) output.Table {
 }
 
 // resultsTable renders live DNS verification results.
+
+// refuseRepoManagedDNS stops every command that writes DNS records when the
+// config names a DNSControl repository (dns.config_repo). That repository is the
+// single source of truth; a direct write here would be overwritten by the next
+// push, or would overwrite the repository's records.
+func (a *App) refuseRepoManagedDNS(cmd *cobra.Command) error {
+	cfg, _, err := a.Config()
+	if err != nil {
+		return err
+	}
+	if cfg.DNS.ConfigRepo == "" {
+		return nil
+	}
+	what := "dns write"
+	if cmd != nil {
+		what = cmd.CommandPath()
+	}
+	return fmt.Errorf("DNS is managed in %s: change dnsconfig.js there, open a PR and merge it. "+
+		"This mailadmin DNS write (%s) is disabled while dns.config_repo is set", cfg.DNS.ConfigRepo, what)
+}
