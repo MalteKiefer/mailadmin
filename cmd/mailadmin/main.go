@@ -7,12 +7,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"mailadmin/internal/cli"
+	"mailadmin/internal/output"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func run() int {
 
 	root := cli.NewRootCmd()
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		output.PrintError(os.Stderr, output.AutoColor(os.Stderr), err)
 		return cli.ExitCode(err)
 	}
 	return cli.ExitOK
