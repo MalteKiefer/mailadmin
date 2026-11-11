@@ -87,3 +87,13 @@ func TestDistroPackagesIncludeGitAndGH(t *testing.T) {
 		}
 	}
 }
+
+// The borg timer runs the backup command from the config schedule.
+func TestBorgServiceRunsBackupBorg(t *testing.T) {
+	if s := BorgServiceFile(); !strings.Contains(s, "backup borg run") {
+		t.Fatalf("service does not run backup borg run:\n%s", s)
+	}
+	if s := BorgTimerFile("*-*-* 03:30:00"); !strings.Contains(s, "OnCalendar=*-*-* 03:30:00") {
+		t.Fatalf("timer schedule missing:\n%s", s)
+	}
+}

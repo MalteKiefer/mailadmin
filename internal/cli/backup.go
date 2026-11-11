@@ -60,7 +60,7 @@ func newBackupCmd(app *App) *cobra.Command {
 	}
 	list.Flags().StringVar(&listDir, "dir", "", "backup directory (default: [backup] dir in config.toml)")
 
-	cmd.AddCommand(create, restore, list)
+	cmd.AddCommand(create, restore, list, newBackupBorgCmd(app))
 	return cmd
 }
 

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -99,6 +100,16 @@ type Recorder interface {
 type Runner struct {
 	timeout  time.Duration
 	recorder Recorder
+	env      []string // extra KEY=value entries for every command, on top of the environment
+}
+
+// WithEnv returns a Runner that adds kv (KEY=value entries) to the environment of
+// every command it runs. Used for tools that take settings from the environment,
+// such as borg's BORG_RSH and BORG_PASSPHRASE, so no secret ends up in argv.
+func (r *Runner) WithEnv(kv ...string) *Runner {
+	c := *r
+	c.env = append(append([]string(nil), r.env...), kv...)
+	return &c
 }
 
 // New builds a Runner. A zero timeout falls back to DefaultTimeout. recorder may
@@ -154,6 +165,9 @@ func (r *Runner) RunReader(ctx context.Context, stdin io.Reader, argv ...string)
 	cmd := exec.CommandContext(runCtx, args[0], args[1:]...) // #nosec G204 -- absolute path, arg slice, no shell; the audited exec chokepoint
 	if stdin != nil {
 		cmd.Stdin = stdin
+	}
+	if len(r.env) > 0 {
+		cmd.Env = append(os.Environ(), r.env...)
 	}
 	// The command runs in its own process group, and a timeout or cancel kills
 	// the whole group: a wrapper such as runuser would otherwise die alone while
