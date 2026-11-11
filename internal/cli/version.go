@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -190,6 +191,9 @@ func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag strin
 	if strings.ToLower(filepath.Ext(host)) != ".toml" {
 		return configUpdateHint(c, out, host, tag)
 	}
+	if !reReleaseTag.MatchString(tag) {
+		return fmt.Errorf("unexpected release tag %q", tag)
+	}
 	def, err := config.FetchDefaultFor(c, tag)
 	if err != nil {
 		return err
@@ -203,7 +207,7 @@ func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag strin
 		return err
 	}
 	before := host + ".before-" + tag
-	if err := os.WriteFile(before, cur, 0o600); err != nil {
+	if err := os.WriteFile(before, cur, 0o600); err != nil { // #nosec G703 -- tag matches reReleaseTag
 		return fmt.Errorf("save %s: %w", before, err)
 	}
 	added, err := config.MergeNewKeys(host, def)
@@ -225,3 +229,6 @@ func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag strin
 	r.Message("config: %d new key(s) in %s, backup: %s", len(added), tag, before)
 	return r.StatusTable(output.Table{Columns: []string{"KEY", "STATUS"}, Rows: rows}, 1)
 }
+
+// reReleaseTag matches the release tags mailadmin publishes, e.g. v1.32.0.
+var reReleaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
