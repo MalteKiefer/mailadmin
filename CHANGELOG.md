@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Changed
+- `mailadmin update` rewrites config.toml in one layout on every run: `key = value` with single spaces, no indentation, one blank line before each table, comments and values unchanged. Keys added by a sync use the same layout.
+
 ## [v1.33.0] - 2026-11-11
 
 ### Changed

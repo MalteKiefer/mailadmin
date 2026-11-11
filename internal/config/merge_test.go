@@ -111,3 +111,28 @@ func TestMergeNewKeysMarksObsoleteKeepsValue(t *testing.T) {
 		t.Fatalf("expected two markers:\n%s", raw)
 	}
 }
+
+// A config with odd layout is rewritten in the canonical layout even when no key
+// is missing, and a second run changes nothing.
+func TestMergeNewKeysFormatsEveryRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	host := "[mail]\nhostname   =   \"mx.example.com\"\ndns_ttl = 3600\nquota_default = 5368709120\ndefault_selector = \"mail2026\"\ndkim_dir = \"/var/lib/rspamd/dkim\"\ntls_mode = \"acme\"\n\n\n\n[notify]\n  url = \"\"\n\n[backup]\ndir = \"/var/lib/mailadmin/backups\"\n\n[backup.borg]\nenabled = false\n[backup.borg.retention]\ndaily = 7\n\n[timeouts]\ncommand = \"30s\"\n"
+	if err := os.WriteFile(path, []byte(host), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MergeNewKeys(path, []byte(mergeDefaults), "v1.34.0"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if strings.Contains(string(got), "   =") || strings.Contains(string(got), "\n\n\n") || strings.Contains(string(got), "  url") {
+		t.Fatalf("layout not normalised:\n%s", got)
+	}
+	again, _ := os.ReadFile(path)
+	if _, err := MergeNewKeys(path, []byte(mergeDefaults), "v1.34.0"); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := os.ReadFile(path)
+	if string(again) != string(final) {
+		t.Fatalf("second run changed the file:\n%s", final)
+	}
+}
