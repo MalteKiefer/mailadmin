@@ -24,6 +24,12 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Changed
+- `git` is installed with the other packages. It is needed for the `dns.config_repo` flow.
+- `gh` (GitHub CLI) is installed. Install asks to log in with `gh auth login` when it is not logged in. `dns sync` opens pull requests with it.
+
 ## [v1.38.0] - 2026-11-11
 
 ### Changed

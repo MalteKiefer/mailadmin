@@ -193,6 +193,7 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 		return err
 	}
 	_, _ = fmt.Fprintln(out, "packages installed")
+	ensureGHLogin(app, out)
 
 	exe, err := os.Executable()
 	if err != nil {
