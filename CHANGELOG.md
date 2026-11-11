@@ -24,6 +24,11 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Changed
+- `git` is installed with the other packages. It is needed for the `dns.config_repo` flow.
+
 ## [v1.35.0] - 2026-11-11
 
 ### Added
