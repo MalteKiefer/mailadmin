@@ -139,7 +139,7 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	// 1. Postgres dump (custom format: supports --list previews and a clean
 	// --clean --if-exists restore; see internal/backup.PgDumpArgs).
 	dumpPath := filepath.Join(bundleDir, backup.DBDumpFile)
-	if _, err := sys.New(dbToolTimeout, nil).Run(ctx(cmd), nil, backup.PgDumpArgs(cfg.Postgres.Service, dumpPath)...); err != nil {
+	if _, err := sys.New(dbToolTimeoutFor(cfg), nil).Run(ctx(cmd), nil, backup.PgDumpArgs(cfg.Postgres.Service, dumpPath)...); err != nil {
 		return fmt.Errorf("backup create: pg_dump: %w", err)
 	}
 	components = append(components, backup.ComponentDB)
@@ -390,9 +390,14 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 	return nil
 }
 
-// dbToolTimeout bounds pg_dump and pg_restore, which can take minutes on a large
-// audit log.
-const dbToolTimeout = 30 * time.Minute
+// dbToolTimeoutFor bounds pg_dump and pg_restore: the configured value, or the
+// built-in default when no config is loaded.
+func dbToolTimeoutFor(cfg *config.Config) time.Duration {
+	if cfg == nil {
+		return config.DefaultDBToolTimeout
+	}
+	return cfg.Timeouts.DBToolTimeout()
+}
 
 // restoreDomainDB replaces the live database with the bundle's pg_dump, via
 // pg_restore --clean --if-exists (drops known objects first, then recreates
@@ -415,7 +420,7 @@ func (a *App) restoreDomainDB(cmd *cobra.Command, cfg *config.Config, bundlePath
 		return fmt.Errorf("backup restore: domain-db: %w", err)
 	}
 	defer func() { _ = dump.Close() }()
-	if _, err := sys.New(dbToolTimeout, nil).RunReader(ctx(cmd), dump,
+	if _, err := sys.New(dbToolTimeoutFor(cfg), nil).RunReader(ctx(cmd), dump,
 		backup.PgRestoreArgs(pc.Database, pc.Host, pc.Port)...); err != nil {
 		return fmt.Errorf("backup restore: pg_restore: %w", err)
 	}

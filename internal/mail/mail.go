@@ -22,7 +22,6 @@ import (
 // shell string.
 const (
 	dkimGenBin  = "/usr/local/libexec/mailadmin-dkim-gen"
-	dkimTTL     = 3600
 	maxKeyBytes = 64 << 10 // 64 KiB: a DKIM .pub file is well under this
 )
 
@@ -49,11 +48,13 @@ type Manager struct {
 	mailHost string
 	ipv4     string
 	ipv6     string
+	ttl      int
 }
 
-// New builds a Manager. dkimDir is the rspamd DKIM directory.
-func New(runner *sys.Runner, dkimDir, mailHost, ipv4, ipv6 string) *Manager {
-	return &Manager{runner: runner, dkimDir: dkimDir, mailHost: mailHost, ipv4: ipv4, ipv6: ipv6}
+// New builds a Manager. dkimDir is the rspamd DKIM directory, ttl the record TTL
+// in seconds (0 means the default).
+func New(runner *sys.Runner, dkimDir, mailHost, ipv4, ipv6 string, ttl int) *Manager {
+	return &Manager{runner: runner, dkimDir: dkimDir, mailHost: mailHost, ipv4: ipv4, ipv6: ipv6, ttl: ttl}
 }
 
 // paths returns the private/public key paths for a validated domain+selector,
@@ -137,7 +138,7 @@ func (m *Manager) DesiredRecords(domain, selector, dkimValue string, withMTASTS 
 		IPv6:       m.ipv6,
 		Selector:   selector,
 		DKIMValue:  dkimValue,
-		TTL:        dkimTTL,
+		TTL:        m.ttl,
 		WithMTASTS: withMTASTS,
 	})
 }

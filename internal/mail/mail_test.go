@@ -132,7 +132,7 @@ func TestFirstDKIMLine(t *testing.T) {
 }
 
 func TestManagerPaths(t *testing.T) {
-	m := New(nil, "/var/lib/rspamd/dkim", "mail.example.com", "192.0.2.1", "2001:db8::1")
+	m := New(nil, "/var/lib/rspamd/dkim", "mail.example.com", "192.0.2.1", "2001:db8::1", 3600)
 	priv, pub := m.paths("example.com", "mail2026")
 	if priv != "/var/lib/rspamd/dkim/example.com.mail2026.key" {
 		t.Fatalf("priv = %q", priv)
@@ -143,7 +143,7 @@ func TestManagerPaths(t *testing.T) {
 }
 
 func TestDesiredRecords(t *testing.T) {
-	m := New(nil, "/var/lib/rspamd/dkim", "mail.example.com", "192.0.2.1", "2001:db8::1")
+	m := New(nil, "/var/lib/rspamd/dkim", "mail.example.com", "192.0.2.1", "2001:db8::1", 3600)
 
 	// Without MTA-STS: no _mta-sts / mta-sts host records.
 	got := m.DesiredRecords("example.com", "mail2026", "v=DKIM1; k=rsa; p=ABC", false)
@@ -176,8 +176,8 @@ func TestDesiredRecords(t *testing.T) {
 		t.Fatalf("host AAAA record wrong: %+v ok=%v", aaaa, ok)
 	}
 	for _, r := range got {
-		if r.TTL != dkimTTL {
-			t.Fatalf("record %s %s TTL = %d, want %d", r.Type, r.Name, r.TTL, dkimTTL)
+		if r.TTL != 3600 {
+			t.Fatalf("record %s %s TTL = %d, want %d", r.Type, r.Name, r.TTL, 3600)
 		}
 	}
 

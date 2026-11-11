@@ -89,7 +89,7 @@ func runUninstall(app *App, c *cobra.Command, noBackup bool) error {
 	}
 
 	// Package and cluster operations take minutes: the runner gets the long timeout.
-	x := install.Resolve(sys.New(dbToolTimeout, nil))
+	x := install.Resolve(sys.New(dbToolTimeoutFor(cfg), nil))
 	errs := install.Uninstall(ctx(c), x, m, func(msg string) { r.Message("  %s", msg) })
 	if err := os.Remove(installBinaryPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		errs = append(errs, fmt.Errorf("remove %s: %w", installBinaryPath, err))
@@ -127,7 +127,7 @@ func uninstallBackup(c *cobra.Command, app *App, cfg *config.Config, dir string)
 	if _, err := app.db(ctx(c)); err != nil { // sets PGSERVICEFILE for pg_dump
 		return fmt.Errorf("database: %w", err)
 	}
-	long := sys.New(dbToolTimeout, nil)
+	long := sys.New(dbToolTimeoutFor(cfg), nil)
 	dump := filepath.Join(dir, backup.DBDumpFile)
 	if _, err := long.Run(ctx(c), nil, backup.PgDumpArgs(cfg.Postgres.Service, dump)...); err != nil {
 		return fmt.Errorf("pg_dump: %w", err)

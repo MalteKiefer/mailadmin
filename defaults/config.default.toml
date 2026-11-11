@@ -33,6 +33,10 @@ tls_cert = "/etc/ssl/mail/fullchain.pem"
 tls_mode = "acme"
 # Default mailbox quota in bytes for `mailbox add` without --quota (5 GiB).
 quota_default = 5368709120
+# TTL in seconds of the DNS records mailadmin publishes (MX, SPF, DKIM, DMARC, SRV).
+# 0 or unset: 3600.
+dns_ttl = 3600
+
 
 [server]
 # Required. Public IPv4 address of the host.
@@ -83,6 +87,13 @@ monthly = 6
 [logs]
 # Units that doctor, service and log may read or control.
 units = ["postfix", "dovecot", "rspamd", "caddy", "crowdsec", "crowdsec-firewall-bouncer", "postgresql"]
+
+[timeouts]
+# Go durations, above 0 and at most 2h. Empty: the built-in default.
+# command: one privileged command (doveadm, nft, systemctl). Default 30s.
+command = "30s"
+# db_tool: pg_dump and pg_restore. Default 30m.
+db_tool = "30m"
 
 [notify]
 # ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
