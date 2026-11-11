@@ -3,8 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -69,29 +72,42 @@ func runUpgrade(app *App, c *cobra.Command) error {
 		return fmt.Errorf("locate running binary: %w", err)
 	}
 	cfgArgs := []string{"--config", app.flags.configPath, "--yes"}
+	logPath, logFile, err := openUpgradeLog()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = logFile.Close() }()
+
 	steps := []struct {
 		name string
 		run  func() error
 	}{
-		{"backup", func() error { return app.backupCreate(c, "") }},
-		{"update", func() error { return childRun(app, c, exe, append([]string{"update"}, cfgArgs...)) }},
+		{"backup", func() error {
+			c.SetOut(logFile)
+			defer c.SetOut(nil)
+			return app.backupCreate(c, "")
+		}},
+		{"update", func() error { return childRun(c, exe, logFile, append([]string{"update"}, cfgArgs...)) }},
 		{"reconcile", func() error {
-			return childRun(app, c, exe, append([]string{"install", "--adopt"}, cfgArgs...))
+			return childRun(c, exe, logFile, append([]string{"install", "--adopt"}, cfgArgs...))
 		}},
 		{"check", func() error {
-			return childRun(app, c, exe, []string{"--config", app.flags.configPath, "config", "check"})
+			return childRun(c, exe, logFile, []string{"--config", app.flags.configPath, "config", "check"})
 		}},
-		{"doctor", func() error { return childRun(app, c, exe, []string{"--config", app.flags.configPath, "doctor"}) }},
+		{"doctor", func() error {
+			return childRun(c, exe, logFile, []string{"--config", app.flags.configPath, "doctor"})
+		}},
 	}
 
 	var rows []upgradeStep
 	failed := false
+	var failLog string
 	for _, s := range steps {
 		if failed {
 			rows = append(rows, upgradeStep{name: s.name, status: "skipped", detail: "an earlier step failed"})
 			continue
 		}
-		r.Heading("\n== " + s.name)
+		r.Message("running %s ...", s.name)
 		start := time.Now()
 		err := s.run()
 		st := upgradeStep{name: s.name, status: "ok", took: time.Since(start)}
@@ -100,21 +116,59 @@ func runUpgrade(app *App, c *cobra.Command) error {
 			// doctor only reports; a failing check does not undo the upgrade.
 			if s.name != "doctor" {
 				failed = true
+				failLog = tailFile(logPath, 15)
 			}
 		}
 		rows = append(rows, st)
 	}
-	return renderUpgradeSummary(r, rows)
+	if err := renderUpgradeSummary(r, rows); err != nil {
+		return err
+	}
+	r.Message("full log: %s", logPath)
+	if failLog != "" {
+		r.Message("last lines of the failing step:\n%s", failLog)
+		return errors.New("upgrade stopped, see the table above")
+	}
+	return nil
 }
 
-// childRun runs the binary as a separate process so that the updated binary, not
-// the one still in memory, performs the step. stdin, stdout and stderr are the
-// command's own, so prompts for missing values reach the terminal.
-func childRun(app *App, c *cobra.Command, exe string, args []string) error {
+// openUpgradeLog creates the log of one upgrade run, owner-only. The log keeps the
+// output of every step, so the terminal shows only the summary.
+func openUpgradeLog() (string, *os.File, error) {
+	name := "upgrade-" + time.Now().UTC().Format("20060102T150405Z") + ".log"
+	path := filepath.Join(upgradeLogDir, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- fixed directory, timestamped name
+	if err != nil {
+		path = filepath.Join(os.TempDir(), name)
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- fallback, owner-only
+		if err != nil {
+			return "", nil, fmt.Errorf("create upgrade log: %w", err)
+		}
+	}
+	return path, f, nil
+}
+
+// tailFile returns the last n lines of path, or "" when it cannot be read.
+func tailFile(path string, n int) string {
+	data, err := os.ReadFile(path) // #nosec G304 -- log written by this run
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// childRun runs the binary as a separate process, so the updated binary performs the
+// step, not the one still in memory. The step gets no terminal: a missing value fails
+// the step with a message instead of waiting for input. Output goes to the log.
+func childRun(c *cobra.Command, exe string, log io.Writer, args []string) error {
 	cmd := exec.CommandContext(ctx(c), exe, args...) // #nosec G204 -- the running binary with fixed subcommands
-	cmd.Stdin = app.stdin()
-	cmd.Stdout = c.OutOrStdout()
-	cmd.Stderr = c.ErrOrStderr()
+	cmd.Stdin = nil
+	cmd.Stdout = log
+	cmd.Stderr = log
 	return cmd.Run()
 }
 
@@ -143,3 +197,6 @@ func renderUpgradeSummary(r *output.Renderer, rows []upgradeStep) error {
 	}
 	return r.StatusTable(t, 1)
 }
+
+// upgradeLogDir holds the logs of upgrade runs.
+const upgradeLogDir = "/var/lib/mailadmin"

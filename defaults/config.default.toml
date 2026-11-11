@@ -22,6 +22,8 @@ service_file = "/var/lib/mailadmin/.pg_service.conf"
 [mail]
 # Required. Public FQDN of the mail host (MX, certificate name).
 hostname = "mail.example.com"
+# Main mail domain. install --adopt and upgrade use it when no --domain is given.
+primary_domain = ""
 # Required. Directory where rspamd keeps the DKIM keys.
 dkim_dir = "/var/lib/rspamd/dkim"
 # Required. DKIM selector used for new domains.

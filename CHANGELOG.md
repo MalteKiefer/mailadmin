@@ -24,6 +24,13 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Changed
+- The mail certificate copy is renewed only when the live certificate expires within seven days, or when the host's domain was added or changed. Caddy's earlier renewals are not installed before that.
+- `mailadmin upgrade` shows one summary table. The output of each step goes to `/var/lib/mailadmin/upgrade-<time>.log`. The last lines of a failing step are shown.
+- `primary_domain` is part of the default config, so an existing config is not marked obsolete.
+
 ## [v1.33.0] - 2026-11-11
 
 ### Changed
