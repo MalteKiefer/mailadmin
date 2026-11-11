@@ -680,7 +680,7 @@ func (a *App) dnsShow(cmd *cobra.Command, rawDomain string, withMTASTS, withDANE
 	if err != nil {
 		return err
 	}
-	mgr := mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6)
+	mgr := mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6, cfg.Mail.DNSTTL)
 
 	key, err := mgr.ReadDKIM(domain, dom.DKIMSelector)
 	if err != nil {
@@ -726,7 +726,7 @@ func (a *App) computeDNSCheck(cmd *cobra.Command, rawDomain string) (dnsCheckRes
 // dnsCheckRow diffs live public DNS for a domain whose row is already loaded, so
 // a caller that checks many domains reads the domain table once.
 func (a *App) dnsCheckRow(cmd *cobra.Command, cfg *config.Config, domain string, dom db.Domain) (dnsCheckResult, error) {
-	mgr := mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6)
+	mgr := mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6, cfg.Mail.DNSTTL)
 	key, err := mgr.ReadDKIM(domain, dom.DKIMSelector)
 	if err != nil {
 		return dnsCheckResult{}, fmt.Errorf("dns check %s: %w", domain, err)
@@ -1337,7 +1337,7 @@ func (a *App) dnsMutableBackends(cmd *cobra.Command, rawDomain string, requirePr
 		cfg:      cfg,
 		db:       database,
 		provider: provider,
-		mgr:      mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6),
+		mgr:      mail.New(a.sysRunner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6, cfg.Mail.DNSTTL),
 		rec:      audit.New(database, audit.CurrentActor()),
 	}
 	return be, domain, nil

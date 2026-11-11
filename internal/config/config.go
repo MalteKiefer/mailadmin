@@ -76,6 +76,8 @@ type Mail struct {
 	TLSMode string `toml:"tls_mode"`
 	// QuotaDefault is the quota in bytes for mailbox add without --quota; 0 means 5 GiB.
 	QuotaDefault int64 `toml:"quota_default"`
+	// DNSTTL is the TTL in seconds of the records mailadmin publishes. 0 means DefaultDNSTTL.
+	DNSTTL int `toml:"dns_ttl"`
 }
 
 // Hardening switches the parts of install's host hardening on or off. Unset
@@ -143,6 +145,7 @@ type Config struct {
 	DNS       DNS               `toml:"dns"`
 	Backup    Backup            `toml:"backup"`
 	Webmail   Webmail           `toml:"webmail"`
+	Timeouts  Timeouts          `toml:"timeouts"`
 	Logs      Logs              `toml:"logs"`
 	Notify    Notify            `toml:"notify"`
 	Hardening Hardening         `toml:"hardening"`
@@ -387,6 +390,13 @@ func (c *Config) Validate() error {
 	}
 	if _, err := valid.Selector(c.Mail.DefaultSelector); err != nil {
 		return fmt.Errorf("%w: mail.default_selector: %w", ErrInvalidConfig, err)
+	}
+
+	if c.Mail.DNSTTL != 0 && (c.Mail.DNSTTL < 60 || c.Mail.DNSTTL > 86400) {
+		return fmt.Errorf("%w: mail.dns_ttl must be 0 (default %d) or 60 to 86400 seconds", ErrInvalidConfig, DefaultDNSTTL)
+	}
+	if err := c.Timeouts.validate(); err != nil {
+		return err
 	}
 
 	if c.Server.IPv4 == "" {

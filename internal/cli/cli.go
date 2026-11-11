@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -138,16 +137,16 @@ func (a *App) Config() (*config.Config, *config.Secrets, error) {
 	return cfg, secrets, nil
 }
 
-// DefaultCommandTimeout bounds every privileged external command (doveadm, nft,
-// systemctl, …) run via internal/sys.
-const DefaultCommandTimeout = 30 * time.Second
-
 // runner returns the privileged-exec chokepoint. It is created once per App and
 // records nothing to the audit log itself (per-mutation audit rows are written
 // explicitly by handlers); passing nil keeps sys quiet.
 func (a *App) runner() *sys.Runner {
 	if a.run == nil {
-		a.run = sys.New(DefaultCommandTimeout, nil)
+		timeout := config.DefaultCommandTimeout // no config yet: built-in bound
+		if cfg, _, err := a.Config(); err == nil {
+			timeout = cfg.Timeouts.CommandTimeout()
+		}
+		a.run = sys.New(timeout, nil)
 	}
 	return a.run
 }

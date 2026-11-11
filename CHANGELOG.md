@@ -24,6 +24,12 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
+## [Unreleased]
+
+### Added
+- `[mail] dns_ttl` (default 3600): TTL of the published DNS records. Range 60 to 86400 seconds.
+- `[timeouts]` section: `command` (default 30s) bounds one privileged command, `db_tool` (default 30m) bounds pg_dump and pg_restore. Values are Go durations, above 0 and at most 2h.
+
 ## [v1.30.2] - 2026-11-10
 
 ### Fixed
