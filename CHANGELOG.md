@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.37.0] - 2026-11-11
 
 ### Changed
 - Human output uses pterm (`github.com/pterm/pterm`, MIT). Every status line has a timestamp and an icon: ℹ info, ✔ ok, ⚠ warning, ✖ failure, ▸ step. Tables, lists and headings use the same Nord colours. Errors are printed as `✖ error: …` with a timestamp. json and plain output are unchanged.
