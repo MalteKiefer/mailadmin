@@ -24,7 +24,7 @@ same audit-remediation pass, added `DESEC_TOKEN` handling to `config init` /
 upgrading to confirm your `secrets.env` has everything the configured
 providers need.
 
-## [Unreleased]
+## [v1.41.0] - 2026-11-11
 
 ### Added
 - `mailadmin backup borg timer` writes the mailadmin-borg service and timer from `[backup.borg]`, validates `schedule` with `systemd-analyze calendar`, and enables or disables the timer to match `enabled`. Run it after changing `schedule`. Install uses the same logic.
