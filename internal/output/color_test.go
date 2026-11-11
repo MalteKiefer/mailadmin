@@ -3,6 +3,8 @@ package output
 import (
 	"strings"
 	"testing"
+
+	"github.com/pterm/pterm"
 )
 
 func TestStatusColor(t *testing.T) {
@@ -44,6 +46,9 @@ func TestStatusIcon(t *testing.T) {
 }
 
 func TestHighlightCodeKeepsText(t *testing.T) {
+	// pterm turns colour off without a terminal; the test forces it on.
+	pterm.EnableColor()
+	defer pterm.DisableColor()
 	line := `    MX("@", 10, "mxext1.mailbox.org."),`
 	plain := ansiRE.ReplaceAllString(highlightCode(line), "")
 	if plain != line {
@@ -58,6 +63,8 @@ func TestHighlightCodeKeepsText(t *testing.T) {
 }
 
 func TestPromptTextYellow(t *testing.T) {
+	pterm.EnableColor()
+	defer pterm.DisableColor()
 	if PromptText("Proceed? [y/N]: ", false) != "Proceed? [y/N]: " {
 		t.Fatal("no colour when color is off")
 	}
