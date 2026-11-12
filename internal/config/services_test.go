@@ -33,12 +33,27 @@ func TestWebmailValidate(t *testing.T) {
 		"short sum":  func(w *Webmail) { w.SHA256 = "abc" },
 		"upper hex":  func(w *Webmail) { w.SHA256 = strings.Repeat("A", 64) },
 		"bad listen": func(w *Webmail) { w.Listen = "nope" },
+		"caldav without server": func(w *Webmail) {
+			w.CalDAV = DAVServer{Enabled: true}
+		},
+		"carddav server without scheme": func(w *Webmail) {
+			w.CardDAV = DAVServer{Enabled: true, Server: "dav.example.org"}
+		},
 	} {
 		w := goodWebmail()
 		mut(&w)
 		if err := w.validate(); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
+	}
+}
+
+func TestWebmailDAVServerOptional(t *testing.T) {
+	w := goodWebmail()
+	w.CalDAV = DAVServer{Enabled: false, Server: "not checked while off"}
+	w.CardDAV = DAVServer{Enabled: true, Server: "https://dav.example.org/carddav"}
+	if err := w.validate(); err != nil {
+		t.Fatalf("valid DAV settings refused: %v", err)
 	}
 }
 

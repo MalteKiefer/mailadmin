@@ -22,6 +22,32 @@ type Webmail struct {
 	SHA256 string `toml:"sha256"`
 	// Listen is the local address alps listens on. Caddy proxies Domain to it.
 	Listen string `toml:"listen"`
+	// Plugins switches the optional alps plugins on or off. base always loads.
+	Plugins WebmailPlugins `toml:"plugins"`
+	// CalDAV is the default calendar server. Users may still add their own.
+	CalDAV DAVServer `toml:"caldav"`
+	// CardDAV is the default contacts server. Users may still add their own.
+	CardDAV DAVServer `toml:"carddav"`
+}
+
+// WebmailPlugins switches the alps plugins that are not configured elsewhere.
+// The CalDAV and CardDAV plugins have their own sections in Webmail.
+type WebmailPlugins struct {
+	// GPG enables OpenPGP in the webmail.
+	GPG bool `toml:"gpg"`
+	// ManageSieve enables filter editing against Dovecot's ManageSieve service.
+	ManageSieve bool `toml:"managesieve"`
+	// Password enables password changes through the webmail-passwd helper.
+	Password bool `toml:"password"`
+}
+
+// DAVServer is a default CalDAV or CardDAV server for the webmail.
+type DAVServer struct {
+	// Enabled turns the plugin on. It needs Server.
+	Enabled bool `toml:"enabled"`
+	// Server is the URL with scheme, e.g. https://dav.example.com. Plain http
+	// and the +insecure schemes are accepted as alps defines them.
+	Server string `toml:"server"`
 }
 
 // BorgBackup configures the Borg repository that archives the backup bundles.
@@ -91,6 +117,21 @@ func (w Webmail) validate() error {
 	}
 	if err := validateHostPort(w.Listen); err != nil {
 		return fmt.Errorf("%w: webmail.listen: %w", ErrInvalidConfig, err)
+	}
+	if err := w.CalDAV.validate("webmail.caldav"); err != nil {
+		return err
+	}
+	return w.CardDAV.validate("webmail.carddav")
+}
+
+// validate checks a DAV default. An enabled plugin needs a server: without one
+// alps would start the plugin with no calendar or address book to show.
+func (d DAVServer) validate(section string) error {
+	if !d.Enabled {
+		return nil
+	}
+	if !strings.Contains(d.Server, "://") {
+		return fmt.Errorf("%w: %s.server must be a URL with a scheme when enabled, got %q", ErrInvalidConfig, section, d.Server)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"mailadmin/internal/config"
@@ -63,27 +64,35 @@ origins = [%q]
 [plugin.base]
 enabled = true
 
-[plugin.caldav]
-enabled = true
-
-[plugin.carddav]
-enabled = true
-
+%[7]s
+%[8]s
 [plugin.gpg]
-enabled = true
+enabled = %[9]t
 
 [plugin.managesieve]
-enabled = true
+enabled = %[10]t
 
 [plugin.password]
-enabled = true
+enabled = %[11]t
 
 [plugin.password.options]
 # The helper checks the current password itself, then changes it. The password
 # travels on stdin only, never in argv.
-command = ["/usr/bin/sudo", "-n", %q, "webmail-passwd", "{email}"]
+command = ["/usr/bin/sudo", "-n", %[12]q, "webmail-passwd", "{email}"]
 stdin = "{old_password}\n{new_password}\n"
-`, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", w.Domain, "https://"+w.Domain, PasswordHelper)
+`, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", w.Domain, "https://"+w.Domain,
+		davSection("caldav", w.CalDAV), davSection("carddav", w.CardDAV), w.Plugins.GPG, w.Plugins.ManageSieve, w.Plugins.Password, PasswordHelper)
+}
+
+// davSection renders the [plugin.<name>] section of a CalDAV or CardDAV default.
+// The server line is left out when none is set, so each user enters their own.
+func davSection(name string, d config.DAVServer) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[plugin.%s]\nenabled = %t\n", name, d.Enabled)
+	if d.Server != "" {
+		fmt.Fprintf(&b, "server = %q\n", d.Server)
+	}
+	return b.String()
 }
 
 // AlpsUnitFile renders the systemd unit. alps needs no write access and no root.
