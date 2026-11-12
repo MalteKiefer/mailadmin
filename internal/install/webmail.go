@@ -64,10 +64,10 @@ origins = [%q]
 enabled = true
 
 [plugin.caldav]
-enabled = true
+enabled = false
 
 [plugin.carddav]
-enabled = true
+enabled = false
 
 [plugin.gpg]
 enabled = true
