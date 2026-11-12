@@ -26,8 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- The alps plugins are set in `config.toml`: `[webmail.plugins]` (gpg, managesieve, password) and the default servers `[webmail.caldav]` and `[webmail.carddav]` (`enabled`, `server`). An enabled DAV plugin needs a server URL.
+
 ### Fixed
-- The generated alps config disables the CalDAV and CardDAV plugins. Without a CalDAV or CardDAV server they failed with "CalDAV server is not configured" and the calendar and contacts could not be loaded.
+- The generated alps config disables the CalDAV and CardDAV plugins by default. Without a CalDAV or CardDAV server they failed with "CalDAV server is not configured" and the calendar and contacts could not be loaded.
 
 ## [v1.41.0] - 2026-11-11
 

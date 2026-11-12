@@ -15,7 +15,58 @@ import (
 
 func testWebmail() config.Webmail {
 	return config.Webmail{Enabled: true, Domain: "webmail.kiefer-networks.de",
-		URL: "https://example.org/alps", SHA256: strings.Repeat("0", 64), Listen: "127.0.0.1:8081"}
+		URL: "https://example.org/alps", SHA256: strings.Repeat("0", 64), Listen: "127.0.0.1:8081",
+		Plugins: config.WebmailPlugins{GPG: true, ManageSieve: true, Password: true}}
+}
+
+func TestAlpsConfRendersDAVServersFromConfig(t *testing.T) {
+	w := testWebmail()
+	w.CalDAV = config.DAVServer{Enabled: true, Server: "https://dav.example.org/caldav"}
+	w.CardDAV = config.DAVServer{Enabled: false, Server: "https://dav.example.org/carddav"}
+	var got struct {
+		Plugin map[string]map[string]any `toml:"plugin"`
+	}
+	if _, err := toml.Decode(AlpsConf(w, "mail.kiefer-networks.de"), &got); err != nil {
+		t.Fatalf("alps config is not valid TOML: %v", err)
+	}
+	if on, _ := got.Plugin["caldav"]["enabled"].(bool); !on {
+		t.Fatal("caldav must be enabled when the config enables it")
+	}
+	if got.Plugin["caldav"]["server"] != "https://dav.example.org/caldav" {
+		t.Fatalf("caldav server = %v", got.Plugin["caldav"]["server"])
+	}
+	if on, _ := got.Plugin["carddav"]["enabled"].(bool); on {
+		t.Fatal("carddav must stay disabled when the config disables it")
+	}
+	if _, set := got.Plugin["carddav"]["server"]; !set {
+		t.Fatal("carddav server must still be rendered when configured")
+	}
+}
+
+func TestAlpsConfOmitsServerWhenUnset(t *testing.T) {
+	out := AlpsConf(testWebmail(), "mail.kiefer-networks.de")
+	if strings.Contains(out, "server = \"\"") {
+		t.Fatalf("empty server line rendered:\n%s", out)
+	}
+	if !strings.Contains(out, "[plugin.caldav]\nenabled = false") {
+		t.Fatalf("caldav section missing or wrong:\n%s", out)
+	}
+}
+
+func TestAlpsConfPluginFlagsFollowConfig(t *testing.T) {
+	w := testWebmail()
+	w.Plugins = config.WebmailPlugins{}
+	var got struct {
+		Plugin map[string]map[string]any `toml:"plugin"`
+	}
+	if _, err := toml.Decode(AlpsConf(w, "mail.kiefer-networks.de"), &got); err != nil {
+		t.Fatalf("alps config is not valid TOML: %v", err)
+	}
+	for _, name := range []string{"gpg", "managesieve", "password"} {
+		if on, _ := got.Plugin[name]["enabled"].(bool); on {
+			t.Fatalf("plugin %s enabled although the config disables it", name)
+		}
+	}
 }
 
 func TestAlpsConfPointsAtLocalMailAndHelper(t *testing.T) {
