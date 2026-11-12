@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.42.0] - 2026-11-12
+
 ### Added
 - The alps plugins are set in `config.toml`: `[webmail.plugins]` (gpg, managesieve, password) and the default servers `[webmail.caldav]` and `[webmail.carddav]` (`enabled`, `server`). An enabled DAV plugin needs a server URL.
 
