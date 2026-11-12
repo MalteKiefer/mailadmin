@@ -53,9 +53,15 @@ func TestAlpsConfPointsAtLocalMailAndHelper(t *testing.T) {
 	if got.Provider.Imap.Server != "imaps://mail.kiefer-networks.de:993" || got.Smtp.Server != "smtps://mail.kiefer-networks.de:465" {
 		t.Fatalf("mail endpoints = %q, %q", got.Provider.Imap.Server, got.Smtp.Server)
 	}
-	for _, name := range []string{"base", "caldav", "carddav", "gpg", "managesieve", "password"} {
+	for _, name := range []string{"base", "gpg", "managesieve", "password"} {
 		if on, _ := got.Plugin[name]["enabled"].(bool); !on {
 			t.Fatalf("plugin %s must stay enabled once plugin sections exist", name)
+		}
+	}
+	// No CalDAV or CardDAV server exists, so those plugins must stay off.
+	for _, name := range []string{"caldav", "carddav"} {
+		if on, _ := got.Plugin[name]["enabled"].(bool); on {
+			t.Fatalf("plugin %s must be disabled without a server", name)
 		}
 	}
 	pw, _ := got.Plugin["password"]["options"].(map[string]any)
