@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- `mailadmin upgrade` from a binary older than the release no longer skips the config merge. The release default may name keys the old binary does not know. Only its TOML syntax is checked now, so the new `[webmail.plugins]`, `[webmail.caldav]` and `[webmail.carddav]` keys are added. `config init` still refuses unknown keys.
+
 ## [v1.42.0] - 2026-11-12
 
 ### Added
