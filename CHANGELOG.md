@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- The generated alps config names the ManageSieve server (`managesieves://<host>:4190`, STARTTLS). alps no longer discovers it via SRV, and without it the filters are unavailable.
+
 ## [v1.42.1] - 2026-11-13
 
 ### Fixed

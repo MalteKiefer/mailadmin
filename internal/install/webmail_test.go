@@ -29,6 +29,9 @@ func TestAlpsConfRendersDAVServersFromConfig(t *testing.T) {
 	if _, err := toml.Decode(AlpsConf(w, "mail.kiefer-networks.de"), &got); err != nil {
 		t.Fatalf("alps config is not valid TOML: %v", err)
 	}
+	if got.Plugin["managesieve"]["server"] != "managesieves://mail.kiefer-networks.de:4190" {
+		t.Fatalf("managesieve server = %v, alps needs an explicit endpoint", got.Plugin["managesieve"]["server"])
+	}
 	if on, _ := got.Plugin["caldav"]["enabled"].(bool); !on {
 		t.Fatal("caldav must be enabled when the config enables it")
 	}
