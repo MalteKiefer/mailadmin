@@ -71,6 +71,9 @@ enabled = %[9]t
 
 [plugin.managesieve]
 enabled = %[10]t
+# alps needs an explicit ManageSieve server (no SRV discovery since v1.1.0).
+# STARTTLS on the local Dovecot, so the password goes over TLS only.
+server = %[13]q
 
 [plugin.password]
 enabled = %[11]t
@@ -81,7 +84,7 @@ enabled = %[11]t
 command = ["/usr/bin/sudo", "-n", %[12]q, "webmail-passwd", "{email}"]
 stdin = "{old_password}\n{new_password}\n"
 `, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", w.Domain, "https://"+w.Domain,
-		davSection("caldav", w.CalDAV), davSection("carddav", w.CardDAV), w.Plugins.GPG, w.Plugins.ManageSieve, w.Plugins.Password, PasswordHelper)
+		davSection("caldav", w.CalDAV), davSection("carddav", w.CardDAV), w.Plugins.GPG, w.Plugins.ManageSieve, w.Plugins.Password, PasswordHelper, "managesieves://"+hostname+":4190")
 }
 
 // davSection renders the [plugin.<name>] section of a CalDAV or CardDAV default.
