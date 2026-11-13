@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.42.2] - 2026-11-13
+
 ### Changed
 - The webmail uses alps v1.1.0 (upstream `migadu/alps`, linux-amd64). The binary is mirrored as `alps-linux-amd64` on the v1.42.2 release and pinned by SHA256 in `[webmail]`.
 
