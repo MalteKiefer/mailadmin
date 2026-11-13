@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Changed
+- The webmail uses alps v1.1.0 (upstream `migadu/alps`, linux-amd64). The binary is mirrored as `alps-linux-amd64` on the v1.42.2 release and pinned by SHA256 in `[webmail]`.
+
 ### Fixed
 - The generated alps config names the ManageSieve server (`managesieves://<host>:4190`, STARTTLS). alps no longer discovers it via SRV, and without it the filters are unavailable.
 
