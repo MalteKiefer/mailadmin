@@ -231,7 +231,7 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	line("Compression", "no")
 	// INFO, not VERBOSE: VERBOSE logs every agent key sshd refuses as a failure,
 	// and CrowdSec's ssh-bf then bans an operator whose agent holds several keys.
-	line("LogLevel", "INFO")
+	line("LogLevel", "VERBOSE") // logs the key fingerprint of every login
 	line("Banner", IssueNetPath)
 	if l := supported(sshKex, c.Kex); len(l) > 0 {
 		line("KexAlgorithms", strings.Join(l, ","))
@@ -394,6 +394,9 @@ func decideSSHPolicy(account string, known bool, keys, rootKeys []authKey, login
 			p.KeyOnly = ok && k.usable
 		}
 		p.RootKeyOnly = account != "root" || p.KeyOnly
+		// An operator who logs in with a usable key as a named account does not
+		// need root over SSH at all.
+		p.RootLoginNo = account != "root" && p.KeyOnly
 	}
 	for acct, ks := range map[string][]authKey{account: keys, "root": rootKeys} {
 		l := logins[acct]
@@ -536,7 +539,7 @@ func ApplySSHHardening(ctx context.Context, x Exec) (policy SSHPolicy, account s
 	// elsewhere are carried into it instead of being overridden.
 	drops, _ := filepath.Glob("/etc/ssh/sshd_config.d/*.conf")
 	prl, am := operatorSSH(append(drops, "/etc/ssh/sshd_config"))
-	policy.RootLoginNo = strings.EqualFold(prl, "no")
+	policy.RootLoginNo = policy.RootLoginNo || strings.EqualFold(prl, "no")
 	if f := strings.FieldsFunc(am, func(r rune) bool { return r == ',' || r == ' ' }); len(f) > 1 {
 		policy.AuthMethods = am
 	}
