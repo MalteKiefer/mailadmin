@@ -77,9 +77,12 @@ compression = "zstd,6"
 source = []
 # systemd OnCalendar expression of the timer.
 schedule = "*-*-* 03:30:00"
-# Remove archives outside the retention below after each run.
+# Remove archives outside the retention below after each run. Set false when the
+# repository key is append-only (the storage box refuses deletes): retention then
+# runs from a key that is not on this host.
 prune = true
-# Run borg compact after prune, to free the space of removed archives.
+# Run borg compact after prune, to free the space of removed archives. Needs
+# delete rights, so it goes off together with prune for an append-only key.
 compact = true
 # Run borg check at this interval, e.g. "1w" or "30d". Empty: never.
 check_every = "1w"

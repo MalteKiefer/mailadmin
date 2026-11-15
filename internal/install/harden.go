@@ -68,7 +68,7 @@ const LoginBanner = "Authorized access only. Unauthorized access to this system 
 func HardeningPackages() []string {
 	return []string{
 		"auditd", "crowdsec", "crowdsec-firewall-bouncer-nftables", "aide", "aide-common",
-		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils",
+		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils", "rkhunter",
 		"libpam-pwquality", "libpam-tmpdir", "debsums", "acct", "sysstat",
 	}
 }
@@ -818,6 +818,13 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 	for path, content := range hardeningFiles() {
 		if err := writeAtomic(path, []byte(content), 0o644); err != nil {
 			return err
+		}
+	}
+	if aide, err := os.ReadFile(AideConfPath); err == nil { // #nosec G304 -- fixed system path
+		if want := AideConfWithExcludes(string(aide)); want != string(aide) {
+			if err := writeAtomic(AideConfPath, []byte(want), 0o644); err != nil {
+				return err
+			}
 		}
 	}
 	defs, err := os.ReadFile(LoginDefsPath)

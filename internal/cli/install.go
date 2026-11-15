@@ -347,6 +347,9 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.ApplyRootMail(pctx, x, cfg.Notify.MailTo); err != nil {
 		return err
 	}
+	if err := install.ApplyMalwareScan(pctx, x, cfg.Notify.MailTo); err != nil {
+		return err
+	}
 	if err := install.ApplyWebmail(pctx, x, cfg.Webmail, ans.Hostname); err != nil {
 		return err
 	}
