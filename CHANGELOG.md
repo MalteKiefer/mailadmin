@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.5] - 2026-11-15
+
 ### Changed
 - AIDE excludes the PostgreSQL data directory and the backup bundles. Both change by design and only made the daily report noisy.
 
