@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.1] - 2026-11-15
+
 ### Fixed
 - The config merge at upgrade time wrote `config.toml.before-<tag>` with the `[secrets]` table. The copy has no secrets now.
 
