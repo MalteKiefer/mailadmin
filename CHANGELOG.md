@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.2] - 2026-11-15
+
 ### Fixed
 - Webmail CSP report-only policy allows inline styles (`style-src 'self' 'unsafe-inline'`), as alps needs them. Browsers no longer log a violation for every styled element.
 
