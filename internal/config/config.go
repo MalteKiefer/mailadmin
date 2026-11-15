@@ -144,6 +144,9 @@ type Logs struct {
 // this.
 type Notify struct {
 	URL string `toml:"url"`
+	// MailTo receives root's mail: cron, AIDE reports, unattended-upgrades.
+	// Empty leaves root's mail where it is.
+	MailTo string `toml:"mail_to"`
 }
 
 // Config is the fully-parsed, validated configuration. Secrets are part of it

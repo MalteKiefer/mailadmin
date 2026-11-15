@@ -48,6 +48,7 @@ const (
 	ComponentDB     = "domain-db"
 	ComponentDKIM   = "dkim"
 	ComponentSieve  = "sieve"
+	ComponentLogs   = "logs"
 	ComponentConfig = "config"
 )
 
@@ -55,7 +56,7 @@ const (
 // restore processes them: the database first (so a restore's DKIM/Sieve
 // changes always land on top of a matching schema), then key material, then
 // mail-routing scripts, then the non-secret config file last.
-var AllComponents = []string{ComponentDB, ComponentDKIM, ComponentSieve, ComponentConfig}
+var AllComponents = []string{ComponentDB, ComponentDKIM, ComponentSieve, ComponentLogs, ComponentConfig}
 
 // ErrUnknownComponent is returned for a --component value not in AllComponents.
 var ErrUnknownComponent = errors.New("backup: unknown component")

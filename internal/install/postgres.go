@@ -192,6 +192,18 @@ func EnablePeerMap(ctx context.Context, x Exec) error {
 	return nil
 }
 
+// EnableScram makes new role passwords SCRAM-SHA-256 and reloads the cluster.
+// Existing md5 hashes keep working until a password is set again.
+func EnableScram(ctx context.Context, x Exec) error {
+	if _, err := psqlScalar(ctx, x, "postgres", "ALTER SYSTEM SET password_encryption = 'scram-sha-256'"); err != nil {
+		return fmt.Errorf("set password_encryption: %w", err)
+	}
+	if _, err := psqlScalar(ctx, x, "postgres", "SELECT pg_reload_conf()"); err != nil {
+		return fmt.Errorf("reload postgres config: %w", err)
+	}
+	return nil
+}
+
 // ensureLine adds line to path unless it is already there. With prepend the line
 // goes first, which matters for pg_hba.conf where the first matching rule wins.
 func ensureLine(path, line string, prepend bool) error {

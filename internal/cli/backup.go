@@ -184,7 +184,16 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	}
 	components = append(components, backup.ComponentSieve)
 
-	// 4. mailadmin's own config.toml, never secrets.env.
+	// 4. the logs that show who changed what and who tried to get in.
+	if _, err := backup.CollectLogs(bundleDir, backup.LogFiles); err != nil {
+		return fmt.Errorf("backup create: logs: %w", err)
+	}
+	if err := backup.JournalExport(ctx(cmd), bundleDir, backup.JournalUnits); err != nil {
+		return fmt.Errorf("backup create: journal: %w", err)
+	}
+	components = append(components, backup.ComponentLogs)
+
+	// 5. mailadmin's own config.toml, never secrets.env.
 	redacted, err := config.WithoutSecrets(cfg.Path)
 	if err != nil {
 		return err
@@ -335,6 +344,8 @@ func (a *App) restoreComponents(cmd *cobra.Command, cfg *config.Config, bundlePa
 			err = a.restoreDKIM(cmd, cfg, bundlePath)
 		case backup.ComponentSieve:
 			err = a.restoreSieve(cmd, bundlePath, man)
+		case backup.ComponentLogs:
+			err = restoreLogs(bundlePath)
 		case backup.ComponentConfig:
 			err = a.restoreConfig(cmd, cfg, configMerged)
 			if err == nil && !config.HasSecretsTable(configMerged) {
@@ -379,6 +390,8 @@ func (a *App) backupRestoreDryRun(cmd *cobra.Command, cfg *config.Config, bundle
 			n, _ := backup.DirSize(filepath.Join(bundlePath, backup.DKIMDir))
 			r.Message("dry-run: dkim: would overwrite %s with %d key file(s) (%s) from the bundle",
 				cfg.Mail.DKIMDir, man.DKIMKeyFiles, backup.FormatBytes(n))
+		case backup.ComponentLogs:
+			r.Message("dry-run: logs: would copy the bundle's logs into %s/%s (not into the live log files)", backup.LogArchiveDir, filepath.Base(filepath.Clean(bundlePath)))
 		case backup.ComponentSieve:
 			r.Message("dry-run: sieve: would overwrite the active script for %d mailbox(es): %s",
 				len(man.SieveScripts), strings.Join(man.SieveScripts, ", "))
@@ -670,4 +683,27 @@ func contains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// restoreLogs copies the bundle's log set into LogArchiveDir. The live logs are
+// never touched: a restore must not rewrite the evidence on the host.
+func restoreLogs(bundlePath string) error {
+	src := filepath.Join(bundlePath, backup.LogsDir)
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("backup restore: logs: %w", err)
+	}
+	dst := filepath.Join(backup.LogArchiveDir, filepath.Base(filepath.Clean(bundlePath)))
+	if err := os.MkdirAll(dst, 0o700); err != nil { // #nosec G301 -- owner-only archive
+		return fmt.Errorf("backup restore: logs: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if _, err := backup.CopyFile(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+			return fmt.Errorf("backup restore: logs %s: %w", e.Name(), err)
+		}
+	}
+	return nil
 }

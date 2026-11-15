@@ -105,6 +105,8 @@ command = "30s"
 db_tool = "30m"
 
 [notify]
+# Address for root mail (cron, AIDE, unattended-upgrades). Empty: keep local root mail.
+mail_to = ""
 # ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
 url = ""
 
