@@ -212,12 +212,14 @@ func configAutoMerge(c context.Context, app *App, out io.Writer, host, tag strin
 	if err := os.WriteFile(ref, def, 0o644); err != nil { // #nosec G306 -- reference copy, holds no secrets
 		return fmt.Errorf("write %s: %w", ref, err)
 	}
-	cur, err := os.ReadFile(host) // #nosec G304 -- operator config path
+	// The copy keeps the config without its [secrets] table: the live file
+	// holds the secrets, and an extra copy must not spread them.
+	redacted, err := config.WithoutSecrets(host)
 	if err != nil {
 		return err
 	}
 	before := host + ".before-" + tag
-	if err := os.WriteFile(before, cur, 0o600); err != nil { // #nosec G703 -- tag matches reReleaseTag
+	if err := os.WriteFile(before, redacted, 0o600); err != nil { // #nosec G703 -- tag matches reReleaseTag
 		return fmt.Errorf("save %s: %w", before, err)
 	}
 	res, err := config.MergeNewKeys(host, def, tag)
