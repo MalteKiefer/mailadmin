@@ -89,6 +89,9 @@ type Hardening struct {
 	System   *bool `toml:"system"`
 	SSH      *bool `toml:"ssh"`
 	CrowdSec *bool `toml:"crowdsec"`
+	// SSHAllowFrom limits inbound SSH to these CIDRs, e.g. a VPN net such as
+	// 100.78.75.0/24 for netbird. Empty: SSH is open to every source.
+	SSHAllowFrom []string `toml:"ssh_allow_from"`
 }
 
 // On reports whether a switch is on (unset counts as on).
@@ -141,6 +144,9 @@ type Logs struct {
 // this.
 type Notify struct {
 	URL string `toml:"url"`
+	// MailTo receives root's mail: cron, AIDE reports, unattended-upgrades.
+	// Empty leaves root's mail where it is.
+	MailTo string `toml:"mail_to"`
 }
 
 // Config is the fully-parsed, validated configuration. Secrets are part of it
@@ -377,6 +383,11 @@ func (c *Config) DSN() string {
 
 // Validate checks required keys and value formats, failing closed.
 func (c *Config) Validate() error {
+	for _, cidr := range c.Hardening.SSHAllowFrom {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("%w: hardening.ssh_allow_from: %q is not a CIDR", ErrInvalidConfig, cidr)
+		}
+	}
 	if c.Postgres.Service == "" {
 		return fmt.Errorf("%w: postgres.service is required", ErrInvalidConfig)
 	}

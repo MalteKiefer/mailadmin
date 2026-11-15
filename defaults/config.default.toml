@@ -105,6 +105,8 @@ command = "30s"
 db_tool = "30m"
 
 [notify]
+# Address for root mail (cron, AIDE, unattended-upgrades). Empty: keep local root mail.
+mail_to = ""
 # ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
 url = ""
 
@@ -143,6 +145,10 @@ system = true
 ssh = true
 # CrowdSec agent and nftables bouncer.
 crowdsec = true
+# Source networks allowed to reach sshd, e.g. ["100.78.75.0/24"] for a netbird
+# admin net. Empty: sshd is reachable from any address. Set it before you
+# restrict, from a session that is already inside that network.
+ssh_allow_from = []
 
 [repos]
 # Expected fingerprints of the vendor repository keys. install refuses a key

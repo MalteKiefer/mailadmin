@@ -171,6 +171,7 @@ type SSHPolicy struct {
 	// Stricter settings the operator already had, kept on --adopt.
 	RootLoginNo bool   // PermitRootLogin no
 	AuthMethods string // AuthenticationMethods with more than one factor
+	AllowUser   string // AllowUsers: the named account that logs in with a key
 }
 
 func supported(prefer []string, have map[string]bool) []string {
@@ -196,6 +197,9 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	} else if p.RootKeyOnly {
 		line("PermitRootLogin", "prohibit-password")
 	}
+	if p.AllowUser != "" {
+		line("AllowUsers", p.AllowUser)
+	}
 	line("PubkeyAuthentication", "yes")
 	if p.KeyOnly {
 		line("PasswordAuthentication", "no")
@@ -215,7 +219,7 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	line("MaxAuthTries", "3")
 	line("MaxSessions", "2")
 	line("MaxStartups", "10:30:60")
-	line("LoginGraceTime", "30")
+	line("LoginGraceTime", "20")
 	line("ClientAliveInterval", "300")
 	line("ClientAliveCountMax", "2")
 	line("TCPKeepAlive", "no") // ClientAlive runs inside the encrypted channel and cannot be spoofed
@@ -397,6 +401,9 @@ func decideSSHPolicy(account string, known bool, keys, rootKeys []authKey, login
 		// An operator who logs in with a usable key as a named account does not
 		// need root over SSH at all.
 		p.RootLoginNo = account != "root" && p.KeyOnly
+		if p.RootLoginNo {
+			p.AllowUser = account
+		}
 	}
 	for acct, ks := range map[string][]authKey{account: keys, "root": rootKeys} {
 		l := logins[acct]

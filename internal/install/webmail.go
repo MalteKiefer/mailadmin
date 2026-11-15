@@ -141,7 +141,12 @@ func CaddyWebmailFile(w config.Webmail) string {
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		X-Frame-Options "DENY"
+		Cross-Origin-Opener-Policy "same-origin"
+		Content-Security-Policy-Report-Only "default-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
+	}
+	request_body {
+		max_size 25MB
 	}
 	reverse_proxy %s
 }

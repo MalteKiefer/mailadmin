@@ -26,6 +26,16 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- `[notify] mail_to`: root's mail (cron, AIDE, unattended-upgrades) goes to this address. Set in `/etc/aliases`, `/etc/default/aide` and an apt drop-in.
+- `backup create` takes the logs into the bundle: `/var/log/audit/audit.log`, `auth.log`, `mail.log`, `crowdsec.log`, the unattended-upgrades log, and a 7-day journal export of the mail, web, SSH, CrowdSec and borg units. `backup restore --component logs` puts them into `/var/lib/mailadmin/log-archive/<bundle>` and leaves the live logs alone.
+- Postfix: `disable_vrfy_command`, `smtpd_client_connection_count_limit 20`, `smtpd_error_sleep_time 5s`.
+- Dovecot: `auth_failure_delay = 2 secs`.
+- Webmail vhost: `Cross-Origin-Opener-Policy same-origin`, `Content-Security-Policy-Report-Only` (report only, not enforced), `request_body max_size 25MB`.
+- PostgreSQL: `password_encryption = scram-sha-256` for new passwords.
+- sshd: `AllowUsers <admin>` once root login is off, `LoginGraceTime 20`.
+- `[hardening] ssh_allow_from`: CIDRs that may reach sshd, e.g. `["100.78.75.0/24"]` for a netbird admin net. Empty keeps SSH open. Invalid CIDRs stop the config check.
+
 ## [v1.42.3] - 2026-11-15
 
 ### Changed

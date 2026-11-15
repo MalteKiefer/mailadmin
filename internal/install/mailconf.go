@@ -100,6 +100,7 @@ ssl_server_prefer_ciphers = server
 
 auth_mechanisms = plain login
 auth_allow_cleartext = no
+auth_failure_delay = 2 secs
 # '+' separates the app-password label: user@domain+label.
 auth_username_chars = abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890.-_@+
 passdb_default_password_scheme = ARGON2ID
@@ -242,6 +243,10 @@ func PostfixSettings(hostname string, groups []string) []PostfixSetting {
 		{"smtpd_sender_restrictions", "reject_non_fqdn_sender, reject_unknown_sender_domain"},
 		{"smtpd_data_restrictions", "reject_unauth_pipelining"},
 		{"smtpd_banner", "$myhostname ESMTP"},
+		{"disable_vrfy_command", "yes"},
+		{"smtpd_client_connection_count_limit", "20"},
+		{"smtpd_error_sleep_time", "5s"},
+		{"smtpd_client_event_limit_exceptions", "$mynetworks"},
 		// TLS 1.2 and 1.3 with forward secret AEAD ciphers only, in both directions.
 		{"smtpd_tls_protocols", ">=TLSv1.2"},
 		{"smtpd_tls_mandatory_protocols", ">=TLSv1.2"},
@@ -382,7 +387,11 @@ include "` + NftPersistPath + `"
 
 // NftTableFile renders the mailadmin table with its port sets. It is used both at
 // install time and as the persisted state the helper writes after each change.
-func NftTableFile(tcp, udp, ssh []int) string {
+func NftTableFile(tcp, udp, ssh []int, sshFrom []string) string {
+	sshRule := "\t\ttcp dport { " + portList(ssh) + " } accept\n"
+	if len(sshFrom) > 0 {
+		sshRule = "\t\tip saddr { " + strings.Join(sshFrom, ", ") + " } tcp dport { " + portList(ssh) + " } accept\n"
+	}
 	return fmt.Sprintf(`add table inet mailadmin
 delete table inet mailadmin
 # Managed by mailadmin install.
@@ -392,8 +401,7 @@ table inet mailadmin {
 		ct state established,related accept
 		iif "lo" accept
 		meta l4proto { icmp, ipv6-icmp } accept
-		tcp dport { %s } accept
-		tcp dport @allowed_tcp accept
+%s		tcp dport @allowed_tcp accept
 		udp dport @allowed_udp accept
 	}
 	chain forward {
@@ -403,7 +411,7 @@ table inet mailadmin {
 		type filter hook output priority 0; policy accept;
 	}
 }
-`, nftSet("allowed_tcp", tcp), nftSet("allowed_udp", udp), portList(ssh))
+`, nftSet("allowed_tcp", tcp), nftSet("allowed_udp", udp), sshRule)
 }
 
 // nftSet renders one inet_service set. An empty set has no elements line, since
