@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.3] - 2026-11-15
+
 ### Added
 - rkhunter is installed and configured: `/etc/rkhunter.conf.local` (warnings go to `[notify] mail_to`), daily run and database update through the Debian cron job, one property baseline 30 minutes after install.
 - AIDE: mailadmin owns an exclude block in `/etc/aide/aide.conf` (logs, caches, locks, runtime state, mailboxes, AIDE's own DB). The block is replaced on every install.
