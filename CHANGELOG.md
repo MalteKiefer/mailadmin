@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- `/etc/default/rkhunter` gets `CRON_DAILY_RUN="true"` and `CRON_DB_UPDATE="true"` as shell assignments. The daily run was off because the value was written as a whitespace pair.
+
 ## [v1.43.3] - 2026-11-15
 
 ### Added
