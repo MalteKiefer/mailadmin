@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.0] - 2026-11-15
+
 ### Added
 - `[notify] mail_to`: root's mail (cron, AIDE, unattended-upgrades) goes to this address. Set in `/etc/aliases`, `/etc/default/aide` and an apt drop-in.
 - `backup create` takes the logs into the bundle: `/var/log/audit/audit.log`, `auth.log`, `mail.log`, `crowdsec.log`, the unattended-upgrades log, and a 7-day journal export of the mail, web, SSH, CrowdSec and borg units. `backup restore --component logs` puts them into `/var/lib/mailadmin/log-archive/<bundle>` and leaves the live logs alone.
