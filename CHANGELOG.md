@@ -26,6 +26,10 @@ providers need.
 
 ## [Unreleased]
 
+### Changed
+- SSH: `PermitRootLogin no` once the operator logs in with a usable key as a named account. `LogLevel VERBOSE` logs the key fingerprint of every login.
+- Webmail (Caddy): `Referrer-Policy`, `Permissions-Policy` and `X-Frame-Options DENY` in addition to HSTS and `nosniff`.
+
 ## [v1.42.2] - 2026-11-13
 
 ### Changed

@@ -138,6 +138,9 @@ func CaddyWebmailFile(w config.Webmail) string {
 	header {
 		Strict-Transport-Security "max-age=63072000"
 		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-Frame-Options "DENY"
 		-Server
 	}
 	reverse_proxy %s
