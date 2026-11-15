@@ -332,7 +332,7 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.ApplyCaddy(pctx, x, ans.Hostname, in.tls == "internal"); err != nil {
 		return err
 	}
-	if err := install.ApplyFirewall(pctx, x); err != nil {
+	if err := install.ApplyFirewall(pctx, x, cfg.Hardening.SSHAllowFrom); err != nil {
 		return err
 	}
 	if err := install.RecordNftTable(); err != nil {

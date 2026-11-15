@@ -143,6 +143,10 @@ system = true
 ssh = true
 # CrowdSec agent and nftables bouncer.
 crowdsec = true
+# Source networks allowed to reach sshd, e.g. ["100.78.75.0/24"] for a netbird
+# admin net. Empty: sshd is reachable from any address. Set it before you
+# restrict, from a session that is already inside that network.
+ssh_allow_from = []
 
 [repos]
 # Expected fingerprints of the vendor repository keys. install refuses a key

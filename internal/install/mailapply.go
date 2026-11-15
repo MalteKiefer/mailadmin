@@ -296,7 +296,7 @@ func ApplyCaddy(ctx context.Context, x Exec, hostname string, tlsInternal bool) 
 
 // ApplyFirewall loads the mailadmin nftables table. The table drops inbound by
 // default and keeps SSH open. It is validated with nft -c before it is applied.
-func ApplyFirewall(ctx context.Context, x Exec) error {
+func ApplyFirewall(ctx context.Context, x Exec, sshFrom []string) error {
 	if err := os.MkdirAll(filepath.Dir(NftPersistPath), 0o755); err != nil { // #nosec G301 -- nftables include dir
 		return fmt.Errorf("mkdir nftables.d: %w", err)
 	}
@@ -312,8 +312,9 @@ func ApplyFirewall(ctx context.Context, x Exec) error {
 	if err := recordFile(NftPersistPath); err != nil {
 		return err
 	}
-	if !sameFile(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o600, -1, -1) {
-		if err := writeAtomicWith(NftPersistPath, []byte(NftTableFile(DefaultTCPPorts, nil, ssh)), 0o600, check); err != nil {
+	table := []byte(NftTableFile(DefaultTCPPorts, nil, ssh, sshFrom))
+	if !sameFile(NftPersistPath, table, 0o600, -1, -1) {
+		if err := writeAtomicWith(NftPersistPath, table, 0o600, check); err != nil {
 			return err
 		}
 	}

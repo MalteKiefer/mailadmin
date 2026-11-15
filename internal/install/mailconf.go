@@ -382,7 +382,11 @@ include "` + NftPersistPath + `"
 
 // NftTableFile renders the mailadmin table with its port sets. It is used both at
 // install time and as the persisted state the helper writes after each change.
-func NftTableFile(tcp, udp, ssh []int) string {
+func NftTableFile(tcp, udp, ssh []int, sshFrom []string) string {
+	sshRule := "\t\ttcp dport { " + portList(ssh) + " } accept\n"
+	if len(sshFrom) > 0 {
+		sshRule = "\t\tip saddr { " + strings.Join(sshFrom, ", ") + " } tcp dport { " + portList(ssh) + " } accept\n"
+	}
 	return fmt.Sprintf(`add table inet mailadmin
 delete table inet mailadmin
 # Managed by mailadmin install.
@@ -392,8 +396,7 @@ table inet mailadmin {
 		ct state established,related accept
 		iif "lo" accept
 		meta l4proto { icmp, ipv6-icmp } accept
-		tcp dport { %s } accept
-		tcp dport @allowed_tcp accept
+%s		tcp dport @allowed_tcp accept
 		udp dport @allowed_udp accept
 	}
 	chain forward {
@@ -403,7 +406,7 @@ table inet mailadmin {
 		type filter hook output priority 0; policy accept;
 	}
 }
-`, nftSet("allowed_tcp", tcp), nftSet("allowed_udp", udp), portList(ssh))
+`, nftSet("allowed_tcp", tcp), nftSet("allowed_udp", udp), sshRule)
 }
 
 // nftSet renders one inet_service set. An empty set has no elements line, since

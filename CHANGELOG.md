@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- `[hardening] ssh_allow_from`: CIDRs that may reach sshd, e.g. `["100.78.75.0/24"]` for a netbird admin net. Empty keeps SSH open. Invalid CIDRs stop the config check.
+
 ## [v1.42.3] - 2026-11-15
 
 ### Changed
