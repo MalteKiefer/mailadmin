@@ -586,6 +586,10 @@ func SysctlHardening() string {
 	return `# Managed by mailadmin install. Kernel and network hardening.
 kernel.kptr_restrict = 2
 kernel.dmesg_restrict = 1
+# Unprivileged user namespaces are a common local privilege-escalation surface.
+# No service on this host needs them: systemd units use RestrictNamespaces.
+kernel.unprivileged_userns_clone = 0
+user.max_user_namespaces = 0
 kernel.yama.ptrace_scope = 2
 kernel.unprivileged_bpf_disabled = 1
 net.core.bpf_jit_harden = 2

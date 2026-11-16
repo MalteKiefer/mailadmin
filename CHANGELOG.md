@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- rkhunter updates work on Debian: `WEB_CMD=/usr/bin/wget` in `rkhunter.conf.local`. curl fetched mirrors.dat over http, the server answers https only.
+
+### Changed
+- Unprivileged user namespaces are off (`user.max_user_namespaces = 0`, `kernel.unprivileged_userns_clone = 0`).
+
 ## [v1.43.10] - 2026-11-16
 
 ### Fixed
