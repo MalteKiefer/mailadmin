@@ -26,6 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.10] - 2026-11-16
+
+### Fixed
+- `EnableUnit` restarts caddy instead of `reload-or-restart`. With the admin API off, the reload path fails and the upgrade reconcile stopped. v1.43.9 has this bug, use v1.43.10.
+
 ## [v1.43.9] - 2026-11-16
 
 ### Added
