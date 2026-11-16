@@ -2,6 +2,7 @@ package applemobile
 
 import (
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +23,7 @@ func keys(t *testing.T, doc []byte) []string {
 	var inKey bool
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
