@@ -28,7 +28,7 @@ func TestSSHHardeningConfKeepsPasswordLoginWithoutKeys(t *testing.T) {
 		KeySigs: map[string]bool{"ssh-ed25519": true, "rsa-sha2-512": true, "ssh-rsa": true}}
 	on := SSHHardeningConf(caps, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}, []string{"/etc/ssh/ssh_host_ed25519_key"})
 	for _, want := range []string{"PasswordAuthentication no\n", "AuthenticationMethods publickey\n", "PermitRootLogin prohibit-password\n",
-		"KexAlgorithms mlkem768x25519-sha256,curve25519-sha256\n", "Ciphers chacha20-poly1305@openssh.com\n",
+		"KexAlgorithms mlkem768x25519-sha256\n", "Ciphers chacha20-poly1305@openssh.com\n",
 		"MACs hmac-sha2-512-etm@openssh.com\n", "RequiredRSASize 3072\n", "HostKey /etc/ssh/ssh_host_ed25519_key\n", "X11Forwarding no\n"} {
 		if !strings.Contains(on, want) {
 			t.Errorf("hardened config misses %q:\n%s", want, on)
