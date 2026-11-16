@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.23] - 2026-11-16
+
+### Security
+- AppArmor: upstream Postfix and Dovecot profiles (`apparmor-profiles`) are loaded in complain mode. Complain mode logs what enforce would deny without blocking. Enforce follows after a full mail test.
+- Backup log copies are written 0600. They hold client IPs and sender addresses.
+
 ## [v1.43.22] - 2026-11-16
 
 ### Fixed
