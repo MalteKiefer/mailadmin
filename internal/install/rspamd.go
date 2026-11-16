@@ -81,6 +81,8 @@ func RspamdLocalFiles(pw string) map[string]string {
 			"# Local submissions (127.0.0.1) are scanned like inbound mail, so they get the headers too.\n" +
 			"skip_local = false;\nuse = [\"authentication-results\", \"x-spamd-result\", \"x-rspamd-server\"];\n",
 		"replies.conf": "# Managed by mailadmin install. Replies to our own sent mail count as ham. No external lookup.\nenabled = true;\n",
+		"phishing.conf": "# Managed by mailadmin install. Phishing feeds (PhishTank, OpenPhish) are downloaded as maps, no per-mail lookup.\n" +
+			"openphish_enabled = true;\nphishtank_enabled = true;\n",
 	}
 }
 
