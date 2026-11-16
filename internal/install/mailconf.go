@@ -377,11 +377,14 @@ func RspamdSelectorMapContent(pairs [][2]string) string {
 // CaddyfileMain renders the main Caddyfile. The managed includes (autodiscovery,
 // MTA-STS) are imported from CaddyIncludeDir, the mail host gets a certificate.
 func CaddyfileMain(hostname string, tlsInternal bool) string {
-	global := ""
+	// The admin API is off: nothing reconfigures Caddy at runtime. Config changes
+	// take a systemctl restart.
+	global := "{\n\tadmin off\n"
 	if tlsInternal {
 		// Test mode: every site, including the includes, uses Caddy's local CA.
-		global = "{\n\tlocal_certs\n}\n\n"
+		global += "\tlocal_certs\n"
 	}
+	global += "}\n\n"
 	return fmt.Sprintf(`# Managed by mailadmin install. Includes are managed by mailadmin.
 %simport %s/*.caddy
 

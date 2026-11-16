@@ -232,7 +232,7 @@ func ApplyWebmail(ctx context.Context, x Exec, w config.Webmail, hostname string
 	if err := EnableUnit(ctx, x, AlpsUnit); err != nil {
 		return err
 	}
-	if _, err := x.Run(ctx, nil, "systemctl", "reload", "caddy"); err != nil {
+	if _, err := x.Run(ctx, nil, "systemctl", "restart", "caddy"); err != nil {
 		return fmt.Errorf("reload caddy: %w", err)
 	}
 	return nil

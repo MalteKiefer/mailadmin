@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Changed
+- Caddy: the admin API is off (`admin off` in the managed Caddyfile). Config changes apply with `systemctl restart caddy`, not a reload.
+
 ### Fixed
 - Backup bundles: `db.dump` is created owner-only (0600). It holds the mailbox rows including password hashes and was world-readable.
 
