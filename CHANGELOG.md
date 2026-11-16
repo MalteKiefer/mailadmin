@@ -26,6 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.28] - 2026-11-16
+
+### Added
+- DNS: the Apple form host (`[apple] domain`) gets A and AAAA records in the desired mail record-set when the form is on.
+
 ## [v1.43.27] - 2026-11-16
 
 ### Added
