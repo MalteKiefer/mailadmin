@@ -26,6 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.26] - 2026-11-16
+
+### Changed
+- Release workflow signs `SHA256SUMS` into `SHA256SUMS.asc` with the pinned release key (secrets `RELEASE_GPG_KEY`, `RELEASE_GPG_PASSPHRASE`). selfupdate needs this signature.
+
 ## [v1.43.25] - 2026-11-16
 
 ### Security
