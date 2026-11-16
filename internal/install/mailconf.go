@@ -395,7 +395,7 @@ func CaddyfileMain(hostname string, tlsInternal bool) string {
 		X-Content-Type-Options "nosniff"
 		-Server
 	}
-	// Access log to stdout: systemd keeps it in the persistent journal.
+	# Access log to stdout: systemd keeps it in the persistent journal.
 	log {
 		output stdout
 		format json

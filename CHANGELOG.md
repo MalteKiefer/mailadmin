@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- The Caddyfile template used `//` for a comment, which Caddy rejects. The upgrade reconcile to v1.43.16 stopped at caddy validate. Use the next release.
+
 ## [v1.43.16] - 2026-11-16
 
 ### Security
