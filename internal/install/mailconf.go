@@ -284,7 +284,8 @@ func PostfixSettings(hostname string, groups []string) []PostfixSetting {
 		{"smtpd_milters", "inet:" + PostfixMilterAddr},
 		{"non_smtpd_milters", "inet:" + PostfixMilterAddr},
 		{"milter_protocol", "6"},
-		{"milter_default_action", "accept"},
+		// tempfail: when rspamd is down, mail is deferred, not delivered unscanned.
+		{"milter_default_action", "tempfail"},
 	}
 }
 

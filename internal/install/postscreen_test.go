@@ -76,3 +76,15 @@ func TestHSTSIncludesSubdomainsAndPreload(t *testing.T) {
 		t.Fatal("webmail vhost must send includeSubDomains and preload")
 	}
 }
+
+func TestMilterFailureDefersMail(t *testing.T) {
+	for _, s := range PostfixSettings("mail.example.org", nil) {
+		if s.Key == "milter_default_action" {
+			if s.Value != "tempfail" {
+				t.Fatalf("milter_default_action = %q: mail would pass unscanned when rspamd is down", s.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("milter_default_action missing")
+}
