@@ -49,12 +49,6 @@ forward-zone:
 `
 }
 
-// ResolvconfHead makes the local resolver the only nameserver. There is no
-// fallback to unvalidated upstreams.
-func ResolvconfHead() string {
-	return "# Managed by mailadmin install. Only the local validating resolver.\nnameserver 127.0.0.1\nnameserver ::1\n"
-}
-
 // UnboundDropInContent restarts unbound on failure, so a dead resolver comes back.
 func UnboundDropInContent() string {
 	return "# Managed by mailadmin install. A dead resolver must come back on its own.\n[Service]\nRestart=always\nRestartSec=2\n"
@@ -109,8 +103,10 @@ func ApplyResolver(ctx context.Context, x Exec) error {
 	if err := writeAtomic(UnboundDropInPath, []byte(UnboundDropInContent()), 0o644); err != nil {
 		return err
 	}
-	if err := writeAtomic(ResolvconfHeadPath, []byte(ResolvconfHead()), 0o644); err != nil {
-		return err
+	// The unbound package registers 127.0.0.1 and ::1 as its own resolvconf
+	// interface record. A head file would list them a second time.
+	if err := os.Remove(ResolvconfHeadPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", ResolvconfHeadPath, err)
 	}
 	if cur, err := os.ReadFile(DhcpcdConfPath); err == nil && !strings.Contains(string(cur), "nohook resolv.conf") { // #nosec G304 -- fixed system path
 		if err := writeAtomic(DhcpcdConfPath, []byte(strings.TrimRight(string(cur), "\n")+"\nnohook resolv.conf\n"), 0o644); err != nil {

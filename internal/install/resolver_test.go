@@ -17,13 +17,6 @@ func TestUnboundOnlyForwardsOverTLSAndValidates(t *testing.T) {
 	}
 }
 
-func TestResolvconfHasNoUnvalidatedFallback(t *testing.T) {
-	h := ResolvconfHead()
-	if strings.Contains(h, "2a01:4ff") || strings.Contains(h, "185.12.64.1") {
-		t.Fatal("resolv.conf must not fall back to unvalidated upstream resolvers")
-	}
-}
-
 func TestConfigSetLineReplacesKey(t *testing.T) {
 	in := "log_file = /var/log/audit/audit.log\nmax_log_file = 8\nnum_logs = 5\n"
 	got := ConfigSetLine(ConfigSetLine(in, "max_log_file", "50"), "num_logs", "10")
