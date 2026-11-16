@@ -825,6 +825,9 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 			return err
 		}
 	}
+	if err := applyFaillock(); err != nil {
+		return err
+	}
 	if aide, err := os.ReadFile(AideConfPath); err == nil { // #nosec G304 -- fixed system path
 		if want := AideConfWithExcludes(string(aide)); want != string(aide) {
 			if err := writeAtomic(AideConfPath, []byte(want), 0o644); err != nil {
@@ -1077,4 +1080,27 @@ func SetShellVar(content, name, value string) string {
 		content += "\n"
 	}
 	return content + name + "=" + value + "\n"
+}
+
+// applyFaillock writes the faillock config and wires it into the PAM auth and
+// account stacks. Files are rewritten only when they change.
+func applyFaillock() error {
+	if err := writeAtomic(FaillockConfPath, []byte(FaillockConf()), 0o644); err != nil {
+		return err
+	}
+	for path, f := range map[string]func(string) string{
+		PamCommonAuthPath:    PamCommonAuthWithFaillock,
+		PamCommonAccountPath: PamCommonAccountWithFaillock,
+	} {
+		cur, err := os.ReadFile(path) // #nosec G304 -- fixed PAM path
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		if want := f(string(cur)); want != string(cur) {
+			if err := writeAtomic(path, []byte(want), 0o644); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

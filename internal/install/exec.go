@@ -44,7 +44,7 @@ func lookTrusted(name string) (string, error) {
 	}
 	for _, dir := range trustedDirs {
 		p := filepath.Join(dir, name)
-		fi, err := os.Stat(p)
+		fi, err := os.Stat(p) // #nosec G703 -- name is a bare command name, checked above
 		if err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
 			return p, nil
 		}
