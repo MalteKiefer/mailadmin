@@ -50,7 +50,7 @@ func MailScope(s Statement) bool {
 	case "CNAME":
 		return name == "autoconfig" || name == "autodiscover" || strings.HasSuffix(name, "._domainkey")
 	case "A", "AAAA":
-		return name == "mail" || name == "autoconfig" || name == "autodiscover" || name == "mta-sts"
+		return name == "mail" || name == "autoconfig" || name == "autodiscover" || name == "mta-sts" || name == "apple"
 	case "TXT":
 		if len(s.Quoted) < 2 {
 			return false
