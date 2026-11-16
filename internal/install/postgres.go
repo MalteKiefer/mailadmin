@@ -204,6 +204,30 @@ func EnableScram(ctx context.Context, x Exec) error {
 	return nil
 }
 
+// PgLoggingSQL sets connection logging and an idle-session timeout. Logins and
+// logouts are then in the journal, and a session left open is closed after ten
+// minutes. Clients reconnect on their own.
+func PgLoggingSQL() []string {
+	return []string{
+		"ALTER SYSTEM SET log_connections = 'on'",
+		"ALTER SYSTEM SET log_disconnections = 'on'",
+		"ALTER SYSTEM SET idle_session_timeout = '10min'",
+	}
+}
+
+// EnablePgLogging applies PgLoggingSQL and reloads the cluster config.
+func EnablePgLogging(ctx context.Context, x Exec) error {
+	for _, q := range PgLoggingSQL() {
+		if _, err := psqlScalar(ctx, x, "postgres", q); err != nil {
+			return fmt.Errorf("%s: %w", q, err)
+		}
+	}
+	if _, err := psqlScalar(ctx, x, "postgres", "SELECT pg_reload_conf()"); err != nil {
+		return fmt.Errorf("reload postgres config: %w", err)
+	}
+	return nil
+}
+
 // ensureLine adds line to path unless it is already there. With prepend the line
 // goes first, which matters for pg_hba.conf where the first matching rule wins.
 func ensureLine(path, line string, prepend bool) error {

@@ -26,6 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- PostgreSQL: `log_connections` and `log_disconnections` on, `idle_session_timeout = 10min`.
+- Caddy: systemd sandbox drop-in (`ProtectSystem=strict`, `NoNewPrivileges`, only `CAP_NET_BIND_SERVICE`, cert store in `/var/lib/caddy`).
+- atd and acpid are disabled on mail hosts.
+
 ## [v1.43.8] - 2026-11-16
 
 ### Added
