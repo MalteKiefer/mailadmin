@@ -356,6 +356,15 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.ApplyWebmail(pctx, x, cfg.Webmail, ans.Hostname); err != nil {
 		return err
 	}
+	if cfg.Apple.Enabled {
+		domains, err := app.listDomains(pctx)
+		if err != nil {
+			return fmt.Errorf("apple allow-list: %w", err)
+		}
+		if err := install.ApplyApple(pctx, x, cfg.Apple, ans.Hostname, activeDomainNames(domains)); err != nil {
+			return err
+		}
+	}
 	if err := install.ApplyAutoconfig(ans.Hostname); err != nil {
 		return err
 	}

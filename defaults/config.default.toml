@@ -181,3 +181,11 @@ BORG_PASSPHRASE = ""
 RSPAMD_CONTROLLER_PW = ""
 # Bearer token for [notify] url.
 NTFY_TOKEN = ""
+
+[apple]
+# Profile form for iPhone and Mac (mobileconfig with the mail server settings). Off by default.
+# The form asks for a mail address and returns a profile without a password.
+enabled = false
+domain = "apple.example.com"
+# Local address the form service listens on. Caddy proxies domain to it.
+listen = "127.0.0.1:8082"

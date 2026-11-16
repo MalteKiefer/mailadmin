@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"mailadmin/internal/applemobile"
 	"mailadmin/internal/audit"
 	"mailadmin/internal/config"
 	"mailadmin/internal/db"
@@ -278,6 +279,11 @@ func (a *App) syncDomainState(c context.Context, r *output.Renderer) {
 	if err := a.syncMTASTSFor(c, domains); err != nil {
 		r.Message("warning: could not update Caddy MTA-STS: %v", err)
 	}
+	if cfg, _, err := a.Config(); err == nil && cfg.Apple.Enabled {
+		if err := applemobile.WriteDomainList(install.AppleDomainsPath, activeDomainNames(domains)); err != nil {
+			r.Message("warning: could not update the Apple profile form allow-list: %v", err)
+		}
+	}
 }
 
 // closeBackends releases pooled resources. Safe to call when nothing was opened.
@@ -353,6 +359,7 @@ func NewRootCmd() *cobra.Command {
 		newInstallCmd(app),
 		newUpdateCmd(app),
 		newWebmailPasswdCmd(app),
+		newAppleServeCmd(app),
 		newCompletionCmd(root),
 	)
 	return root
