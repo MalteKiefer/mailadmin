@@ -97,3 +97,12 @@ func TestCaddyWritesAccessLog(t *testing.T) {
 		t.Fatal("webmail vhost has no access log")
 	}
 }
+
+func TestCaddyfileHasNoSlashComments(t *testing.T) {
+	out := CaddyfileMain("mail.example.org", false)
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "//") {
+			t.Fatalf("Caddyfile does not accept // comments: %q", l)
+		}
+	}
+}
