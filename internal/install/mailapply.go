@@ -204,7 +204,7 @@ func ApplyPostfix(ctx context.Context, x Exec, hostname string) error {
 	if _, err := x.Run(ctx, nil, args...); err != nil {
 		return fmt.Errorf("postconf -e: %w", err)
 	}
-	for _, args := range PostfixSubmissionServices() {
+	for _, args := range append(PostfixSubmissionServices(), PostfixPostscreenServices()...) {
 		if _, err := x.Run(ctx, nil, append([]string{"postconf"}, args...)...); err != nil {
 			return fmt.Errorf("postconf %s: %w", strings.Join(args, " "), err)
 		}

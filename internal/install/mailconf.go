@@ -243,7 +243,17 @@ func PostfixSettings(hostname string, groups []string) []PostfixSetting {
 		{"smtpd_sender_restrictions", "reject_non_fqdn_sender, reject_unknown_sender_domain"},
 		{"smtpd_data_restrictions", "reject_unauth_pipelining"},
 		{"smtpd_banner", "$myhostname ESMTP"},
-		{"disable_vrfy_command", "yes"},
+		// Postscreen on port 25 tests new connections before smtpd sees them.
+		// Clients that talk before the banner, send bare newlines or pipeline
+		// early are refused without a session. Mynetworks skip the test.
+		{"postscreen_access_list", "permit_mynetworks"},
+		{"postscreen_greet_action", "enforce"},
+		{"postscreen_bare_newline_enable", "yes"},
+		{"postscreen_bare_newline_action", "enforce"},
+		{"postscreen_non_smtp_command_enable", "yes"},
+		{"postscreen_non_smtp_command_action", "drop"},
+		{"postscreen_pipelining_enable", "yes"},
+		{"postscreen_pipelining_action", "enforce"},
 		{"smtpd_client_connection_count_limit", "20"},
 		{"smtpd_error_sleep_time", "5s"},
 		{"smtpd_client_event_limit_exceptions", "$mynetworks"},
@@ -290,6 +300,18 @@ func PostfixSubmissionServices() [][]string {
 		{"-P", "smtps/inet/smtpd_tls_wrappermode=yes"},
 		{"-P", "smtps/inet/smtpd_sasl_auth_enable=yes"},
 		{"-P", "smtps/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject"},
+	}
+}
+
+// PostfixPostscreenServices returns the master.cf entries that put postscreen in
+// front of port 25. The submission ports 587 and 465 are not affected. No DNS
+// blocklists are queried: postscreen only checks the connection itself.
+func PostfixPostscreenServices() [][]string {
+	return [][]string{
+		{"-M", "smtp/inet=smtp inet n - y - 1 postscreen"},
+		{"-M", "smtpd/pass=smtpd pass - - y - - smtpd"},
+		{"-M", "dnsblog/unix=dnsblog unix - - y - 0 dnsblog"},
+		{"-M", "tlsproxy/unix=tlsproxy unix - - y - 0 tlsproxy"},
 	}
 }
 

@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- Postfix postscreen on port 25: greet, bare-newline, non-SMTP and pipelining checks are enforced before smtpd gets the connection. Mynetworks are exempt. Submission (587, 465) is unchanged. No external DNS blocklists are queried.
+
+### Fixed
+- Duplicate `disable_vrfy_command` entry in the generated main.cf settings.
+
 ## [v1.43.5] - 2026-11-15
 
 ### Changed
