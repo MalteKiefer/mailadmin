@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.18] - 2026-11-16
+
 ### Security
 - Local validating DNS resolver (unbound): DNSSEC is enforced, queries go over TLS to Quad9 and Mullvad. The system resolver is 127.0.0.1 only, with no fallback to unvalidated upstreams. DHCP no longer writes resolv.conf.
 - CrowdSec brute-force scenarios for Postfix SASL (Guezli/postfix-sasl-bf) and Dovecot IMAP (melite/dovecot-time-based-bf, melite/dovecot-slow-bf).
