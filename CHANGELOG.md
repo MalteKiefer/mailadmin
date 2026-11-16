@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- Caddy access log (JSON) for the mail and webmail vhosts, written to stdout and kept in the persistent journal.
+
 ## [v1.43.14] - 2026-11-16
 
 ### Security

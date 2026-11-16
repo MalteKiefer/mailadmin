@@ -88,3 +88,12 @@ func TestMilterFailureDefersMail(t *testing.T) {
 	}
 	t.Fatal("milter_default_action missing")
 }
+
+func TestCaddyWritesAccessLog(t *testing.T) {
+	if !strings.Contains(CaddyfileMain("mail.example.org", false), "output stdout") {
+		t.Fatal("mail vhost has no access log")
+	}
+	if !strings.Contains(CaddyWebmailFile(testWebmail()), "output stdout") {
+		t.Fatal("webmail vhost has no access log")
+	}
+}
