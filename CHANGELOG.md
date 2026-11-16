@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- rkhunter does not fetch online updates. Its mirror and data files come over plain http and cannot be verified in transit.
+
+### Changed
+- Unprivileged user namespaces are off (`user.max_user_namespaces = 0`, `kernel.unprivileged_userns_clone = 0`).
+
 ## [v1.43.10] - 2026-11-16
 
 ### Fixed

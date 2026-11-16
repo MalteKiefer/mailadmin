@@ -286,3 +286,12 @@ func TestOperatorSSHKeepsStricterSettings(t *testing.T) {
 		t.Error("keyboard-interactive is a required factor and must stay on")
 	}
 }
+
+func TestSysctlTurnsOffUnprivilegedUserNamespaces(t *testing.T) {
+	s := SysctlHardening()
+	for _, want := range []string{"user.max_user_namespaces = 0", "kernel.unprivileged_userns_clone = 0"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}
