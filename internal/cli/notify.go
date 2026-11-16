@@ -25,9 +25,19 @@ func (a *App) notifyConfig() notify.Config {
 // swallowed, see internal/notify's package doc for why: a broken notify
 // channel must never mask or replace the caller's own report/exit code.
 func (a *App) notifySend(ctx context.Context, msg notify.Message) {
-	_ = notify.Send(ctx, a.notifyConfig(), msg, func(warning string) {
-		fmt.Fprintln(a.stderr(), warning)
-	})
+	warn := func(warning string) { fmt.Fprintln(a.stderr(), warning) }
+	_ = notify.Send(ctx, a.notifyConfig(), msg, warn)
+	_ = notify.SendDiscord(ctx, a.discordWebhook(), msg, warn)
+}
+
+// discordWebhook returns the configured Discord webhook, or "" when none is set
+// or the config cannot be loaded.
+func (a *App) discordWebhook() string {
+	cfg, _, err := a.Config()
+	if err != nil {
+		return ""
+	}
+	return cfg.Notify.DiscordWebhookURL
 }
 
 // hostnameOrUnknown returns os.Hostname(), falling back to a fixed string so

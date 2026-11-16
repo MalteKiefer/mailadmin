@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+### Added
+- Discord webhook: `[notify] discord_webhook_url` receives the same alerts as ntfy. The URL is validated (https, discord.com host, /api/webhooks/ path).
+- Daily health check (`mailadmin-doctor.timer`, 07:00) with notification, and an OnFailure hook for the mail services that mails root on a failed unit.
+- Valkey (open-source Redis successor, Debian package) holds rspamd state for greylisting, ratelimit and reputation. It listens on localhost only, the default user is disabled, the rspamd ACL user has no dangerous commands, no persistence.
+- rspamd: inbound DMARC enabled (no reports), ARC verification, explicit thresholds (greylist 4, header 6, reject 15).
+
 ## [v1.43.20] - 2026-11-16
 
 ### Security

@@ -110,6 +110,9 @@ db_tool = "30m"
 [notify]
 # Address for root mail (cron, AIDE, unattended-upgrades). Empty: keep local root mail.
 mail_to = ""
+# Discord channel webhook (https://discord.com/api/webhooks/...). Receives the same
+# alerts as ntfy. The URL carries the token: keep this file at 0600.
+discord_webhook_url = ""
 # ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
 url = ""
 
