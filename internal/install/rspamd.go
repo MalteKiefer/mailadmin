@@ -77,6 +77,10 @@ func RspamdLocalFiles(pw string) map[string]string {
 		"ratelimit.conf":  "# Managed by mailadmin install. Per-sender and per-IP rate limits, state in Valkey.\nenabled = true;\n",
 		"reputation.conf": "# Managed by mailadmin install. Sender and IP reputation, state in Valkey.\nenabled = true;\n",
 		"actions.conf":    "# Managed by mailadmin install. Thresholds: greylist from 4, header from 6, reject from 15.\nreject = 15;\nadd_header = 6;\ngreylist = 4;\n",
+		"milter_headers.conf": "# Managed by mailadmin install. Authentication-Results carries the SPF, DKIM and DMARC verdicts.\n" +
+			"# Local submissions (127.0.0.1) are scanned like inbound mail, so they get the headers too.\n" +
+			"skip_local = false;\nuse = [\"authentication-results\", \"x-spamd-result\", \"x-rspamd-server\"];\n",
+		"replies.conf": "# Managed by mailadmin install. Replies to our own sent mail count as ham. No external lookup.\nenabled = true;\n",
 	}
 }
 

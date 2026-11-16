@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- rspamd: `milter_headers` skips local submissions (127.0.0.1) by default, so mail sent through the local MTA got no `Authentication-Results`, `X-Spamd-Result` or `X-Rspamd-Server`. `skip_local = false` is set. Inbound mail is unaffected.
+
+### Added
+- rspamd: `replies` module enabled, so replies to our own sent mail count as ham.
+
 ## [v1.43.21] - 2026-11-16
 
 ### Added
