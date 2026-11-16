@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.11] - 2026-11-16
+
 ### Fixed
 - rkhunter does not fetch online updates. Its mirror and data files come over plain http and cannot be verified in transit.
 
