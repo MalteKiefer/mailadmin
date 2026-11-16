@@ -26,6 +26,10 @@ providers need.
 
 ## [Unreleased]
 
+### Security
+- HSTS on the mail and webmail vhosts: `max-age=63072000; includeSubDomains; preload`. Every subdomain of kiefer-networks.de must serve HTTPS before this is used. The preload list also needs an HSTS response from the apex domain, which is not served yet.
+- rkhunter: `mail` (bsd-mailx) is installed so warnings are mailed, and the known false positives (PostgreSQL shared memory, `/etc/.updated`) are allowed.
+
 ## [v1.43.12] - 2026-11-16
 
 ### Security

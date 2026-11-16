@@ -136,7 +136,7 @@ func CaddyWebmailFile(w config.Webmail) string {
 	return fmt.Sprintf(`# Managed by mailadmin install.
 %s {
 	header {
-		Strict-Transport-Security "max-age=63072000"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"

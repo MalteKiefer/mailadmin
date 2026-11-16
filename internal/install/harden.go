@@ -68,7 +68,7 @@ const LoginBanner = "Authorized access only. Unauthorized access to this system 
 func HardeningPackages() []string {
 	return []string{
 		"auditd", "crowdsec", "crowdsec-firewall-bouncer-nftables", "aide", "aide-common",
-		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils", "rkhunter",
+		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils", "rkhunter", "bsd-mailx",
 		"libpam-pwquality", "libpam-tmpdir", "debsums", "acct", "sysstat",
 	}
 }

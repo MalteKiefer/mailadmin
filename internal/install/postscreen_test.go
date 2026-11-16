@@ -67,3 +67,12 @@ func TestCaddyAdminAPIIsOff(t *testing.T) {
 		t.Fatal("local_certs lost in test mode")
 	}
 }
+
+func TestHSTSIncludesSubdomainsAndPreload(t *testing.T) {
+	if !strings.Contains(CaddyfileMain("mail.example.org", false), "includeSubDomains; preload") {
+		t.Fatal("mail vhost must send includeSubDomains and preload")
+	}
+	if !strings.Contains(CaddyWebmailFile(testWebmail()), "includeSubDomains; preload") {
+		t.Fatal("webmail vhost must send includeSubDomains and preload")
+	}
+}
