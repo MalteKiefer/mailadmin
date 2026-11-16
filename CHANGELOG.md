@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Fixed
+- Backup bundles: `db.dump` is created owner-only (0600). It holds the mailbox rows including password hashes and was world-readable.
+
 ## [v1.43.7] - 2026-11-16
 
 ### Changed
