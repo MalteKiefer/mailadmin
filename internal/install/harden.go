@@ -763,6 +763,16 @@ APT::Periodic::AutocleanInterval "7";
 `
 }
 
+// CrowdSecLogrotatePath keeps the CrowdSec logs, which carry client IPs, for one week.
+const CrowdSecLogrotatePath = "/etc/logrotate.d/mailadmin-crowdsec"
+
+// CrowdSecLogrotate rotates the CrowdSec logs daily and keeps seven copies.
+func CrowdSecLogrotate() string {
+	return "# Managed by mailadmin install. CrowdSec logs carry client IPs; keep one week.\n" +
+		"/var/log/crowdsec.log\n/var/log/crowdsec_api.log\n/var/log/crowdsec-firewall-bouncer.log {\n" +
+		"\tdaily\n\trotate 7\n\tmissingok\n\tnotifempty\n\tcompress\n\tdelaycompress\n\tcopytruncate\n}\n"
+}
+
 // hardeningFiles are the drop-ins written as they are.
 func hardeningFiles() map[string]string {
 	return map[string]string{ // #nosec G101 -- file paths and contents, no credentials
@@ -770,8 +780,9 @@ func hardeningFiles() map[string]string {
 		ModprobeHardeningPath: ModprobeHardening(),
 		LimitsHardeningPath:   "# Managed by mailadmin install. No core dumps (CIS 1.5.1).\n* hard core 0\n",
 		CoredumpConfPath:      "# Managed by mailadmin install.\n[Coredump]\nStorage=none\nProcessSizeMax=0\n",
-		JournaldConfPath:      "# Managed by mailadmin install.\n[Journal]\nStorage=persistent\nCompress=yes\nMaxRetentionSec=30day\n",
+		JournaldConfPath:      "# Managed by mailadmin install.\n[Journal]\nStorage=persistent\nCompress=yes\nMaxRetentionSec=14day\n",
 		AuditRulesPath:        AuditRules(),
+		CrowdSecLogrotatePath: CrowdSecLogrotate(),
 		UnattendedConfPath:    UnattendedUpgrades(),
 		AutoUpgradesPath:      AutoUpgrades(),
 		NeedrestartConfPath:   "# Managed by mailadmin install. Restart services after library updates.\n$nrconf{restart} = 'a';\n",

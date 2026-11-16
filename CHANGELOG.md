@@ -29,6 +29,9 @@ providers need.
 ### Fixed
 - rspamd: `milter_headers` skips local submissions (127.0.0.1) by default, so mail sent through the local MTA got no `Authentication-Results`, `X-Spamd-Result` or `X-Rspamd-Server`. `skip_local = false` is set. Inbound mail is unaffected.
 
+### Changed
+- Privacy: journal retention 14 days (was unlimited). rspamd log no longer carries client IP or sender address. CrowdSec logs rotate weekly.
+
 ### Added
 - rspamd: `replies` module enabled, so replies to our own sent mail count as ham.
 

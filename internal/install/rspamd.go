@@ -80,6 +80,11 @@ func RspamdLocalFiles(pw string) map[string]string {
 		"milter_headers.conf": "# Managed by mailadmin install. Authentication-Results carries the SPF, DKIM and DMARC verdicts.\n" +
 			"# Local submissions (127.0.0.1) are scanned like inbound mail, so they get the headers too.\n" +
 			"skip_local = false;\nuse = [\"authentication-results\", \"x-spamd-result\", \"x-rspamd-server\"];\n",
+		"logging.inc": "# Managed by mailadmin install. No client IP and no sender address in the log.\n" +
+			"level = \"info\";\nlog_format =<<EOD\nid: <$mid>,$if_qid{ qid: <$>,}$if_user{ user: $,}\n" +
+			"(default: $is_spam ($action): [$scores] [$symbols_scores_params]),\n" +
+			"len: $len, time: $time_real, dns req: $dns_req,\n" +
+			"digest: <$digest>$if_smtp_rcpts{, rcpts: <$>}$if_mime_rcpts{, mime_rcpts: <$>}$if_filename{, file: $}$if_forced_action{, forced: $}$if_settings_id{, settings_id: $}\nEOD\n",
 		"replies.conf": "# Managed by mailadmin install. Replies to our own sent mail count as ham. No external lookup.\nenabled = true;\n",
 		"phishing.conf": "# Managed by mailadmin install. Phishing feeds (PhishTank, OpenPhish) are downloaded as maps, no per-mail lookup.\n" +
 			"openphish_enabled = true;\nphishtank_enabled = true;\n",
