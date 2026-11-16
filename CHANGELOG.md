@@ -27,6 +27,9 @@ providers need.
 ## [Unreleased]
 
 ### Security
+- systemd sandbox drop-ins for dovecot, rspamd, crowdsec and postgresql (`ProtectSystem=full`, `NoNewPrivileges`, address families, namespaces). Exposure: dovecot 8.5 to 6.0, rspamd 9.2 to 6.2, crowdsec 9.6 to 6.6, postgresql 9.6 to 6.6. Verified per service on the server.
+
+### Security
 - Postfix `milter_default_action = tempfail`: when rspamd is down, mail is deferred instead of accepted unscanned.
 
 ## [v1.43.13] - 2026-11-16

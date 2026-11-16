@@ -828,6 +828,18 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 	if err := applyFaillock(); err != nil {
 		return err
 	}
+	for _, u := range SandboxedUnits {
+		path, content := SandboxDropIn(u)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- systemd drop-in dir
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+		}
+		if err := writeAtomic(path, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	if _, err := x.Run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
 	if aide, err := os.ReadFile(AideConfPath); err == nil { // #nosec G304 -- fixed system path
 		if want := AideConfWithExcludes(string(aide)); want != string(aide) {
 			if err := writeAtomic(AideConfPath, []byte(want), 0o644); err != nil {
