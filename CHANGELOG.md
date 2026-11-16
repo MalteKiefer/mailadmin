@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.6] - 2026-11-16
+
 ### Added
 - Postfix postscreen on port 25: greet, bare-newline, non-SMTP and pipelining checks are enforced before smtpd gets the connection. Mynetworks are exempt. Submission (587, 465) is unchanged. No external DNS blocklists are queried.
 
