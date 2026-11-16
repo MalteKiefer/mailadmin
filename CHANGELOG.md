@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Security
+- `/proc` mounted with `hidepid=2`: a user sees only their own processes. `/dev/shm` and `/tmp` are mounted `noexec,nosuid,nodev`. Persisted in `/etc/fstab` and `tmp.mount`.
+
 ## [v1.43.15] - 2026-11-16
 
 ### Added
