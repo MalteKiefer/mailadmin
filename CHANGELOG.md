@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.8] - 2026-11-16
+
 ### Added
 - `borgbackup` and `rclone` are installed with the mail stack packages. borg writes to a local or ssh repository; rclone copies that repository to B2 or another remote.
 ||||||| 49eb1aa
