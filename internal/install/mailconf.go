@@ -572,7 +572,10 @@ install_pair() {
 crt=$(find ` + CaddyCertStore + ` -type f -name "$host.crt" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
 [ -n "$crt" ] || { echo "no certificate for $host yet" >&2; exit 3; }
 key=$(dirname "$crt")/$host.key
-[ -f "$key" ] || { echo "no key for $host next to its certificate" >&2; exit 3; }
+# The Caddy store is writable by the caddy user. Links are refused, because install and
+# -f would follow them and root would copy whatever file a link points at.
+[ ! -L "$crt" ] || { echo "refusing: $crt is a symlink" >&2; exit 3; }
+[ -f "$key" ] && [ ! -L "$key" ] || { echo "no regular key for $host next to its certificate" >&2; exit 3; }
 
 live=` + TLSFullchain + `
 domainfile=/var/lib/mailadmin/.cert-domain
