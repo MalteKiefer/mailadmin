@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.12] - 2026-11-16
+
 ### Security
 - PAM: `pam_faillock` locks an account for 15 min after 5 failed logins (root is not locked). `nullok` is removed from `common-auth`, so empty passwords are refused.
 
