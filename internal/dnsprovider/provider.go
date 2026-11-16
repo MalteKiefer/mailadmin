@@ -350,6 +350,7 @@ type MailRecordOpts struct {
 	TTL        int    // default 3600
 	ReportTo   string // rua/ruf localpart target domain (usually the primary domain)
 	WithMTASTS bool   // publish _mta-sts + mta-sts host, only once the vhost+cert are live (enforce mode!)
+	AppleFQDN  string // Apple profile form host, e.g. apple.example.com; empty when the form is off
 }
 
 // DesiredMailRecords builds the standard mail record-set for a domain. This
@@ -400,6 +401,15 @@ func DesiredMailRecords(domain string, o MailRecordOpts) []Record {
 	if o.WithMTASTS {
 		recs = append(recs, Record{Type: "TXT", Name: "_mta-sts", Content: "v=STSv1; id=" + mtaStsID(), TTL: o.TTL})
 	}
+	// The Apple profile form host points at the mail server, like the mta-sts host.
+	if label, ok := subLabel(o.AppleFQDN, domain); ok {
+		if o.IPv4 != "" {
+			recs = append(recs, Record{Type: "A", Name: label, Content: o.IPv4, TTL: o.TTL})
+		}
+		if o.IPv6 != "" {
+			recs = append(recs, Record{Type: "AAAA", Name: label, Content: o.IPv6, TTL: o.TTL})
+		}
+	}
 	if host, ok := strings.CutSuffix(o.MailHost, "."+domain); ok && host != "" {
 		if o.IPv4 != "" {
 			recs = append(recs, Record{Type: "A", Name: host, Content: o.IPv4, TTL: o.TTL})
@@ -409,4 +419,16 @@ func DesiredMailRecords(domain string, o MailRecordOpts) []Record {
 		}
 	}
 	return recs
+}
+
+// subLabel returns the label of fqdn relative to domain: "apple" for apple.example.com
+// in example.com. ok is false when fqdn is not below domain.
+func subLabel(fqdn, domain string) (string, bool) {
+	fqdn = strings.ToLower(strings.TrimSuffix(fqdn, "."))
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	label, ok := strings.CutSuffix(fqdn, "."+domain)
+	if !ok || label == "" || strings.Contains(label, ".") {
+		return "", false
+	}
+	return label, true
 }

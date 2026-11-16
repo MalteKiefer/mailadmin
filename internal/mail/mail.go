@@ -43,12 +43,13 @@ type DKIMKey struct {
 
 // Manager reads and generates DKIM material and builds desired record-sets.
 type Manager struct {
-	runner   *sys.Runner
-	dkimDir  string
-	mailHost string
-	ipv4     string
-	ipv6     string
-	ttl      int
+	runner    *sys.Runner
+	dkimDir   string
+	mailHost  string
+	ipv4      string
+	ipv6      string
+	ttl       int
+	appleFQDN string
 }
 
 // New builds a Manager. dkimDir is the rspamd DKIM directory, ttl the record TTL
@@ -140,7 +141,15 @@ func (m *Manager) DesiredRecords(domain, selector, dkimValue string, withMTASTS 
 		DKIMValue:  dkimValue,
 		TTL:        m.ttl,
 		WithMTASTS: withMTASTS,
+		AppleFQDN:  m.appleFQDN,
 	})
+}
+
+// WithApple sets the Apple profile form host (empty when the form is off), so the
+// desired record-set includes its A and AAAA records.
+func (m *Manager) WithApple(fqdn string) *Manager {
+	m.appleFQDN = fqdn
+	return m
 }
 
 // parseDKIMPublic extracts the DKIM record value from a rspamadm dkim_keygen

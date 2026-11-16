@@ -176,7 +176,7 @@ func (a *App) domainManager() (*mail.Manager, *config.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	m := mail.New(a.runner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6, cfg.Mail.DNSTTL)
+	m := mail.New(a.runner(), cfg.Mail.DKIMDir, cfg.Mail.Hostname, cfg.Server.IPv4, cfg.Server.IPv6, cfg.Mail.DNSTTL).WithApple(cfg.Apple.FQDN())
 	return m, cfg, nil
 }
 

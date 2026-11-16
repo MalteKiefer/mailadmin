@@ -34,3 +34,11 @@ func normalizeApple(a *Apple) {
 	a.Domain = strings.ToLower(strings.TrimSpace(a.Domain))
 	a.Listen = strings.TrimSpace(a.Listen)
 }
+
+// FQDN returns the form host, or "" when the form is off.
+func (a Apple) FQDN() string {
+	if !a.Enabled {
+		return ""
+	}
+	return a.Domain
+}
