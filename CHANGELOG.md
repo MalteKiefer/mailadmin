@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.9] - 2026-11-16
+
 ### Added
 - PostgreSQL: `log_connections` and `log_disconnections` on, `idle_session_timeout = 10min`.
 - Caddy: systemd sandbox drop-in (`ProtectSystem=strict`, `NoNewPrivileges`, only `CAP_NET_BIND_SERVICE`, cert store in `/var/lib/caddy`).
