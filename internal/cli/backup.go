@@ -142,6 +142,11 @@ func (a *App) backupCreate(cmd *cobra.Command, outFlag string) error {
 	if _, err := sys.New(dbToolTimeoutFor(cfg), nil).Run(ctx(cmd), nil, backup.PgDumpArgs(cfg.Postgres.Service, dumpPath)...); err != nil {
 		return fmt.Errorf("backup create: pg_dump: %w", err)
 	}
+	// The dump holds every mailbox row, password hashes included. pg_dump
+	// writes it with the umask mode, so set owner-only explicitly.
+	if err := os.Chmod(dumpPath, 0o600); err != nil {
+		return fmt.Errorf("backup create: dump mode: %w", err)
+	}
 	components = append(components, backup.ComponentDB)
 
 	// 2. DKIM key directory, copied verbatim.

@@ -55,3 +55,15 @@ func TestVRFYStaysDisabled(t *testing.T) {
 	}
 	t.Fatal("disable_vrfy_command missing: VRFY would reveal user names")
 }
+
+func TestCaddyAdminAPIIsOff(t *testing.T) {
+	for _, internal := range []bool{false, true} {
+		out := CaddyfileMain("mail.example.org", internal)
+		if !strings.Contains(out, "admin off") {
+			t.Fatalf("admin api not off (tlsInternal=%v):\n%s", internal, out)
+		}
+	}
+	if !strings.Contains(CaddyfileMain("mail.example.org", true), "local_certs") {
+		t.Fatal("local_certs lost in test mode")
+	}
+}
