@@ -390,7 +390,7 @@ func CaddyfileMain(hostname string, tlsInternal bool) string {
 
 %s {
 	header {
-		Strict-Transport-Security "max-age=63072000"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
 		-Server
 	}
