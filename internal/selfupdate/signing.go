@@ -56,7 +56,7 @@ func verifySums(sums, sig []byte) error {
 		return fmt.Errorf("selfupdate: embedded key does not carry pinned fingerprint %s", releaseSigningFingerprint)
 	}
 	if _, err := openpgp.CheckArmoredDetachedSignature(pinned, bytes.NewReader(sums), bytes.NewReader(sig), nil); err != nil {
-		return fmt.Errorf("%w: %v", ErrSignature, err)
+		return fmt.Errorf("%w: %w", ErrSignature, err)
 	}
 	return nil
 }
