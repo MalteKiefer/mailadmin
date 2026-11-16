@@ -1,0 +1,2 @@
+  # mailadmin exception: Postfix reads the machine id for its queue IDs and logs.
+  /etc/machine-id r,
