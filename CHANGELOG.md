@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.21] - 2026-11-16
+
 ### Added
 - Discord webhook: `[notify] discord_webhook_url` receives the same alerts as ntfy. The URL is validated (https, discord.com host, /api/webhooks/ path).
 - Daily health check (`mailadmin-doctor.timer`, 07:00) with notification, and an OnFailure hook for the mail services that mails root on a failed unit.
