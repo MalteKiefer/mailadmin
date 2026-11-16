@@ -26,6 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.30] - 2026-11-16
+
+### Changed
+- Apple profile: the mail account name is the domain. The address stays in EmailAddress and the login usernames.
+
 ## [v1.43.29] - 2026-11-16
 
 ### Changed
