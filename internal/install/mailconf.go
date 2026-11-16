@@ -234,7 +234,8 @@ func PostfixSettings(hostname string, groups []string) []PostfixSetting {
 		{"smtpd_tls_key_file", TLSPrivkey},
 		{"smtpd_tls_security_level", "may"},
 		{"smtpd_tls_auth_only", "yes"},
-		{"smtp_tls_security_level", "may"},
+		{"smtp_dns_support_level", "dnssec"},
+		{"smtp_tls_security_level", "dane"},
 		{"smtpd_relay_restrictions", "permit_mynetworks, permit_sasl_authenticated, defer_unauth_destination"},
 		{"smtpd_recipient_restrictions", "reject_non_fqdn_recipient, reject_unknown_recipient_domain, " +
 			"permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination"},
