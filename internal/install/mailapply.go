@@ -421,9 +421,14 @@ func EnableUnit(ctx context.Context, x Exec, unit string) error {
 	if _, err := x.Run(ctx, nil, "systemctl", "enable", "--now", unit); err != nil {
 		return fmt.Errorf("enable %s: %w", unit, err)
 	}
-	// A running daemon picks up rewritten config only after a reload.
-	if _, err := x.Run(ctx, nil, "systemctl", "reload-or-restart", unit); err != nil {
-		return fmt.Errorf("reload %s: %w", unit, err)
+	// A running daemon picks up rewritten config on the next start. Caddy has
+	// no reload path (admin API off), so it always restarts.
+	verb := "reload-or-restart"
+	if unit == "caddy" {
+		verb = "restart"
+	}
+	if _, err := x.Run(ctx, nil, "systemctl", verb, unit); err != nil {
+		return fmt.Errorf("%s %s: %w", verb, unit, err)
 	}
 	return nil
 }
