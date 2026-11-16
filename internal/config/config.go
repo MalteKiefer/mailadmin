@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"mailadmin/internal/notify"
 	"net"
 	"os"
 	"path/filepath"
@@ -147,6 +148,9 @@ type Notify struct {
 	// MailTo receives root's mail: cron, AIDE reports, unattended-upgrades.
 	// Empty leaves root's mail where it is.
 	MailTo string `toml:"mail_to"`
+	// DiscordWebhookURL receives the same alerts as ntfy, when set. The URL
+	// carries the webhook token, so keep config.toml at 0600.
+	DiscordWebhookURL string `toml:"discord_webhook_url"`
 }
 
 // Config is the fully-parsed, validated configuration. Secrets are part of it
@@ -383,6 +387,9 @@ func (c *Config) DSN() string {
 
 // Validate checks required keys and value formats, failing closed.
 func (c *Config) Validate() error {
+	if err := notify.ValidDiscordWebhook(c.Notify.DiscordWebhookURL); err != nil {
+		return fmt.Errorf("%w: notify.discord_webhook_url: %w", ErrInvalidConfig, err)
+	}
 	for _, cidr := range c.Hardening.SSHAllowFrom {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("%w: hardening.ssh_allow_from: %q is not a CIDR", ErrInvalidConfig, cidr)
