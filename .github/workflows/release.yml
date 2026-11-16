@@ -57,6 +57,29 @@ jobs:
           ( cd dist && sha256sum mailadmin-linux-* *.cdx.json config.default.toml > SHA256SUMS )
           cat dist/SHA256SUMS
 
+      # Detached signature over SHA256SUMS. selfupdate refuses a release without it, and
+      # verifies it against the release key pinned in internal/selfupdate. The key and
+      # passphrase come from repository secrets. The passphrase goes to gpg on stdin,
+      # not on the command line.
+      - name: Sign checksums
+        env:
+          RELEASE_GPG_KEY: ${{ secrets.RELEASE_GPG_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          RELEASE_KEY_ID: AB222289126C59D40BDFC707C82C7B375578C141
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_GPG_KEY" || { echo "RELEASE_GPG_KEY secret is not set" >&2; exit 1; }
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s' "$RELEASE_GPG_KEY" | gpg --batch --import
+          fpr=$(gpg --batch --with-colons --list-secret-keys "$RELEASE_KEY_ID" | awk -F: '$1 == "fpr" { print $10; exit }')
+          [ "$fpr" = "$RELEASE_KEY_ID" ] || { echo "imported key $fpr is not the pinned release key" >&2; exit 1; }
+          printf '%s' "$RELEASE_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase-fd 0 --local-user "$RELEASE_KEY_ID" \
+            --armor --detach-sign --output dist/SHA256SUMS.asc dist/SHA256SUMS
+          gpg --batch --verify dist/SHA256SUMS.asc dist/SHA256SUMS
+          rm -rf "$GNUPGHOME"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
