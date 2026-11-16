@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Security
+- Postfix `milter_default_action = tempfail`: when rspamd is down, mail is deferred instead of accepted unscanned.
+
 ## [v1.43.13] - 2026-11-16
 
 ### Security
