@@ -100,6 +100,7 @@ ssl_server_prefer_ciphers = server
 
 auth_mechanisms = plain login
 auth_allow_cleartext = no
+auth_failure_delay = 2 secs
 # '+' separates the app-password label: user@domain+label.
 auth_username_chars = abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890.-_@+
 passdb_default_password_scheme = ARGON2ID
@@ -242,6 +243,20 @@ func PostfixSettings(hostname string, groups []string) []PostfixSetting {
 		{"smtpd_sender_restrictions", "reject_non_fqdn_sender, reject_unknown_sender_domain"},
 		{"smtpd_data_restrictions", "reject_unauth_pipelining"},
 		{"smtpd_banner", "$myhostname ESMTP"},
+		// Postscreen on port 25 tests new connections before smtpd sees them.
+		// Clients that talk before the banner, send bare newlines or pipeline
+		// early are refused without a session. Mynetworks skip the test.
+		{"postscreen_access_list", "permit_mynetworks"},
+		{"postscreen_greet_action", "enforce"},
+		{"postscreen_bare_newline_enable", "yes"},
+		{"postscreen_bare_newline_action", "enforce"},
+		{"postscreen_non_smtp_command_enable", "yes"},
+		{"postscreen_non_smtp_command_action", "drop"},
+		{"postscreen_pipelining_enable", "yes"},
+		{"postscreen_pipelining_action", "enforce"},
+		{"smtpd_client_connection_count_limit", "20"},
+		{"smtpd_error_sleep_time", "5s"},
+		{"smtpd_client_event_limit_exceptions", "$mynetworks"},
 		// TLS 1.2 and 1.3 with forward secret AEAD ciphers only, in both directions.
 		{"smtpd_tls_protocols", ">=TLSv1.2"},
 		{"smtpd_tls_mandatory_protocols", ">=TLSv1.2"},
@@ -285,6 +300,18 @@ func PostfixSubmissionServices() [][]string {
 		{"-P", "smtps/inet/smtpd_tls_wrappermode=yes"},
 		{"-P", "smtps/inet/smtpd_sasl_auth_enable=yes"},
 		{"-P", "smtps/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject"},
+	}
+}
+
+// PostfixPostscreenServices returns the master.cf entries that put postscreen in
+// front of port 25. The submission ports 587 and 465 are not affected. No DNS
+// blocklists are queried: postscreen only checks the connection itself.
+func PostfixPostscreenServices() [][]string {
+	return [][]string{
+		{"-M", "smtp/inet=smtp inet n - y - 1 postscreen"},
+		{"-M", "smtpd/pass=smtpd pass - - y - - smtpd"},
+		{"-M", "dnsblog/unix=dnsblog unix - - y - 0 dnsblog"},
+		{"-M", "tlsproxy/unix=tlsproxy unix - - y - 0 tlsproxy"},
 	}
 }
 
@@ -350,11 +377,14 @@ func RspamdSelectorMapContent(pairs [][2]string) string {
 // CaddyfileMain renders the main Caddyfile. The managed includes (autodiscovery,
 // MTA-STS) are imported from CaddyIncludeDir, the mail host gets a certificate.
 func CaddyfileMain(hostname string, tlsInternal bool) string {
-	global := ""
+	// The admin API is off: nothing reconfigures Caddy at runtime. Config changes
+	// take a systemctl restart.
+	global := "{\n\tadmin off\n"
 	if tlsInternal {
 		// Test mode: every site, including the includes, uses Caddy's local CA.
-		global = "{\n\tlocal_certs\n}\n\n"
+		global += "\tlocal_certs\n"
 	}
+	global += "}\n\n"
 	return fmt.Sprintf(`# Managed by mailadmin install. Includes are managed by mailadmin.
 %simport %s/*.caddy
 
@@ -382,7 +412,11 @@ include "` + NftPersistPath + `"
 
 // NftTableFile renders the mailadmin table with its port sets. It is used both at
 // install time and as the persisted state the helper writes after each change.
-func NftTableFile(tcp, udp, ssh []int) string {
+func NftTableFile(tcp, udp, ssh []int, sshFrom []string) string {
+	sshRule := "\t\ttcp dport { " + portList(ssh) + " } accept\n"
+	if len(sshFrom) > 0 {
+		sshRule = "\t\tip saddr { " + strings.Join(sshFrom, ", ") + " } tcp dport { " + portList(ssh) + " } accept\n"
+	}
 	return fmt.Sprintf(`add table inet mailadmin
 delete table inet mailadmin
 # Managed by mailadmin install.
@@ -392,8 +426,7 @@ table inet mailadmin {
 		ct state established,related accept
 		iif "lo" accept
 		meta l4proto { icmp, ipv6-icmp } accept
-		tcp dport { %s } accept
-		tcp dport @allowed_tcp accept
+%s		tcp dport @allowed_tcp accept
 		udp dport @allowed_udp accept
 	}
 	chain forward {
@@ -403,7 +436,7 @@ table inet mailadmin {
 		type filter hook output priority 0; policy accept;
 	}
 }
-`, nftSet("allowed_tcp", tcp), nftSet("allowed_udp", udp), portList(ssh))
+`, nftSet("allowed_tcp", tcp), nftSet("allowed_udp", udp), sshRule)
 }
 
 // nftSet renders one inet_service set. An empty set has no elements line, since

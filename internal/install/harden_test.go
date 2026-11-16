@@ -28,7 +28,7 @@ func TestSSHHardeningConfKeepsPasswordLoginWithoutKeys(t *testing.T) {
 		KeySigs: map[string]bool{"ssh-ed25519": true, "rsa-sha2-512": true, "ssh-rsa": true}}
 	on := SSHHardeningConf(caps, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}, []string{"/etc/ssh/ssh_host_ed25519_key"})
 	for _, want := range []string{"PasswordAuthentication no\n", "AuthenticationMethods publickey\n", "PermitRootLogin prohibit-password\n",
-		"KexAlgorithms mlkem768x25519-sha256,curve25519-sha256\n", "Ciphers chacha20-poly1305@openssh.com\n",
+		"KexAlgorithms mlkem768x25519-sha256\n", "Ciphers chacha20-poly1305@openssh.com\n",
 		"MACs hmac-sha2-512-etm@openssh.com\n", "RequiredRSASize 3072\n", "HostKey /etc/ssh/ssh_host_ed25519_key\n", "X11Forwarding no\n"} {
 		if !strings.Contains(on, want) {
 			t.Errorf("hardened config misses %q:\n%s", want, on)
@@ -84,7 +84,7 @@ func TestDecideSSHPolicyFollowsTheActualLogin(t *testing.T) {
 		{"root by password, backup key present", "root", true, []authKey{backup}, []authKey{backup},
 			map[string]sshLogin{"root": {method: "password"}}, SSHPolicy{KeyOnly: false, RootKeyOnly: false, StrictRSA: true}},
 		{"admin by key, root has none", "admin", true, []authKey{ed}, nil,
-			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: true}},
+			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, RootLoginNo: true, AllowUser: "admin", StrictRSA: true}},
 		{"admin by password", "admin", true, []authKey{ed}, nil,
 			map[string]sshLogin{"admin": {method: "password"}}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},
 		{"key from another file", "admin", true, []authKey{ed}, nil,
@@ -92,7 +92,7 @@ func TestDecideSSHPolicyFollowsTheActualLogin(t *testing.T) {
 		{"weak RSA in use keeps RSA", "admin", true, []authKey{weakRSA}, nil,
 			map[string]sshLogin{"admin": key("SHA256:rsa", "RSA")}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: false}},
 		{"root used an unknown RSA key", "admin", true, []authKey{ed}, nil,
-			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519"), "root": key("SHA256:x", "RSA")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, StrictRSA: false}},
+			map[string]sshLogin{"admin": key("SHA256:ed", "ED25519"), "root": key("SHA256:x", "RSA")}, SSHPolicy{KeyOnly: true, RootKeyOnly: true, RootLoginNo: true, AllowUser: "admin", StrictRSA: false}},
 		{"no login uid", "", false, nil, []authKey{ed},
 			map[string]sshLogin{"root": key("SHA256:ed", "ED25519")}, SSHPolicy{KeyOnly: false, RootKeyOnly: false, StrictRSA: true}},
 		{"no journal entry", "admin", true, []authKey{ed}, nil, map[string]sshLogin{}, SSHPolicy{KeyOnly: false, RootKeyOnly: true, StrictRSA: true}},

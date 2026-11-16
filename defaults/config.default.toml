@@ -73,19 +73,25 @@ known_hosts = "/root/.ssh/known_hosts_borg"
 encryption = "repokey-blake2"
 # borg --compression value.
 compression = "zstd,6"
-# Directory whose contents are archived. Empty: backup.dir.
-source = ""
+# Paths archived by one run. Empty: backup.dir. Example: ["/var/lib/mailadmin/backups", "/var/vmail"].
+source = []
 # systemd OnCalendar expression of the timer.
 schedule = "*-*-* 03:30:00"
-# Remove archives outside the retention below after each run.
+# Remove archives outside the retention below after each run. Set false when the
+# repository key is append-only (the storage box refuses deletes): retention then
+# runs from a key that is not on this host.
 prune = true
-# Run borg compact after prune, to free the space of removed archives.
+# Run borg compact after prune, to free the space of removed archives. Needs
+# delete rights, so it goes off together with prune for an append-only key.
 compact = true
 # Run borg check at this interval, e.g. "1w" or "30d". Empty: never.
 check_every = "1w"
+# Newest local bundles kept in backup.dir after a run that archived them.
+local_keep = 3
 
 [backup.borg.retention]
 # Archives kept per period. At least one value must be above zero.
+hourly = 0
 daily = 7
 weekly = 4
 monthly = 6
@@ -102,6 +108,8 @@ command = "30s"
 db_tool = "30m"
 
 [notify]
+# Address for root mail (cron, AIDE, unattended-upgrades). Empty: keep local root mail.
+mail_to = ""
 # ntfy.sh (or self-hosted) topic for doctor --notify. Token: NTFY_TOKEN below.
 url = ""
 
@@ -110,10 +118,27 @@ url = ""
 # Off by default. The binary is refused unless its checksum matches sha256.
 enabled = false
 domain = "webmail.example.com"
-url = "https://github.com/MalteKiefer/mailadmin/releases/download/v1.30.1/alps-linux-amd64"
-sha256 = "3a457a88e2ac1397a419a6d7234f510a91acc22d5f9a7fbe12850b2d2d5902d6"
+url = "https://github.com/MalteKiefer/mailadmin/releases/download/v1.42.2/alps-linux-amd64"
+sha256 = "6e5cb139a9d986ad7d6a16cef13ea0c248e544fd40a2cfe34221993ba5e2e9f9"
 # Local address alps listens on. Caddy proxies the domain to it.
 listen = "127.0.0.1:8081"
+
+[webmail.plugins]
+# base always loads. Password changes run through the webmail-passwd helper.
+gpg = true
+managesieve = true
+password = true
+
+[webmail.caldav]
+# Default calendar server. Needs server (URL with scheme) when enabled.
+# Users can still add their own server in alps Settings.
+enabled = false
+server = ""
+
+[webmail.carddav]
+# Default contacts server. Needs server (URL with scheme) when enabled.
+enabled = false
+server = ""
 
 [hardening]
 # Master switch for install's system hardening (sysctl, modules, auditd, AIDE,
@@ -123,6 +148,10 @@ system = true
 ssh = true
 # CrowdSec agent and nftables bouncer.
 crowdsec = true
+# Source networks allowed to reach sshd, e.g. ["100.78.75.0/24"] for a netbird
+# admin net. Empty: sshd is reachable from any address. Set it before you
+# restrict, from a session that is already inside that network.
+ssh_allow_from = []
 
 [repos]
 # Expected fingerprints of the vendor repository keys. install refuses a key
@@ -143,6 +172,8 @@ SERVERCOW_USERNAME = ""
 SERVERCOW_PASSWORD = ""
 SERVFAIL_API_KEY = ""
 SERVFAIL_SERVER = ""
+# Passphrase of the borg repository (backup borg). Needed for every borg run. Keep a copy.
+BORG_PASSPHRASE = ""
 # rspamd controller password. install generates it; set your own to change it.
 RSPAMD_CONTROLLER_PW = ""
 # Bearer token for [notify] url.

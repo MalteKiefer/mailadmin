@@ -77,9 +77,6 @@ type merger struct {
 
 func (m *merger) walk(prefix []string, dv, hv map[string]any) {
 	for _, k := range sortedKeys(dv) {
-		if len(prefix) == 0 && k == "secrets" {
-			continue
-		}
 		path := append(append([]string{}, prefix...), k)
 		dsub, dIsMap := dv[k].(map[string]any)
 		if _, ok := hv[k]; !ok {

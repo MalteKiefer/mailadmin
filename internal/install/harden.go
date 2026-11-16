@@ -68,7 +68,7 @@ const LoginBanner = "Authorized access only. Unauthorized access to this system 
 func HardeningPackages() []string {
 	return []string{
 		"auditd", "crowdsec", "crowdsec-firewall-bouncer-nftables", "aide", "aide-common",
-		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils",
+		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils", "rkhunter",
 		"libpam-pwquality", "libpam-tmpdir", "debsums", "acct", "sysstat",
 	}
 }
@@ -142,8 +142,9 @@ func (c SSHCaps) atLeast(major, minor int) bool {
 // Preferred algorithms, strongest first. Each list is cut to what sshd supports.
 var (
 	sshKex = []string{
+		// Post-quantum hybrids only. Plain curve25519 is not protected against
+		// harvest-now-decrypt-later and ssh-audit flags it.
 		"mlkem768x25519-sha256", "sntrup761x25519-sha512", "sntrup761x25519-sha512@openssh.com",
-		"curve25519-sha256", "curve25519-sha256@libssh.org",
 	}
 	sshCiphers = []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com"}
 	sshMACs    = []string{"hmac-sha2-512-etm@openssh.com", "hmac-sha2-256-etm@openssh.com", "umac-128-etm@openssh.com"}
@@ -171,6 +172,7 @@ type SSHPolicy struct {
 	// Stricter settings the operator already had, kept on --adopt.
 	RootLoginNo bool   // PermitRootLogin no
 	AuthMethods string // AuthenticationMethods with more than one factor
+	AllowUser   string // AllowUsers: the named account that logs in with a key
 }
 
 func supported(prefer []string, have map[string]bool) []string {
@@ -196,6 +198,9 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	} else if p.RootKeyOnly {
 		line("PermitRootLogin", "prohibit-password")
 	}
+	if p.AllowUser != "" {
+		line("AllowUsers", p.AllowUser)
+	}
 	line("PubkeyAuthentication", "yes")
 	if p.KeyOnly {
 		line("PasswordAuthentication", "no")
@@ -215,7 +220,7 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	line("MaxAuthTries", "3")
 	line("MaxSessions", "2")
 	line("MaxStartups", "10:30:60")
-	line("LoginGraceTime", "30")
+	line("LoginGraceTime", "20")
 	line("ClientAliveInterval", "300")
 	line("ClientAliveCountMax", "2")
 	line("TCPKeepAlive", "no") // ClientAlive runs inside the encrypted channel and cannot be spoofed
@@ -231,7 +236,7 @@ func SSHHardeningConf(c SSHCaps, p SSHPolicy, hostKeys []string) string {
 	line("Compression", "no")
 	// INFO, not VERBOSE: VERBOSE logs every agent key sshd refuses as a failure,
 	// and CrowdSec's ssh-bf then bans an operator whose agent holds several keys.
-	line("LogLevel", "INFO")
+	line("LogLevel", "VERBOSE") // logs the key fingerprint of every login
 	line("Banner", IssueNetPath)
 	if l := supported(sshKex, c.Kex); len(l) > 0 {
 		line("KexAlgorithms", strings.Join(l, ","))
@@ -394,6 +399,12 @@ func decideSSHPolicy(account string, known bool, keys, rootKeys []authKey, login
 			p.KeyOnly = ok && k.usable
 		}
 		p.RootKeyOnly = account != "root" || p.KeyOnly
+		// An operator who logs in with a usable key as a named account does not
+		// need root over SSH at all.
+		p.RootLoginNo = account != "root" && p.KeyOnly
+		if p.RootLoginNo {
+			p.AllowUser = account
+		}
 	}
 	for acct, ks := range map[string][]authKey{account: keys, "root": rootKeys} {
 		l := logins[acct]
@@ -536,7 +547,7 @@ func ApplySSHHardening(ctx context.Context, x Exec) (policy SSHPolicy, account s
 	// elsewhere are carried into it instead of being overridden.
 	drops, _ := filepath.Glob("/etc/ssh/sshd_config.d/*.conf")
 	prl, am := operatorSSH(append(drops, "/etc/ssh/sshd_config"))
-	policy.RootLoginNo = strings.EqualFold(prl, "no")
+	policy.RootLoginNo = policy.RootLoginNo || strings.EqualFold(prl, "no")
 	if f := strings.FieldsFunc(am, func(r rune) bool { return r == ',' || r == ' ' }); len(f) > 1 {
 		policy.AuthMethods = am
 	}
@@ -808,6 +819,13 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 	for path, content := range hardeningFiles() {
 		if err := writeAtomic(path, []byte(content), 0o644); err != nil {
 			return err
+		}
+	}
+	if aide, err := os.ReadFile(AideConfPath); err == nil { // #nosec G304 -- fixed system path
+		if want := AideConfWithExcludes(string(aide)); want != string(aide) {
+			if err := writeAtomic(AideConfPath, []byte(want), 0o644); err != nil {
+				return err
+			}
 		}
 	}
 	defs, err := os.ReadFile(LoginDefsPath)

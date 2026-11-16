@@ -110,7 +110,7 @@ func (m *Manager) Sync(ctx context.Context, domains []string) error {
 	if err := writeFileAtomic(m.includePath, []byte(block), 0o644); err != nil {
 		return fmt.Errorf("write autodiscovery include: %w", err)
 	}
-	if _, err := m.runner.OutputWithRetry(ctx, reloadAttempts, reloadBackoff, binSystemctl, "reload", m.reloadUnit); err != nil {
+	if _, err := m.runner.OutputWithRetry(ctx, reloadAttempts, reloadBackoff, binSystemctl, "restart", m.reloadUnit); err != nil {
 		return fmt.Errorf("reload %s: %w", m.reloadUnit, err)
 	}
 	return nil
@@ -145,7 +145,7 @@ func (m *Manager) SyncMTASTS(ctx context.Context, domains []string) error {
 	if err := writeFileAtomic(m.mtaStsInclude, []byte(block), 0o644); err != nil {
 		return fmt.Errorf("write mta-sts include: %w", err)
 	}
-	if _, err := m.runner.OutputWithRetry(ctx, reloadAttempts, reloadBackoff, binSystemctl, "reload", m.reloadUnit); err != nil {
+	if _, err := m.runner.OutputWithRetry(ctx, reloadAttempts, reloadBackoff, binSystemctl, "restart", m.reloadUnit); err != nil {
 		return fmt.Errorf("reload %s: %w", m.reloadUnit, err)
 	}
 	return nil

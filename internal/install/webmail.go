@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"mailadmin/internal/config"
@@ -63,27 +64,38 @@ origins = [%q]
 [plugin.base]
 enabled = true
 
-[plugin.caldav]
-enabled = true
-
-[plugin.carddav]
-enabled = true
-
+%[7]s
+%[8]s
 [plugin.gpg]
-enabled = true
+enabled = %[9]t
 
 [plugin.managesieve]
-enabled = true
+enabled = %[10]t
+# alps needs an explicit ManageSieve server (no SRV discovery since v1.1.0).
+# STARTTLS on the local Dovecot, so the password goes over TLS only.
+server = %[13]q
 
 [plugin.password]
-enabled = true
+enabled = %[11]t
 
 [plugin.password.options]
 # The helper checks the current password itself, then changes it. The password
 # travels on stdin only, never in argv.
-command = ["/usr/bin/sudo", "-n", %q, "webmail-passwd", "{email}"]
+command = ["/usr/bin/sudo", "-n", %[12]q, "webmail-passwd", "{email}"]
 stdin = "{old_password}\n{new_password}\n"
-`, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", w.Domain, "https://"+w.Domain, PasswordHelper)
+`, w.Listen, "https://"+w.Domain, "imaps://"+hostname+":993", "smtps://"+hostname+":465", w.Domain, "https://"+w.Domain,
+		davSection("caldav", w.CalDAV), davSection("carddav", w.CardDAV), w.Plugins.GPG, w.Plugins.ManageSieve, w.Plugins.Password, PasswordHelper, "managesieves://"+hostname+":4190")
+}
+
+// davSection renders the [plugin.<name>] section of a CalDAV or CardDAV default.
+// The server line is left out when none is set, so each user enters their own.
+func davSection(name string, d config.DAVServer) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "[plugin.%s]\nenabled = %t\n", name, d.Enabled)
+	if d.Server != "" {
+		fmt.Fprintf(&b, "server = %q\n", d.Server)
+	}
+	return b.String()
 }
 
 // AlpsUnitFile renders the systemd unit. alps needs no write access and no root.
@@ -126,7 +138,15 @@ func CaddyWebmailFile(w config.Webmail) string {
 	header {
 		Strict-Transport-Security "max-age=63072000"
 		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-Frame-Options "DENY"
+		Cross-Origin-Opener-Policy "same-origin"
+		Content-Security-Policy-Report-Only "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		-Server
+	}
+	request_body {
+		max_size 25MB
 	}
 	reverse_proxy %s
 }
@@ -212,7 +232,7 @@ func ApplyWebmail(ctx context.Context, x Exec, w config.Webmail, hostname string
 	if err := EnableUnit(ctx, x, AlpsUnit); err != nil {
 		return err
 	}
-	if _, err := x.Run(ctx, nil, "systemctl", "reload", "caddy"); err != nil {
+	if _, err := x.Run(ctx, nil, "systemctl", "restart", "caddy"); err != nil {
 		return fmt.Errorf("reload caddy: %w", err)
 	}
 	return nil

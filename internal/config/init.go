@@ -103,8 +103,23 @@ func FetchDefaultFor(ctx context.Context, tag string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkDefault(data); err != nil {
+	// The default of a newer release may name keys this binary does not know
+	// yet. The merge works on the keys of the file, so only syntax matters here.
+	if err := checkDefaultSyntax(data); err != nil {
 		return nil, fmt.Errorf("default config of %s: %w", tag, err)
 	}
 	return data, nil
+}
+
+// checkDefaultSyntax accepts a default file with keys this binary does not know.
+// That is the normal case when a binary older than the release upgrades itself.
+func checkDefaultSyntax(data []byte) error {
+	if len(data) > maxDefaultBytes {
+		return fmt.Errorf("default file too large")
+	}
+	var m map[string]any
+	if _, err := toml.Decode(string(data), &m); err != nil {
+		return err
+	}
+	return nil
 }

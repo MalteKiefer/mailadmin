@@ -233,6 +233,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.RecordDatabase(install.PgDatabase, install.PgRoles); err != nil {
 		return err
 	}
+	if err := install.EnableScram(pctx, x); err != nil {
+		return err
+	}
 	if err := install.EnablePeerMap(pctx, x); err != nil {
 		return err
 	}
@@ -332,13 +335,19 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 	if err := install.ApplyCaddy(pctx, x, ans.Hostname, in.tls == "internal"); err != nil {
 		return err
 	}
-	if err := install.ApplyFirewall(pctx, x); err != nil {
+	if err := install.ApplyFirewall(pctx, x, cfg.Hardening.SSHAllowFrom); err != nil {
 		return err
 	}
 	if err := install.RecordNftTable(); err != nil {
 		return err
 	}
 	if err := install.EnableUnit(pctx, x, "caddy"); err != nil {
+		return err
+	}
+	if err := install.ApplyRootMail(pctx, x, cfg.Notify.MailTo); err != nil {
+		return err
+	}
+	if err := install.ApplyMalwareScan(pctx, x, cfg.Notify.MailTo); err != nil {
 		return err
 	}
 	if err := install.ApplyWebmail(pctx, x, cfg.Webmail, ans.Hostname); err != nil {
@@ -371,6 +380,9 @@ func installMailStack(app *App, c *cobra.Command, in *installInputs, ans install
 		}
 	}
 	// The hardening switches of config.toml [hardening] (all on by default).
+	if err := ApplyBorgTimerConfig(pctx, x, cfg); err != nil {
+		return fmt.Errorf("borg timer: %w", err)
+	}
 	if config.On(cfg.Hardening.System) {
 		if err := install.ApplySystemHardening(pctx, x); err != nil {
 			return fmt.Errorf("system hardening: %w", err)

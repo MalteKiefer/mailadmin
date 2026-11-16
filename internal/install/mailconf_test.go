@@ -14,7 +14,7 @@ func TestNftTableReplacesItselfPortably(t *testing.T) {
 	// add+delete instead of "destroy": destroy needs nftables 1.0.7 and kernel 6.3,
 	// and Debian 12 ships 1.0.6. The pair works on every release that has tables.
 	const prefix = "add table inet mailadmin\ndelete table inet mailadmin\n"
-	got := NftTableFile(DefaultTCPPorts, nil, []int{22})
+	got := NftTableFile(DefaultTCPPorts, nil, []int{22}, nil)
 	if !strings.HasPrefix(got, prefix) || !strings.Contains(got, "\ntable inet mailadmin {") {
 		t.Fatalf("nft table must add and delete itself before its definition:\n%s", got)
 	}
@@ -81,7 +81,7 @@ func TestCertSyncPassesDomainAndValidatesIt(t *testing.T) {
 }
 
 func TestNftTableDropsInputAndKeepsSSH(t *testing.T) {
-	got := NftTableFile(DefaultTCPPorts, nil, []int{22, 2222})
+	got := NftTableFile(DefaultTCPPorts, nil, []int{22, 2222}, nil)
 	for _, want := range []string{"policy drop", "tcp dport { 22, 2222 } accept", "tcp dport @allowed_tcp accept", "25, 80, 443, 465, 587, 993"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nft table missing %q:\n%s", want, got)
@@ -135,7 +135,7 @@ func TestHelpersRejectBadArguments(t *testing.T) {
 }
 
 func TestNftEmptySetHasNoElementsLine(t *testing.T) {
-	got := NftTableFile(DefaultTCPPorts, nil, []int{22})
+	got := NftTableFile(DefaultTCPPorts, nil, []int{22}, nil)
 	if strings.Contains(got, "elements = {  }") || strings.Contains(got, "elements = { }") {
 		t.Fatalf("empty set rendered an elements line:\n%s", got)
 	}
@@ -170,5 +170,20 @@ func TestAliasMapCatchAllAndMultipleDestinations(t *testing.T) {
 	}
 	if d := DovecotConf(nil); strings.Contains(d, "~/.dovecot.sieve") || !strings.Contains(d, "/var/vmail/sieve/") {
 		t.Errorf("sieve storage must live outside the Maildir++ root")
+	}
+}
+
+// With ssh_allow_from set, SSH is accepted only from those networks.
+func TestNftTableFileRestrictsSSHSources(t *testing.T) {
+	got := NftTableFile(DefaultTCPPorts, nil, []int{22}, []string{"100.78.75.0/24"})
+	if !strings.Contains(got, "ip saddr { 100.78.75.0/24 } tcp dport { 22 } accept") {
+		t.Fatalf("ssh not restricted:\n%s", got)
+	}
+	if strings.Contains(got, "\t\ttcp dport { 22 } accept") {
+		t.Fatalf("open ssh rule still present:\n%s", got)
+	}
+	open := NftTableFile(DefaultTCPPorts, nil, []int{22}, nil)
+	if !strings.Contains(open, "\t\ttcp dport { 22 } accept") {
+		t.Fatalf("empty list must keep ssh open:\n%s", open)
 	}
 }
