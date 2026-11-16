@@ -26,6 +26,12 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.24] - 2026-11-16
+
+### Security
+- AppArmor: own profiles for rspamd, Caddy and Valkey, embedded in the binary. Loaded in complain mode. Valkey attaches to the resolved binary `valkey-check-rdb`.
+- AppArmor: Postfix and Dovecot profiles get exception rules for the accesses seen in complain mode. Enforce stays off until the complain events are reviewed.
+
 ## [v1.43.23] - 2026-11-16
 
 ### Security
