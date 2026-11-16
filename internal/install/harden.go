@@ -770,7 +770,7 @@ func hardeningFiles() map[string]string {
 		ModprobeHardeningPath: ModprobeHardening(),
 		LimitsHardeningPath:   "# Managed by mailadmin install. No core dumps (CIS 1.5.1).\n* hard core 0\n",
 		CoredumpConfPath:      "# Managed by mailadmin install.\n[Coredump]\nStorage=none\nProcessSizeMax=0\n",
-		JournaldConfPath:      "# Managed by mailadmin install.\n[Journal]\nStorage=persistent\nCompress=yes\n",
+		JournaldConfPath:      "# Managed by mailadmin install.\n[Journal]\nStorage=persistent\nCompress=yes\nMaxRetentionSec=30day\n",
 		AuditRulesPath:        AuditRules(),
 		UnattendedConfPath:    UnattendedUpgrades(),
 		AutoUpgradesPath:      AutoUpgrades(),
