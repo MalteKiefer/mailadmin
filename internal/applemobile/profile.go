@@ -39,7 +39,8 @@ func accountUUID(name string) string {
 // BuildProfile returns the .mobileconfig for address. host is the mail server name
 // used for IMAP (993, TLS) and SMTP submission (465, TLS).
 func BuildProfile(address, host string) ([]byte, error) {
-	if _, _, err := valid.Address(address); err != nil {
+	_, domain, err := valid.Address(address)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadAddress, err)
 	}
 	if _, err := valid.Domain(host); err != nil {
@@ -55,7 +56,7 @@ func BuildProfile(address, host string) ([]byte, error) {
 	b.WriteString("<key>PayloadContent</key>\n<array>\n<dict>\n")
 	dict(&b, [][2]any{
 		{"EmailAccountDescription", host},
-		{"EmailAccountName", address},
+		{"EmailAccountName", domain},
 		{"EmailAccountType", "EmailTypeIMAP"},
 		{"EmailAddress", address},
 		{"IncomingMailServerAuthentication", "EmailAuthPassword"},
@@ -70,7 +71,7 @@ func BuildProfile(address, host string) ([]byte, error) {
 		{"OutgoingMailServerUsername", address},
 		{"OutgoingPasswordSameAsIncomingPassword", true},
 		{"PayloadDescription", "Mail account " + address},
-		{"PayloadDisplayName", address},
+		{"PayloadDisplayName", domain},
 		{"PayloadIdentifier", "mailadmin.mail." + account},
 		{"PayloadType", "com.apple.mail.managed"},
 		{"PayloadUUID", account},
@@ -79,7 +80,7 @@ func BuildProfile(address, host string) ([]byte, error) {
 	b.WriteString("</dict>\n</array>\n")
 	dict(&b, [][2]any{
 		{"PayloadDescription", "Mail settings for " + address + ". No password is stored in this profile."},
-		{"PayloadDisplayName", "Mail: " + address},
+		{"PayloadDisplayName", "Mail: " + domain},
 		{"PayloadIdentifier", "mailadmin.profile." + profile},
 		{"PayloadRemovalDisallowed", false},
 		{"PayloadType", "Configuration"},

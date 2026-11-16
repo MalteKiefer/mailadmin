@@ -64,6 +64,7 @@ func TestBuildProfileIsWellFormedAndHasNoPassword(t *testing.T) {
 		"<key>IncomingMailServerPortNumber</key><integer>993</integer>",
 		"<key>OutgoingMailServerPortNumber</key><integer>465</integer>",
 		"<key>EmailAddress</key><string>malte@kiefer-networks.de</string>",
+		"<key>EmailAccountName</key><string>kiefer-networks.de</string>",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("profile missing %q", want)
