@@ -1,0 +1,47 @@
+# Managed by mailadmin install. Complain mode: logs what enforce would deny.
+# Upstream has no Caddy profile, this one is written for this host.
+#include <tunables/global>
+
+/usr/bin/caddy flags=(complain) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/ssl_certs>
+
+  capability net_bind_service,
+  capability setgid,
+  capability setuid,
+  capability chown,
+  capability dac_override,
+
+  network inet stream,
+  network inet dgram,
+  network inet6 stream,
+  network inet6 dgram,
+  network unix stream,
+
+  /usr/bin/caddy mr,
+  /etc/caddy/ r,
+  /etc/caddy/** r,
+  /var/lib/caddy/ rw,
+  /var/lib/caddy/** rwk,
+  /var/log/caddy/ rw,
+  /var/log/caddy/** rw,
+  /run/caddy/ rw,
+  /run/caddy/** rwk,
+  /etc/machine-id r,
+  /proc/sys/net/core/somaxconn r,
+  # Observed in complain mode: Go runtime reads its cgroup and mount namespace.
+  /proc/@{pid}/cgroup r,
+  /proc/@{pid}/mountinfo r,
+  /proc/@{pid}/cpuset r,
+  /sys/fs/cgroup/** r,
+  /proc/@{pid}/stat r,
+  /dev/urandom r,
+  /dev/null rw,
+
+  deny /etc/mailadmin/** rw,
+  deny /etc/ssl/private/** r,
+  deny /root/** rwx,
+  deny /home/** rwx,
+  deny /var/vmail/** rwx,
+}

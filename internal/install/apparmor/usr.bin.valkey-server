@@ -1,0 +1,47 @@
+# Managed by mailadmin install. Complain mode: logs what enforce would deny.
+# Upstream has no Valkey profile, this one is written for this host.
+# /usr/bin/valkey-server is a symlink to the multi-call binary valkey-check-rdb,
+# AppArmor matches the resolved path, so the profile attaches there.
+#include <tunables/global>
+
+/usr/bin/valkey-check-rdb flags=(complain) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  capability setgid,
+  capability setuid,
+
+  network inet stream,
+  network inet6 stream,
+  network unix stream,
+
+  /usr/bin/valkey-server mr,
+  /usr/bin/valkey-check-rdb mr,
+  /usr/bin/valkey-check-aof mr,
+  /usr/bin/valkey-benchmark mr,
+  /usr/bin/valkey-cli mr,
+  /usr/bin/valkey-check-rdb mr,
+  /etc/valkey/ r,
+  /etc/valkey/** r,
+  /var/lib/valkey/ rw,
+  /var/lib/valkey/** rwk,
+  /var/log/valkey/ rw,
+  /var/log/valkey/** rw,
+  /run/valkey/ rw,
+  /run/valkey/** rwk,
+  /etc/machine-id r,
+  /proc/sys/vm/overcommit_memory r,
+  # Observed in complain mode: socket backlog and clocksource for the event loop.
+  /proc/sys/net/core/somaxconn r,
+  /sys/devices/system/clocksource/clocksource0/current_clocksource r,
+  /sys/kernel/mm/transparent_hugepage/enabled r,
+  /proc/@{pid}/stat r,
+  /dev/urandom r,
+  /dev/null rw,
+
+  deny /etc/mailadmin/** rw,
+  deny /etc/ssl/private/** r,
+  deny /root/** rwx,
+  deny /home/** rwx,
+  deny /var/vmail/** rwx,
+}

@@ -1,0 +1,5 @@
+  # mailadmin exception: doveconf writes its binary config cache and temp files.
+  /run/dovecot/dovecot.conf.binary* rwk,
+  /tmp/doveconf.* rw,
+  # mailadmin exception: lmtp and stats read process state of their own pid.
+  /proc/*/stat r,
