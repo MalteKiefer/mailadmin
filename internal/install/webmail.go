@@ -148,6 +148,10 @@ func CaddyWebmailFile(w config.Webmail) string {
 	request_body {
 		max_size 25MB
 	}
+	log {
+		output stdout
+		format json
+	}
 	reverse_proxy %s
 }
 `, w.Domain, w.Listen)
