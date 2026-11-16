@@ -26,6 +26,11 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.29] - 2026-11-16
+
+### Changed
+- Apple profile form uses the alps light palette and typography.
+
 ## [v1.43.28] - 2026-11-16
 
 ### Added
