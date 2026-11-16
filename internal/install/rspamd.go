@@ -15,7 +15,7 @@ const (
 	ValkeyDropInPath    = "/etc/systemd/system/valkey-server.service.d/mailadmin.conf"
 	ValkeyUser          = "rspamd"
 	ValkeyAddr          = "127.0.0.1:6379"
-	valkeyPasswordRegex = `rspamd on >([0-9a-f]+)`
+	valkeyPasswordRegex = `rspamd on >([0-9a-f]+)` // #nosec G101 -- regex that finds the generated secret, not a credential
 )
 
 var valkeyPassword = regexp.MustCompile(valkeyPasswordRegex)
