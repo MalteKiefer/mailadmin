@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Security
+- DHCP nameserver records (eth*) are removed from resolvconf. The system resolver is the local validating resolver only.
+
 ## [v1.43.18] - 2026-11-16
 
 ### Security

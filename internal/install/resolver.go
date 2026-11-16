@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -16,6 +17,9 @@ const (
 	ResolvconfHeadPath = "/etc/resolvconf/resolv.conf.d/head"
 	DhcpcdConfPath     = "/etc/dhcpcd.conf"
 	AuditdConfPath     = "/etc/audit/auditd.conf"
+	// ResolvconfRecordGlob matches the interface records of the ethernet and
+	// DHCP interfaces. The local resolver's own record (lo.unbound) is kept.
+	ResolvconfRecordGlob = "/run/resolvconf/interface/eth*"
 )
 
 // UnboundConf is a validating resolver. It forwards over TLS to two resolvers
@@ -121,6 +125,15 @@ func ApplyResolver(ctx context.Context, x Exec) error {
 	}
 	if _, err := x.Run(ctx, nil, "systemctl", "restart", "unbound"); err != nil {
 		return fmt.Errorf("restart unbound: %w", err)
+	}
+	// DHCP nameservers are unvalidated. Their records would be a fallback next
+	// to the local resolver, so they are removed and resolvconf rebuilds the file.
+	if recs, err := filepath.Glob(ResolvconfRecordGlob); err == nil {
+		for _, r := range recs {
+			if err := os.Remove(r); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove %s: %w", r, err)
+			}
+		}
 	}
 	if _, err := x.Run(ctx, nil, "resolvconf", "-u"); err != nil {
 		return fmt.Errorf("resolvconf -u: %w", err)

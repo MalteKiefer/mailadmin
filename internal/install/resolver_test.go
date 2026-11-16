@@ -37,3 +37,9 @@ func TestMailScenariosListedForInstall(t *testing.T) {
 		t.Fatalf("missing scenarios: %v", want)
 	}
 }
+
+func TestResolverGlobCoversDHCPRecordsNotLocal(t *testing.T) {
+	if !strings.Contains(ResolvconfRecordGlob, "eth*") || strings.Contains(ResolvconfRecordGlob, "lo.") {
+		t.Fatalf("glob %q must cover eth records and not the local unbound record", ResolvconfRecordGlob)
+	}
+}
