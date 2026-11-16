@@ -26,6 +26,8 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.27] - 2026-11-16
+
 ### Added
 - Apple profile form (`[apple]` in config, off by default). Visitors enter a mail address and download a `.mobileconfig` with the IMAP and SMTP settings. The profile carries no password, the device asks for it. The form service runs as its own user with a domain allow-list file, no database access.
 
