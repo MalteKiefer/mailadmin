@@ -43,3 +43,15 @@ func TestPostscreenSettingsEnforceGreetAndBareNewline(t *testing.T) {
 		t.Fatal("no external DNS blocklist must be queried by default")
 	}
 }
+
+func TestVRFYStaysDisabled(t *testing.T) {
+	for _, s := range PostfixSettings("mail.example.org", nil) {
+		if s.Key == "disable_vrfy_command" {
+			if s.Value != "yes" {
+				t.Fatalf("disable_vrfy_command = %q, want yes", s.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("disable_vrfy_command missing: VRFY would reveal user names")
+}
