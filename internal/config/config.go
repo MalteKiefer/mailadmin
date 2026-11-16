@@ -163,6 +163,7 @@ type Config struct {
 	DNS       DNS               `toml:"dns"`
 	Backup    Backup            `toml:"backup"`
 	Webmail   Webmail           `toml:"webmail"`
+	Apple     Apple             `toml:"apple"`
 	Timeouts  Timeouts          `toml:"timeouts"`
 	Logs      Logs              `toml:"logs"`
 	Notify    Notify            `toml:"notify"`
@@ -336,6 +337,7 @@ func (c *Config) normalize() {
 	c.Backup.DNSBackupDir = strings.TrimSpace(c.Backup.DNSBackupDir)
 	c.Backup.Dir = strings.TrimSpace(c.Backup.Dir)
 	c.Webmail.Domain = strings.ToLower(strings.TrimSpace(c.Webmail.Domain))
+	normalizeApple(&c.Apple)
 	c.Backup.Borg.Repo = strings.TrimSpace(c.Backup.Borg.Repo)
 	c.Notify.URL = strings.TrimSpace(c.Notify.URL)
 	for i := range c.Logs.Units {
@@ -476,6 +478,9 @@ func (c *Config) Validate() error {
 	}
 
 	if err := c.Webmail.validate(); err != nil {
+		return err
+	}
+	if err := c.Apple.validate(); err != nil {
 		return err
 	}
 	if err := c.Backup.Borg.validate(c.Backup.Dir); err != nil {
