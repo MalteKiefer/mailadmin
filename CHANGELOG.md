@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Security
+- The webmail vhost drops the X-Alps-Build response header, which exposed the build id.
+
 ## [v1.43.19] - 2026-11-16
 
 ### Security

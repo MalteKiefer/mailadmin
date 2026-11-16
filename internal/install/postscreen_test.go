@@ -106,3 +106,9 @@ func TestCaddyfileHasNoSlashComments(t *testing.T) {
 		}
 	}
 }
+
+func TestWebmailStripsBuildHeader(t *testing.T) {
+	if !strings.Contains(CaddyWebmailFile(testWebmail()), "-X-Alps-Build") {
+		t.Fatal("webmail must not expose the alps build id")
+	}
+}
