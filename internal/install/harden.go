@@ -68,7 +68,7 @@ const LoginBanner = "Authorized access only. Unauthorized access to this system 
 func HardeningPackages() []string {
 	return []string{
 		"auditd", "crowdsec", "crowdsec-firewall-bouncer-nftables", "aide", "aide-common",
-		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils", "rkhunter", "bsd-mailx", "unbound", "dns-root-data", "valkey-server", "valkey-tools",
+		"needrestart", "unattended-upgrades", "apparmor", "apparmor-utils", "apparmor-profiles", "rkhunter", "bsd-mailx", "unbound", "dns-root-data", "valkey-server", "valkey-tools",
 		"libpam-pwquality", "libpam-tmpdir", "debsums", "acct", "sysstat",
 	}
 }
@@ -846,6 +846,9 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 		return err
 	}
 	if err := ApplyCrowdSecMailScenarios(ctx, x); err != nil {
+		return err
+	}
+	if err := ApplyMailAppArmor(ctx, x); err != nil {
 		return err
 	}
 	if err := ApplyResolver(ctx, x); err != nil {

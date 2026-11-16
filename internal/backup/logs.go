@@ -47,8 +47,13 @@ func CollectLogs(bundleDir string, files []string) ([]string, error) {
 			continue // not every host has every log
 		}
 		name := filepath.Base(src)
-		if _, err := CopyFile(src, filepath.Join(dst, name)); err != nil {
+		copyPath := filepath.Join(dst, name)
+		if _, err := CopyFile(src, copyPath); err != nil {
 			return copied, fmt.Errorf("copy %s: %w", src, err)
+		}
+		// Logs carry client IPs and sender addresses: owner-only, whatever the source mode.
+		if err := os.Chmod(copyPath, 0o600); err != nil {
+			return copied, fmt.Errorf("chmod %s: %w", copyPath, err)
 		}
 		copied = append(copied, name)
 	}
