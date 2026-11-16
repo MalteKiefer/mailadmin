@@ -26,6 +26,14 @@ providers need.
 
 ## [Unreleased]
 
+## [v1.43.25] - 2026-11-16
+
+### Security
+- selfupdate verifies `SHA256SUMS.asc` against the embedded release key (fingerprint `AB222289126C59D40BDFC707C82C7B375578C141`) before it trusts any checksum. A release without a valid signature is refused. Releases must ship `SHA256SUMS.asc`.
+- Cert sync helper (root) refuses symlinks for the certificate and key in the Caddy store.
+- `alps.toml` is `root:alps 0640`, also after every install.
+- Dependency: `cloudflare/circl` v1.6.5 (GHSA-9763-4f94-gfch).
+
 ## [v1.43.24] - 2026-11-16
 
 ### Security
