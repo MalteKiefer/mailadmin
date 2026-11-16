@@ -72,8 +72,23 @@ func setSecurityHeaders(w http.ResponseWriter) {
 var formTmpl = template.Must(template.New("form").Parse(`<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mail auf dem Apple-Gerät einrichten</title>
-<style>body{font:16px system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem}input{width:100%;font:inherit;padding:.5rem;box-sizing:border-box}button{font:inherit;padding:.6rem 1rem;margin-top:.8rem}.msg{color:#a00}</style>
+<style>
+:root{--bg-primary:#ffffff;--bg-secondary:#f9fafb;--text-primary:#111827;--text-secondary:#4b5563;--border-color:#e5e7eb;--accent-color:#2563eb;--accent-hover:#1d4ed8;--error:#ef4444;--radius-md:6px;--shadow-md:0 4px 6px -1px rgba(0,0,0,0.1),0 2px 4px -1px rgba(0,0,0,0.06);--font-base:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--bg-secondary);color:var(--text-primary);font-family:var(--font-base);font-size:14px;line-height:1.5}
+main{width:100%;max-width:420px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:var(--radius-md);box-shadow:var(--shadow-md);padding:28px}
+h1{font-size:18px;font-weight:600;margin:0 0 8px}
+p{margin:0 0 12px;color:var(--text-secondary)}
+label{display:block;font-weight:500;margin-bottom:6px}
+input{width:100%;padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--radius-md);font:inherit;font-size:14px;color:var(--text-primary);background:var(--bg-primary)}
+input:focus{outline:2px solid var(--accent-color);outline-offset:0;border-color:var(--accent-color)}
+button{margin-top:12px;width:100%;padding:8px 16px;border:1px solid transparent;border-radius:var(--radius-md);background:var(--accent-color);color:#ffffff;font:inherit;font-size:14px;font-weight:500;cursor:pointer}
+button:hover{background:var(--accent-hover)}
+.msg{color:var(--error);margin:12px 0 0}
+.note{font-size:12px;color:var(--text-secondary);margin-top:16px;border-top:1px solid var(--border-color);padding-top:12px}
+</style>
 </head><body>
+<main>
 <h1>Mail auf dem iPhone oder Mac einrichten</h1>
 <p>Gib deine Mailadresse ein. Du lädst dann ein Konfigurationsprofil herunter. Das Profil enthält keine Zugangsdaten. Dein Passwort gibst du bei der Installation auf dem Gerät ein.</p>
 <form method="post" action="/profile">
@@ -82,7 +97,8 @@ var formTmpl = template.Must(template.New("form").Parse(`<!doctype html>
 <button type="submit">Profil herunterladen</button>
 </form>
 {{if .Msg}}<p class="msg">{{.Msg}}</p>{{end}}
-<p>Das Profil ist nicht signiert. iOS zeigt deshalb eine Warnung. Installiere es nur, wenn du die Adresse selbst eingegeben hast.</p>
+<p class="note">Das Profil ist nicht signiert. iOS zeigt deshalb eine Warnung. Installiere es nur, wenn du die Adresse selbst eingegeben hast.</p>
+</main>
 </body></html>`))
 
 func (h *Handler) form(w http.ResponseWriter, msg string) {
