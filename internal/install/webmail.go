@@ -213,7 +213,9 @@ func ApplyWebmail(ctx context.Context, x Exec, w config.Webmail, hostname string
 	if err := writeAtomic(AlpsBin, bin, 0o755); err != nil { // #nosec G306 -- root-owned executable
 		return err
 	}
-	if err := writeAtomic(AlpsConfPath, []byte(AlpsConf(w, hostname)), 0o644); err != nil {
+	// Root owns the config, the alps service group reads it. It holds the IMAP and
+	// ManageSieve endpoints and plugin settings, so it is not world-readable.
+	if err := writeAtomicOwned(AlpsConfPath, []byte(AlpsConf(w, hostname)), 0o640, "root", AlpsUser); err != nil {
 		return err
 	}
 	if err := writeAtomic(AlpsUnitPath, []byte(AlpsUnitFile()), 0o644); err != nil {

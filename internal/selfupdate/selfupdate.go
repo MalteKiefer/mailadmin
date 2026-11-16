@@ -5,8 +5,10 @@
 //   - All network calls go to fixed api.github.com / release-asset URLs, no
 //     user-controlled endpoint (no SSRF surface).
 //   - TLS 1.2+ with certificate verification (no InsecureSkipVerify).
-//   - The downloaded binary is verified against the SHA256SUMS file published
-//     with the release before it is installed; a mismatch aborts.
+//   - SHA256SUMS is verified against the embedded, pinned release signing key
+//     (SHA256SUMS.asc). A release without a valid signature is refused.
+//   - The downloaded binary is verified against the signed SHA256SUMS before it
+//     is installed; a mismatch aborts.
 //   - Installation is atomic: the new binary is written to a temp file in the
 //     same directory and renamed over the target, preserving its mode.
 package selfupdate
@@ -193,6 +195,10 @@ func Apply(ctx context.Context, rel Release) error {
 	if err != nil {
 		return err
 	}
+	sigURL, err := signatureURL(rel.Assets)
+	if err != nil {
+		return err
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -203,9 +209,20 @@ func Apply(ctx context.Context, rel Release) error {
 		return fmt.Errorf("selfupdate: resolve executable: %w", err)
 	}
 
-	wantSum, err := fetchChecksum(ctx, sumsURL, AssetName())
+	sums, err := fetchBody(ctx, sumsURL, maxSumsBytes)
 	if err != nil {
 		return err
+	}
+	sig, err := fetchBody(ctx, sigURL, maxSigBytes)
+	if err != nil {
+		return err
+	}
+	if err := verifySums(sums, sig); err != nil {
+		return err
+	}
+	wantSum := parseChecksums(string(sums), AssetName())
+	if wantSum == "" {
+		return fmt.Errorf("selfupdate: no checksum for %s", AssetName())
 	}
 
 	dir := filepath.Dir(exe)
@@ -272,33 +289,6 @@ func download(ctx context.Context, url string, w io.Writer) (string, error) {
 		return "", fmt.Errorf("selfupdate: download body: %w", err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// fetchChecksum downloads the SHA256SUMS file and returns the hex digest listed
-// for filename.
-func fetchChecksum(ctx context.Context, url, filename string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", repoName+"/"+"selfupdate")
-	resp, err := newClient().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("selfupdate: fetch checksums: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("selfupdate: fetch checksums: %s", resp.Status)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSumsBytes))
-	if err != nil {
-		return "", fmt.Errorf("selfupdate: read checksums: %w", err)
-	}
-	sum := parseChecksums(string(body), filename)
-	if sum == "" {
-		return "", fmt.Errorf("selfupdate: no checksum for %s", filename)
-	}
-	return sum, nil
 }
 
 // parseChecksums returns the digest for filename from "<sha256>  <name>" lines
