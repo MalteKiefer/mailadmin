@@ -285,6 +285,15 @@ func ApplyCaddy(ctx context.Context, x Exec, hostname string, tlsInternal bool) 
 	if err := os.MkdirAll(CaddyIncludeDir, 0o755); err != nil { // #nosec G301 -- caddy config dir
 		return fmt.Errorf("mkdir %s: %w", CaddyIncludeDir, err)
 	}
+	if err := os.MkdirAll(filepath.Dir(CaddySandboxPath), 0o755); err != nil { // #nosec G301 -- systemd drop-in dir
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(CaddySandboxPath), err)
+	}
+	if err := writeAtomic(CaddySandboxPath, []byte(CaddySandboxConf()), 0o644); err != nil {
+		return err
+	}
+	if _, err := x.Run(ctx, nil, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
+	}
 	if err := writeManaged(CaddyfilePath, []byte(CaddyfileMain(hostname, tlsInternal)), 0o644); err != nil {
 		return err
 	}

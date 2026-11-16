@@ -233,6 +233,9 @@ func runInstall(app *App, c *cobra.Command, in *installInputs) error {
 	if err := install.RecordDatabase(install.PgDatabase, install.PgRoles); err != nil {
 		return err
 	}
+	if err := install.EnablePgLogging(pctx, x); err != nil {
+		return err
+	}
 	if err := install.EnableScram(pctx, x); err != nil {
 		return err
 	}

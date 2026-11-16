@@ -880,7 +880,8 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 	}
 	// Services a mail host never needs. A unit that is not installed is fine.
 	for _, u := range []string{"avahi-daemon.service", "avahi-daemon.socket", "cups.service", "cups.socket",
-		"rpcbind.service", "rpcbind.socket", "bluetooth.service"} {
+		"rpcbind.service", "rpcbind.socket", "bluetooth.service",
+		"atd.service", "acpid.service", "acpid.socket", "acpid.path"} {
 		_, _ = x.Run(ctx, nil, "systemctl", "disable", "--now", u)
 	}
 	return nil
