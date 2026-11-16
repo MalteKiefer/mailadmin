@@ -142,8 +142,9 @@ func (c SSHCaps) atLeast(major, minor int) bool {
 // Preferred algorithms, strongest first. Each list is cut to what sshd supports.
 var (
 	sshKex = []string{
+		// Post-quantum hybrids only. Plain curve25519 is not protected against
+		// harvest-now-decrypt-later and ssh-audit flags it.
 		"mlkem768x25519-sha256", "sntrup761x25519-sha512", "sntrup761x25519-sha512@openssh.com",
-		"curve25519-sha256", "curve25519-sha256@libssh.org",
 	}
 	sshCiphers = []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com"}
 	sshMACs    = []string{"hmac-sha2-512-etm@openssh.com", "hmac-sha2-256-etm@openssh.com", "umac-128-etm@openssh.com"}

@@ -26,6 +26,9 @@ providers need.
 
 ## [Unreleased]
 
+### Changed
+- sshd key exchange offers only the post-quantum hybrids (mlkem768x25519-sha256, sntrup761x25519-sha512). Plain curve25519-sha256 is removed, as ssh-audit recommends. Clients older than OpenSSH 9.0 cannot connect.
+
 ## [v1.43.6] - 2026-11-16
 
 ### Added
