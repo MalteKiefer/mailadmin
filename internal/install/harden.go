@@ -828,6 +828,9 @@ func ApplySystemHardening(ctx context.Context, x Exec) error {
 	if err := applyFaillock(); err != nil {
 		return err
 	}
+	if err := ApplyMountHardening(ctx, x); err != nil {
+		return err
+	}
 	for _, u := range SandboxedUnits {
 		path, content := SandboxDropIn(u)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- systemd drop-in dir
